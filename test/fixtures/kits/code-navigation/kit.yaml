@@ -1,0 +1,6 @@
+schemaVersion: 1
+id: code-navigation
+description: Find code and understand package boundaries
+outputs:
+  - type: instructions
+    source: instructions.md

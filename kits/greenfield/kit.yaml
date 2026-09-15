@@ -1,0 +1,6 @@
+schemaVersion: 1
+id: greenfield
+description: Develop an undeployed project without legacy compatibility code
+outputs:
+  - type: instructions
+    source: instructions.md

@@ -1,0 +1,6 @@
+schemaVersion: 1
+id: write-kit
+description: Write a Loadout kit from a minimal example
+outputs:
+  - type: skill
+    source: skills/loadout-write-kit

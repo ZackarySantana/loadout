@@ -1,0 +1,7 @@
+schemaVersion: 1
+id: starter
+description: Add your repository guidance
+ready: false
+outputs:
+  - type: skill
+    source: skills/starter

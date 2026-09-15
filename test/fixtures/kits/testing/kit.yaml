@@ -1,0 +1,6 @@
+schemaVersion: 1
+id: testing
+description: Focused guidance for choosing and running tests
+outputs:
+  - type: instructions
+    source: instructions.md

@@ -1,0 +1,19 @@
+schemaVersion: 1
+id: graphiffy
+description: Example repository exploration with optional diagrams
+requires: [code-navigation]
+questions:
+  diagrams:
+    type: boolean
+    message: Include diagram-generation guidance?
+    default: false
+outputs:
+  - type: instructions
+    source: instructions.md
+  - type: instructions
+    source: diagrams.md
+    when:
+      answer: diagrams
+      equals: true
+  - type: skill
+    source: skills/graphiffy
