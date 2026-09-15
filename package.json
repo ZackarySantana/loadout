@@ -17,7 +17,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lidtop/loadout.git"
+    "url": "git+https://github.com/ZackarySantana/loadout.git"
   },
   "scripts": {
     "build": "tsc",
@@ -50,9 +50,9 @@
     "typescript": "^7.0.2"
   },
   "license": "MIT",
-  "homepage": "https://github.com/lidtop/loadout#readme",
+  "homepage": "https://github.com/ZackarySantana/loadout#readme",
   "bugs": {
-    "url": "https://github.com/lidtop/loadout/issues"
+    "url": "https://github.com/ZackarySantana/loadout/issues"
   },
   "keywords": [
     "cli",

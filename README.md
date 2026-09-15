@@ -9,7 +9,7 @@ Kit definitions live in the repository. Each developer's selections and generate
 Requires Node.js **22.13+**. In a repository using Loadout:
 
 ```sh
-npm install -g lidtop/loadout
+npm install -g @lidtop/loadout
 loadout
 ```
 
