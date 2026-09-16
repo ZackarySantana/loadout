@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { exists, safePath } from './fs.js';
-import { ignoredText } from './storage.js';
+import { apply, planExcludes } from './storage.js';
 
 export function initialize(
   cwd: string,
@@ -14,9 +14,7 @@ export function initialize(
     throw new Error(
       '.loadout already exists. Refusing to replace an existing catalog.',
     );
-  const ignore = safePath(root, '.gitignore');
-  const original = exists(ignore) ? fs.readFileSync(ignore, 'utf8') : '';
-  const updated = ignoredText(original, []); // Validate before creating anything.
+  const exclude = planExcludes(root, []); // Validate before creating anything.
   try {
     const starterFiles: Record<string, string> = {
       'config.yaml': 'schemaVersion: 1\n',
@@ -48,7 +46,11 @@ and set ready: true in the kit's kit.yaml when it is ready to use.
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, content, { flag: 'wx' });
     }
-    fs.writeFileSync(ignore, updated);
+    apply({
+      root,
+      changes: [],
+      exclude,
+    });
   } catch (error) {
     fs.rmSync(target, { recursive: true, force: true });
     throw error;

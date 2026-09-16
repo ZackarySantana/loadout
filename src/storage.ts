@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { isOutput } from './output-path.js';
+import { ignoredText, ignoreTarget, type IgnoreTarget } from './ignore.js';
 import { prepareAdoption } from './adoption.js';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -21,8 +22,6 @@ import {
 } from './schema.js';
 import { type FileContent, type Rendered } from './render.js';
 
-const start = '# >>> loadout';
-const end = '# <<< loadout';
 export type Change = {
   path: string;
   before?: FileContent;
@@ -33,6 +32,9 @@ export type Plan = {
   root: string;
   changes: Change[];
   adopted?: string[];
+  skippedInstructions?: { paths: string[]; kits: string[]; reason: string }[];
+  kitsWithoutOutputs?: string[];
+  exclude?: ExcludePlan;
   guard?: {
     untracked: string[];
     directories: { path: string; files: string[] }[];
@@ -41,9 +43,13 @@ export type Plan = {
 const hash = (content: Buffer) =>
   createHash('sha256').update(content).digest('hex');
 export function loadState(catalog: Catalog): State {
-  const raw = readOptional(catalog.root, '.loadout/local.json');
+  const raw = readOptional(catalog.root, '.loadout-personal/local.json');
   return raw
-    ? parse(stateSchema, JSON.parse(raw.toString()), '.loadout/local.json')
+    ? parse(
+        stateSchema,
+        JSON.parse(raw.toString()),
+        '.loadout-personal/local.json',
+      )
     : { schemaVersion: 1, selected: [], answers: {} };
 }
 function snapshot(root: string, relative: string): FileContent | undefined {
@@ -60,37 +66,40 @@ function equal(a?: FileContent, b?: FileContent): boolean {
     ? a === b
     : a.mode === b.mode && a.content.equals(b.content);
 }
-export function ignoredText(original: string, paths: string[]): string {
-  const lines = original.split(/\r?\n/);
-  const first = lines.indexOf(start),
-    last = lines.indexOf(end);
-  if (
-    first < 0 !== last < 0 ||
-    last < first ||
-    lines.filter((l) => l === start).length > 1 ||
-    lines.filter((l) => l === end).length > 1
-  )
-    throw new Error(
-      'Malformed Loadout block in .gitignore; repair its markers before applying.',
-    );
-  if (first >= 0) lines.splice(first, last - first + 1);
-  const base = lines.join('\n').replace(/\n*$/, '');
-  // Escape gitignore metacharacters so these patterns own only exact paths.
-  const escape = (p: string) => p.replace(/[\\*?\[\]#! ]/g, '\\$&');
-  return `${base ? `${base}\n\n` : ''}${start}\n${[
-    ...new Set([
-      '.loadout/local.json',
-      '.loadout/generated.json',
-      '.loadout/external.json',
-      '.loadout/adopted.json',
-      '.loadout/adopted/',
-      '.loadout/apply.lock/',
-      ...paths,
-    ]),
-  ]
-    .sort()
-    .map((p) => `/${escape(p)}`)
-    .join('\n')}\n${end}\n`;
+type ExcludePlan = {
+  target: IgnoreTarget;
+  paths: string[];
+  change: Change;
+};
+export function planExcludes(
+  root: string,
+  paths: string[],
+): ExcludePlan | undefined {
+  const target = ignoreTarget(root);
+  if (!target) return undefined;
+  const before = snapshot(target.root, 'info/exclude');
+  const after = {
+    content: Buffer.from(
+      ignoredText(before?.content.toString() ?? '', target, paths),
+    ),
+    mode: before?.mode ?? 0o644,
+  };
+  return {
+    target,
+    paths,
+    change: {
+      path: 'info/exclude',
+      before,
+      after,
+      kind: equal(before, after) ? 'unchanged' : before ? 'update' : 'create',
+    },
+  };
+}
+export function hasChanges(plan: Plan): boolean {
+  return (
+    plan.changes.some((change) => change.kind !== 'unchanged') ||
+    !!(plan.exclude && plan.exclude.change.kind !== 'unchanged')
+  );
 }
 function trackedFiles(root: string): Set<string> {
   try {
@@ -119,11 +128,43 @@ export function plan(
   options: { adopt?: boolean } = {},
 ): Plan {
   const root = catalog.root;
-  const raw = readOptional(root, '.loadout/generated.json');
+  const raw = readOptional(root, '.loadout-personal/generated.json');
   const owned = raw
-    ? parse(ownedSchema, JSON.parse(raw.toString()), '.loadout/generated.json')
-        .files
+    ? parse(
+        ownedSchema,
+        JSON.parse(raw.toString()),
+        '.loadout-personal/generated.json',
+      ).files
     : {};
+  const tracked = trackedFiles(root);
+  const skippedInstructions: NonNullable<Plan['skippedInstructions']> = [];
+  const retainedKits = new Set(rendered.skillKits);
+  rendered = { ...rendered, files: new Map(rendered.files) };
+  for (const group of rendered.instructionGroups) {
+    // Existing ownership still requires the usual edit/deletion safeguards.
+    const conflict = group.paths.some((file) => Object.hasOwn(owned, file))
+      ? undefined
+      : group.paths.find(
+          (file) =>
+            tracked.has(file) ||
+            (!options.adopt && exists(safePath(root, file))),
+        );
+    if (!conflict) {
+      for (const id of group.kits) retainedKits.add(id);
+      continue;
+    }
+    skippedInstructions.push({
+      ...group,
+      reason: tracked.has(conflict)
+        ? `${conflict} is tracked by Git`
+        : `${conflict} already exists and is not managed by Loadout`,
+    });
+    // CLAUDE.md imports AGENTS.md, so skip the whole scope together.
+    for (const file of group.paths) rendered.files.delete(file);
+  }
+  const kitsWithoutOutputs = [
+    ...new Set(skippedInstructions.flatMap((group) => group.kits)),
+  ].filter((id) => !retainedKits.has(id));
   const adoption = prepareAdoption(
     root,
     rendered,
@@ -135,19 +176,6 @@ export function plan(
   const paths = [
     ...new Set([...Object.keys(owned), ...rendered.files.keys()]),
   ].sort();
-  const tracked = trackedFiles(root);
-  for (const local of [
-    '.loadout/local.json',
-    '.loadout/generated.json',
-    '.loadout/external.json',
-    '.loadout/adopted.json',
-    ...adoption.beforeOutputs.map((change) => change.path),
-    ...adoption.afterOutputs.map((change) => change.path),
-  ])
-    if (tracked.has(local))
-      throw new Error(
-        `${local} is tracked by Git. Untrack personal state before applying.`,
-      );
   const changes: Change[] = [...adoption.beforeOutputs];
   for (const relative of paths) {
     if (!isOutput(relative, catalog.global))
@@ -206,19 +234,11 @@ export function plan(
       .map(([p, f]) => [p, { hash: hash(f.content), mode: f.mode }]),
   );
   const metadata = new Map<string, Buffer>([
-    ['.loadout/local.json', json(state)],
-    ['.loadout/generated.json', json({ schemaVersion: 1, files })],
-    [
-      '.gitignore',
-      Buffer.from(
-        ignoredText(readOptional(root, '.gitignore')?.toString() ?? '', [
-          ...Object.keys(files),
-        ]),
-      ),
-    ],
+    ['.loadout-personal/local.json', json(state)],
+    ['.loadout-personal/generated.json', json({ schemaVersion: 1, files })],
   ]);
   if (rendered.external) {
-    const current = readOptional(root, '.loadout/external.json');
+    const current = readOptional(root, '.loadout-personal/external.json');
     if (
       current === undefined
         ? rendered.external.before !== undefined
@@ -227,7 +247,7 @@ export function plan(
       throw new Error(
         'External snapshots changed while preparing the preview. Run the command again.',
       );
-    metadata.set('.loadout/external.json', rendered.external.content);
+    metadata.set('.loadout-personal/external.json', rendered.external.content);
   }
   changes.push(...adoption.afterOutputs);
   for (const [relative, content] of metadata) {
@@ -240,14 +260,18 @@ export function plan(
       kind: equal(before, after) ? 'unchanged' : before ? 'update' : 'create',
     });
   }
+  for (const change of changes)
+    if (tracked.has(change.path))
+      throw new Error(`Refusing to manage Git-tracked file: ${change.path}`);
   return {
     root,
     changes,
     adopted: adoption.adopted,
+    skippedInstructions,
+    kitsWithoutOutputs,
+    exclude: planExcludes(root, Object.keys(files)),
     guard: {
-      untracked: changes
-        .filter((change) => change.path !== '.gitignore')
-        .map((change) => change.path),
+      untracked: changes.map((change) => change.path),
       directories: [...rendered.skillRoots]
         .filter((skill) =>
           adoption.adopted.some((file) => file.startsWith(`${skill}/`)),
@@ -279,7 +303,9 @@ function prune(root: string, relative: string): void {
   // Only prune empty skill directories and internal adoption backups.
   const boundary =
     /^(\.(?:agents|claude)\/skills)\//.exec(relative)?.[1] ??
-    (relative.startsWith('.loadout/adopted/') ? '.loadout' : undefined);
+    (relative.startsWith('.loadout-personal/adopted/')
+      ? '.loadout-personal'
+      : undefined);
   if (!boundary) return;
   const stop = safePath(root, boundary);
   let directory = path.dirname(safePath(root, relative));
@@ -299,25 +325,88 @@ export function apply(plan: Plan): number {
 export function applyAll(plans: Plan[]): number {
   if (new Set(plans.map((plan) => plan.root)).size !== plans.length)
     throw new Error('Cannot apply multiple plans for the same location.');
+  // Several catalogs/worktrees can share one excludes file. Merge their blocks
+  // into one transactional write, retaining all other catalogs' rules.
+  const excludes = new Map<string, Change>();
+  for (const plan of plans) {
+    if (!plan.exclude) continue;
+    const { target, paths, change } = plan.exclude;
+    const previous = excludes.get(target.root);
+    if (!previous) {
+      excludes.set(target.root, change);
+      continue;
+    }
+    if (!equal(previous.before, change.before))
+      throw new Error(
+        'Git excludes changed between previews. Run the command again.',
+      );
+    const after = {
+      ...change.after!,
+      content: Buffer.from(
+        ignoredText(previous.after!.content.toString(), target, paths),
+      ),
+    };
+    excludes.set(target.root, {
+      ...previous,
+      after,
+      kind: equal(previous.before, after)
+        ? 'unchanged'
+        : previous.before
+          ? 'update'
+          : 'create',
+    });
+  }
+  const writes = [
+    ...[...excludes].map(([root, change]) => ({ root, change })),
+    ...plans.flatMap((plan) =>
+      plan.changes.map((change) => ({
+        root: plan.root,
+        change,
+      })),
+    ),
+  ];
   const locks: string[] = [];
   const written: { root: string; change: Change }[] = [];
   try {
     for (const plan of [...plans].sort((a, b) =>
       a.root.localeCompare(b.root),
     )) {
-      const lock = safePath(plan.root, '.loadout/apply.lock');
+      const lock = safePath(plan.root, '.loadout-personal/apply.lock');
+      fs.mkdirSync(path.dirname(lock), { recursive: true });
       try {
         fs.mkdirSync(lock);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'EEXIST')
           throw new Error(
-            'Another apply is running (or a previous process stopped). Remove .loadout/apply.lock only after confirming no Loadout process is running.',
+            `Another apply is running (or a previous process stopped). Remove ${lock} only after confirming no Loadout process is running.`,
+          );
+        throw error;
+      }
+      locks.push(lock);
+    }
+    // These locks also serialize applies from different linked worktrees.
+    for (const root of [...excludes.keys()].sort()) {
+      const lock = safePath(root, 'info/exclude.loadout.lock');
+      fs.mkdirSync(path.dirname(lock), { recursive: true });
+      try {
+        fs.mkdirSync(lock);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST')
+          throw new Error(
+            `Another apply is using Git excludes (or a previous process stopped). Remove ${lock} only after confirming no Loadout process is running.`,
           );
         throw error;
       }
       locks.push(lock);
     }
     // Recheck every location before writing to any of them.
+    for (const plan of plans) {
+      const current = ignoreTarget(plan.root);
+      if (JSON.stringify(current) !== JSON.stringify(plan.exclude?.target))
+        throw new Error(
+          'Git exclude location changed since preview. Run the command again.',
+        );
+    }
     for (const plan of plans) {
       if (!plan.guard) continue;
       const tracked = trackedFiles(plan.root);
@@ -332,19 +421,16 @@ export function applyAll(plans: Plan[]): number {
           );
       }
     }
-    for (const plan of plans)
-      for (const change of plan.changes)
-        if (!equal(snapshot(plan.root, change.path), change.before))
-          throw new Error(
-            `File changed since preview: ${change.path}. Run the command again.`,
-          );
-    for (const plan of plans) {
-      for (const change of plan.changes) {
-        if (change.kind === 'unchanged') continue;
-        if (change.after) writeAtomic(plan.root, change.path, change.after);
-        else fs.unlinkSync(safePath(plan.root, change.path));
-        written.push({ root: plan.root, change });
-      }
+    for (const { root, change } of writes)
+      if (!equal(snapshot(root, change.path), change.before))
+        throw new Error(
+          `File changed since preview: ${change.path}. Run the command again.`,
+        );
+    for (const { root, change } of writes) {
+      if (change.kind === 'unchanged') continue;
+      if (change.after) writeAtomic(root, change.path, change.after);
+      else fs.unlinkSync(safePath(root, change.path));
+      written.push({ root, change });
     }
   } catch (error) {
     const failures: string[] = [];

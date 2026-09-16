@@ -173,8 +173,14 @@ test('cancelling a failed download aborts pending requests and saves none of the
   assert.equal(prompts, 1);
   assert.ok(aborted > 0);
   assert.equal(pending, 0);
-  assert.equal(fs.existsSync(path.join(root, '.loadout/external.json')), false);
-  assert.equal(fs.existsSync(path.join(root, '.loadout/local.json')), false);
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/external.json')),
+    false,
+  );
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/local.json')),
+    false,
+  );
   assert.equal(fs.existsSync(path.join(root, '.agents')), false);
   assert.equal(fs.existsSync(path.join(root, '.claude')), false);
 });
@@ -207,7 +213,10 @@ test('catalog offers optional attributed recommendations without network access'
   assert.equal(catalog.kits.get('acme-alpha')?.external?.repo, 'acme/skills');
   const preview = await prepare(root, ['testing'], offlineFetch);
   assert.ok(preview.changes.every((c) => !c.path.includes('alpha')));
-  assert.equal(fs.existsSync(path.join(root, '.loadout/external.json')), false);
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/external.json')),
+    false,
+  );
 });
 
 test('preview fetches in memory; apply saves complete verified skills, license, and offline snapshot', async (t) => {
@@ -220,7 +229,10 @@ test('preview fetches in memory; apply saves complete verified skills, license, 
     mockFetch(upstream(), requests),
   );
   assert.ok(requests.some((url) => url.includes(revision)));
-  assert.equal(fs.existsSync(path.join(root, '.loadout/external.json')), false);
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/external.json')),
+    false,
+  );
   assert.equal(fs.existsSync(path.join(root, '.agents/skills/alpha')), false);
   apply(preview);
   for (const agent of ['.agents', '.claude']) {
@@ -263,7 +275,7 @@ test('preview fetches in memory; apply saves complete verified skills, license, 
   assert.match(
     execFileSync(
       'git',
-      ['-C', root, 'check-ignore', '.loadout/external.json'],
+      ['-C', root, 'check-ignore', '.loadout-personal/external.json'],
       { encoding: 'utf8' },
     ),
     /external.json/,
@@ -320,8 +332,14 @@ test('offline cache misses and network failures leave no state or output', async
     }),
     /Network unavailable/,
   );
-  assert.equal(fs.existsSync(path.join(root, '.loadout/external.json')), false);
-  assert.equal(fs.existsSync(path.join(root, '.loadout/local.json')), false);
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/external.json')),
+    false,
+  );
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/local.json')),
+    false,
+  );
   assert.equal(fs.existsSync(path.join(root, '.agents')), false);
 });
 
@@ -401,7 +419,7 @@ test('modified outputs and corrupt snapshots block updates', async (t) => {
   const root = fixture(t);
   apply(await prepare(root));
   const snapshotBefore = fs.readFileSync(
-    path.join(root, '.loadout/external.json'),
+    path.join(root, '.loadout-personal/external.json'),
   );
   fs.appendFileSync(
     path.join(root, '.agents/skills/alpha/SKILL.md'),
@@ -412,14 +430,14 @@ test('modified outputs and corrupt snapshots block updates', async (t) => {
     /manually modified/,
   );
   assert.deepEqual(
-    fs.readFileSync(path.join(root, '.loadout/external.json')),
+    fs.readFileSync(path.join(root, '.loadout-personal/external.json')),
     snapshotBefore,
   );
   const corrupted = JSON.parse(snapshotBefore.toString());
   corrupted.kits['acme-alpha'].files['alpha/SKILL.md'].data =
     Buffer.from('bad').toString('base64');
   fs.writeFileSync(
-    path.join(root, '.loadout/external.json'),
+    path.join(root, '.loadout-personal/external.json'),
     JSON.stringify(corrupted),
   );
   await assert.rejects(
@@ -459,7 +477,7 @@ test('a repo can pin a curated kit explicitly without duplicate definitions', (t
 test('offline snapshot completeness and concurrent snapshot edits are checked', async (t) => {
   const root = fixture(t);
   apply(await prepare(root));
-  const file = path.join(root, '.loadout/external.json');
+  const file = path.join(root, '.loadout-personal/external.json');
   const original = fs.readFileSync(file);
   const missing = JSON.parse(original.toString());
   delete missing.kits['acme-alpha'].files['alpha/references/details.md'];

@@ -1,11 +1,11 @@
 ---
 name: loadout-write-kit
-description: Create or edit Loadout kits in .loadout/kits/.
+description: Create or edit private or shared Loadout kits.
 ---
 
-Adapt this example; drop unused questions, outputs, and files.
+Use `.loadout-personal/kits/` for private kits, `.loadout/kits/` for shared kits, or `~/.loadout/kits/` for kits you can enable in any repository. Adapt this example; drop unused questions, outputs, and files.
 
-`.loadout/kits/review/kit.yaml`:
+`.loadout-personal/kits/review/kit.yaml`:
 
 ```yaml
 schemaVersion: 1
@@ -28,7 +28,7 @@ outputs:
     when: { answer: detail, equals: detailed }
 ```
 
-`.loadout/kits/review/skills/review/SKILL.md`:
+`.loadout-personal/kits/review/skills/review/SKILL.md`:
 
 ```markdown
 ---
@@ -52,4 +52,4 @@ loadout enable review --answer review.diagrams=true --answer review.detail=detai
 loadout disable review
 ```
 
-Drop `--dry-run --diff` to apply, or select via `loadout` → Kits → Continue.
+Drop `--dry-run --diff` to apply, or select via `loadout` → Browse → Personal → Continue.

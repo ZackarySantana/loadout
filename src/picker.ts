@@ -7,7 +7,6 @@ import {
   isSpaceKey,
 } from '@inquirer/core';
 import { stripVTControlCharacters, styleText } from 'node:util';
-import path from 'node:path';
 import stringWidth from 'string-width';
 import { resolveKits, reasons } from './resolve.js';
 import { kitSource, type Catalog, type Kit, type State } from './schema.js';
@@ -59,7 +58,10 @@ type Row = {
   downloadedCount?: number;
 };
 const providerFor = (kit: Kit): string | undefined =>
-  kit.origin === 'bundled' ? 'loadout' : kit.external?.repo;
+  kit.origin === 'bundled'
+    ? 'loadout'
+    : (kit.external?.repo ??
+      (kit.origin === 'personal' ? 'Personal' : undefined));
 const providerPrefixes: Readonly<Record<string, string>> = {
   loadout: 'loadout-',
   'mattpocock/skills': 'matt-pocock-',
@@ -71,7 +73,6 @@ export type TargetPickerConfig = {
   initial?: number;
   columns?: number;
   rows?: number;
-  initialize?: (target: Target) => Target;
 };
 export type TargetSelection = { target: Target; state: State };
 const emptyState = (): State => ({
@@ -94,7 +95,6 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
         ),
       ),
     );
-    const [pending, setPending] = useState<number | undefined>(undefined);
     const [pendingSwitch, setPendingSwitch] = useState<number | undefined>(
       undefined,
     );
@@ -116,7 +116,10 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
         selections.map((ids, index) => (index === targetIndex ? value : ids)),
       );
     const [section, setSection] = useState<Section>(
-      target.global ? 'Browse' : 'Kits',
+      target.global ||
+        ![...catalog.kits.values()].some((kit) => !providerFor(kit))
+        ? 'Browse'
+        : 'Kits',
     );
     const [scopeFocused, setScopeFocused] = useState(false);
     const [provider, setProvider] = useState<string | undefined>(undefined);
@@ -195,13 +198,15 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
           const description =
             id === 'loadout'
               ? 'Included with Loadout'
-              : origins.has('curated') && providerDescriptions[id]
-                ? providerDescriptions[id]!
-                : origins.size > 1
-                  ? 'Curated and repository sources'
-                  : origins.has('curated')
-                    ? 'Curated kits'
-                    : 'Repository sources';
+              : id === 'Personal'
+                ? 'Your personal kits'
+                : origins.has('curated') && providerDescriptions[id]
+                  ? providerDescriptions[id]!
+                  : origins.size > 1
+                    ? 'Curated and repository sources'
+                    : origins.has('curated')
+                      ? 'Curated kits'
+                      : 'Repository sources';
           return [
             {
               id,
@@ -249,7 +254,14 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
       const switchTarget = (index: number) => {
         setScopeFocused(false);
         setTargetIndex(index);
-        setSection(targets[index]!.global ? 'Browse' : 'Kits');
+        setSection(
+          targets[index]!.global ||
+            ![...targets[index]!.catalog!.kits.values()].some(
+              (kit) => !providerFor(kit),
+            )
+            ? 'Browse'
+            : 'Kits',
+        );
         setVisited([...new Set([...visited, index])]);
         setProvider(undefined);
         setNotice('');
@@ -269,49 +281,13 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
         }
         return;
       }
-      if (pending !== undefined) {
-        if (key.name === 'y' && config.initialize) {
-          try {
-            const initialized = config.initialize(targets[pending]!);
-            if (!initialized.catalog)
-              throw new Error(
-                initialized.error ??
-                  'Initialization did not produce a catalog.',
-              );
-            setTargets(
-              targets.map((item, index) =>
-                index === pending ? initialized : item,
-              ),
-            );
-            setSelections(
-              selections.map((ids, index) =>
-                index === pending ? (initialized.state?.selected ?? []) : ids,
-              ),
-            );
-            switchTarget(pending);
-          } catch (error) {
-            setNotice((error as Error).message);
-          }
-          setPending(undefined);
-        } else if (
-          key.name === 'n' ||
-          key.name === 'escape' ||
-          isEnterKey(key)
-        ) {
-          setPending(undefined);
-        }
-        restoreInput();
-        return;
-      }
       if (scopeFocused && (isEnterKey(key) || isSpaceKey(key))) {
         setScopeFocused(false);
         const next = (targetIndex + 1) % targets.length;
         const other = targets[next]!;
         if (other.error) setNotice(other.error);
-        else if (!other.catalog) {
-          setPending(next);
-          reset();
-        } else if (hasSelectionChanges) {
+        else if (!other.catalog) setNotice('Cannot load this location.');
+        else if (hasSelectionChanges) {
           setPendingSwitch(next);
         } else switchTarget(next);
         rl.clearLine(0);
@@ -418,28 +394,6 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
         `  ${accent('[Enter/Esc]')} Stay   ${accent('[y]')} Switch`,
         '\u001b[?25l',
       ].join('\n');
-    if (pending !== undefined) {
-      const destination = targets[pending]!;
-      const pathWidth = width - 9;
-      const catalogPath = path.join(destination.root, '.loadout');
-      const displayPath =
-        stringWidth(clean(catalogPath)) <= pathWidth
-          ? clean(catalogPath)
-          : destination.global
-            ? '~/.loadout'
-            : `${fit(destination.root, pathWidth - 9)}/.loadout`;
-      return [
-        ...header,
-        ...scopeLines,
-        '',
-        `  ${bold(fit(`Set up ${destination.label} and switch?`, width - 2))}`,
-        `  ${fit(`Create ${displayPath}`, width - 2)}`,
-        ...selectionWarning,
-        '',
-        `  ${accent('[Enter/Esc]')} Cancel   ${accent('[y]')} Set up`,
-        '\u001b[?25l',
-      ].join('\n');
-    }
     if (finished)
       return [
         ...header,
@@ -457,7 +411,7 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
     const detailed = height >= 20;
     const hints = scopeFocused
       ? [
-          `space/enter ${other?.error ? 'details' : other?.catalog ? 'switch' : 'setup'}`,
+          `space/enter ${other?.error || !other?.catalog ? 'details' : 'switch'}`,
           '←→/tab move',
           'esc back',
         ]
@@ -478,9 +432,10 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
     }
     const help = helpLines.map((line) => `  ${muted(line)}`);
     if (scopeFocused && other) {
-      const action = other.error
-        ? `${other.label} is unavailable`
-        : `${other.catalog ? 'Switch to' : 'Set up'} ${other.label}`;
+      const action =
+        other.error || !other.catalog
+          ? `${other.label} is unavailable`
+          : `Switch to ${other.label}`;
       return [
         ...header,
         ...scopeLines,

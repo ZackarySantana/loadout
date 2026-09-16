@@ -17,6 +17,7 @@ import {
 import { render } from '../src/render.js';
 import { apply, plan, loadState } from '../src/storage.js';
 import { type State } from '../src/schema.js';
+import { ignoreTarget } from '../src/ignore.js';
 
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 function fixture(t: TestContext): string {
@@ -109,7 +110,10 @@ test('CLI supports dry run, answers, explain, list, and cascading disable', (t) 
     run(root, ['enable', 'graphiffy', '--dry-run']),
     /code-navigation required by graphiffy/,
   );
-  assert.equal(fs.existsSync(path.join(root, '.loadout/local.json')), false);
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/local.json')),
+    false,
+  );
   assert.equal(fs.existsSync(path.join(root, 'AGENTS.md')), false);
   run(root, ['enable', 'graphiffy', '--answer', 'graphiffy.diagrams=true']);
   assert.match(read(root, 'AGENTS.md'), /Mermaid/);
@@ -186,7 +190,10 @@ test('cycles, missing dependencies, missing sources, and duplicate IDs fail befo
     const root = fixture(t);
     edit(root);
     assert.throws(() => loadCatalog(root), expected);
-    assert.equal(fs.existsSync(path.join(root, '.loadout/local.json')), false);
+    assert.equal(
+      fs.existsSync(path.join(root, '.loadout-personal/local.json')),
+      false,
+    );
   }
 });
 
@@ -202,9 +209,15 @@ test('colliding skill outputs are rejected', async (t) => {
 test('unmanaged files and skill directories are preserved', async (t) => {
   const root = fixture(t);
   put(root, 'CLAUDE.md', 'Human instructions');
-  await assert.rejects(build(root), /Unmanaged file.*CLAUDE.md/);
+  const preview = await build(root);
+  assert.match(
+    preview.skippedInstructions![0]!.reason,
+    /CLAUDE.md already exists/,
+  );
+  apply(preview);
   assert.equal(read(root, 'CLAUDE.md'), 'Human instructions');
   assert.equal(fs.existsSync(path.join(root, 'AGENTS.md')), false);
+  apply(await build(root, []));
   fs.unlinkSync(path.join(root, 'CLAUDE.md'));
   put(root, '.agents/skills/graphiffy/personal.txt', 'Human skill');
   await assert.rejects(build(root), /Unmanaged skill directory/);
@@ -214,15 +227,124 @@ test('unmanaged files and skill directories are preserved', async (t) => {
 test('manually edited generated files block updates and deletion without partial writes', async (t) => {
   const root = fixture(t);
   apply(await build(root));
-  const stateBefore = read(root, '.loadout/local.json');
+  const stateBefore = read(root, '.loadout-personal/local.json');
   put(root, 'CLAUDE.md', 'Personal edits');
   await assert.rejects(
     build(root, ['testing']),
     /manually modified: CLAUDE.md/,
   );
   assert.match(read(root, 'AGENTS.md'), /Graphiffy/);
-  assert.equal(read(root, '.loadout/local.json'), stateBefore);
+  assert.equal(read(root, '.loadout-personal/local.json'), stateBefore);
   await assert.rejects(build(root, []), /manually modified/);
+});
+
+test('tracked instructions are skipped while mixed kits install skills and report empty dependency kits', async (t) => {
+  for (const existing of [
+    ['AGENTS.md'],
+    ['CLAUDE.md'],
+    ['AGENTS.md', 'CLAUDE.md'],
+  ]) {
+    const root = fixture(t);
+    execFileSync('git', ['init', '-q', root]);
+    for (const file of existing) put(root, file, `Team ${file}\n`);
+    execFileSync('git', ['-C', root, 'add', ...existing]);
+    const catalog = loadCatalog(root);
+    const state = await configure(catalog, {
+      ...loadState(catalog),
+      selected: ['graphiffy'],
+    });
+    // Interactive setup uses adopt, but tracked instructions must still skip.
+    const preview = plan(catalog, state, render(catalog, state), {
+      adopt: true,
+    });
+    assert.deepEqual(preview.adopted, []);
+    assert.deepEqual(preview.kitsWithoutOutputs, ['code-navigation']);
+    assert.equal(
+      preview.changes.some((change) =>
+        ['AGENTS.md', 'CLAUDE.md'].includes(change.path),
+      ),
+      false,
+    );
+    const dryRun = run(root, [
+      'enable',
+      'graphiffy',
+      '--adopt',
+      '--dry-run',
+      '--diff',
+    ]);
+    assert.match(
+      dryRun,
+      /Skipped instructions from code-navigation, graphiffy/,
+    );
+    assert.match(dryRun, /tracked by Git/);
+    assert.match(dryRun, /code-navigation: no agent outputs will be applied/);
+    assert.equal(
+      fs.existsSync(path.join(root, '.loadout-personal/local.json')),
+      false,
+    );
+    assert.equal(
+      fs.existsSync(path.join(root, '.agents/skills/graphiffy')),
+      false,
+    );
+    const output = run(root, ['enable', 'graphiffy', '--adopt']);
+    assert.match(
+      output.slice(output.indexOf('Loadout applied')),
+      /Skipped instructions/,
+    );
+    assert.match(output, /code-navigation: no agent outputs applied/);
+    for (const agent of ['.agents', '.claude'])
+      assert.ok(
+        fs.existsSync(path.join(root, agent, 'skills/graphiffy/SKILL.md')),
+      );
+    const owned = JSON.parse(
+      read(root, '.loadout-personal/generated.json'),
+    ).files;
+    assert.equal(owned['AGENTS.md'], undefined);
+    assert.equal(owned['CLAUDE.md'], undefined);
+    assert.doesNotMatch(
+      read(root, '.git/info/exclude'),
+      /^\/(?:AGENTS|CLAUDE)\.md$/m,
+    );
+    assert.match(run(root, ['apply']), /Skipped instructions/);
+    run(root, ['disable', 'graphiffy']);
+    for (const file of ['AGENTS.md', 'CLAUDE.md']) {
+      if (existing.includes(file))
+        assert.equal(read(root, file), `Team ${file}\n`);
+      else assert.equal(fs.existsSync(path.join(root, file)), false);
+    }
+  }
+});
+
+test('instruction-only kits report no outputs and unaffected scopes still apply', (t) => {
+  const root = fixture(t);
+  put(root, 'AGENTS.md', 'Team guidance');
+  const output = run(root, ['enable', 'testing']);
+  assert.match(
+    output,
+    /testing: no agent outputs applied; all instructions skipped/,
+  );
+  assert.equal(read(root, 'AGENTS.md'), 'Team guidance');
+  assert.equal(fs.existsSync(path.join(root, 'CLAUDE.md')), false);
+  assert.deepEqual(
+    JSON.parse(read(root, '.loadout-personal/generated.json')).files,
+    {},
+  );
+  fs.mkdirSync(path.join(root, 'src'));
+  editKit(root, 'testing', (kit) => {
+    kit.outputs.push({
+      type: 'instructions',
+      source: 'instructions.md',
+      scope: 'src',
+    });
+  });
+  const scoped = run(root, ['apply']);
+  assert.match(scoped, /Skipped instructions from testing/);
+  assert.doesNotMatch(scoped, /no agent outputs/);
+  assert.match(read(root, 'src/AGENTS.md'), /Testing/);
+  assert.equal(read(root, 'src/CLAUDE.md'), '@AGENTS.md\n');
+  run(root, ['disable', 'testing']);
+  assert.equal(read(root, 'AGENTS.md'), 'Team guidance');
+  assert.equal(fs.existsSync(path.join(root, 'src/AGENTS.md')), false);
 });
 
 test('Git tracks catalog but ignores exact generated paths and local state', (t) => {
@@ -247,7 +369,6 @@ test('Git tracks catalog but ignores exact generated paths and local state', (t)
       root,
       'check-ignore',
       'AGENTS.md',
-      '.loadout/local.json',
       '.claude/skills/graphiffy/SKILL.md',
     ],
     { encoding: 'utf8' },
@@ -277,7 +398,7 @@ test('discovery stops at .git file boundaries and state is independent', (t) => 
   fs.mkdirSync(path.join(worktree, 'nested'));
   assert.equal(discover(path.join(worktree, 'nested')), worktree);
   fs.unlinkSync(path.join(worktree, '.loadout/config.yaml'));
-  assert.throws(() => discover(worktree), /No .loadout/);
+  assert.equal(discover(worktree), worktree);
 });
 
 test('directory scopes remain native and scoped skills are rejected', async (t) => {
@@ -358,7 +479,7 @@ test('stale previews and concurrent applies are rejected', async (t) => {
   assert.throws(() => apply(preview), /File changed since preview/);
   assert.equal(fs.existsSync(path.join(root, 'CLAUDE.md')), false);
   fs.unlinkSync(path.join(root, 'AGENTS.md'));
-  fs.mkdirSync(path.join(root, '.loadout/apply.lock'));
+  fs.mkdirSync(path.join(root, '.loadout-personal/apply.lock'));
   assert.throws(() => apply(preview), /Another apply/);
 });
 
@@ -377,8 +498,14 @@ test('I/O failures roll back already written files', async (t) => {
     fs.existsSync(path.join(root, '.agents/skills/graphiffy/SKILL.md')),
     false,
   );
-  assert.equal(fs.existsSync(path.join(root, '.loadout/local.json')), false);
-  assert.equal(fs.existsSync(path.join(root, '.loadout/apply.lock')), false);
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/local.json')),
+    false,
+  );
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/apply.lock')),
+    false,
+  );
 });
 
 test('skill binary files and executable permissions survive generation', async (t) => {
@@ -404,15 +531,16 @@ test('malformed ownership and ignore blocks fail before any writes', async (t) =
   const root = fixture(t);
   put(
     root,
-    '.loadout/generated.json',
+    '.loadout-personal/generated.json',
     JSON.stringify({
       schemaVersion: 1,
       files: { '../outside': { hash: 'a'.repeat(64), mode: 420 } },
     }),
   );
   await assert.rejects(build(root), /Invalid generated ownership path/);
-  fs.unlinkSync(path.join(root, '.loadout/generated.json'));
-  put(root, '.gitignore', '# >>> loadout\n');
+  fs.unlinkSync(path.join(root, '.loadout-personal/generated.json'));
+  execFileSync('git', ['init', '-q', root]);
+  put(root, '.git/info/exclude', `# >>> loadout ${ignoreTarget(root)!.key}\n`);
   await assert.rejects(build(root), /Malformed Loadout block/);
   assert.equal(fs.existsSync(path.join(root, 'AGENTS.md')), false);
 });
@@ -434,6 +562,7 @@ test('CLI content previews show instruction changes without saving them', (t) =>
 test('CLI initializes without a terminal and hides ignore files from previews', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'loadout-init-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q', root]);
   assert.match(run(root, ['init']), /Initialized .*\.loadout/);
   const preview = run(root, [
     'enable',
@@ -442,8 +571,12 @@ test('CLI initializes without a terminal and hides ignore files from previews', 
     '--diff',
   ]);
   assert.match(preview, /skills\/loadout-write-kit\/SKILL.md/);
-  assert.doesNotMatch(preview, /\.gitignore/);
-  assert.equal(fs.existsSync(path.join(root, '.loadout/local.json')), false);
+  assert.doesNotMatch(preview, /\.gitignore|info[\/]exclude/);
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/local.json')),
+    false,
+  );
   run(root, ['enable', 'loadout-write-kit']);
-  assert.match(read(root, '.gitignore'), /loadout-write-kit\/SKILL\.md/);
+  assert.match(read(root, '.git/info/exclude'), /loadout-write-kit\/SKILL\.md/);
+  assert.equal(fs.existsSync(path.join(root, '.gitignore')), false);
 });

@@ -52,11 +52,14 @@ try {
     execFileSync(process.execPath, [cli, '-C', project, ...args], {
       encoding: 'utf8',
       cwd: project,
+      env: { ...process.env, HOME: root, USERPROFILE: root },
     });
   assert.equal(run('--version').trim(), packed.version);
-  assert.match(run('init'), /editable starter kit/);
-  assert.match(run('list'), /starter \[Needs setup\]/);
+  assert.match(run('list'), /loadout-write-kit/);
+  assert.equal(fs.existsSync(path.join(project, '.loadout')), false);
   run('--offline', 'enable', 'loadout-write-kit');
+  assert.equal(fs.existsSync(path.join(project, '.loadout')), false);
+  assert.ok(fs.existsSync(path.join(project, '.loadout-personal/local.json')));
   for (const agent of ['.agents', '.claude'])
     assert.ok(
       fs.existsSync(
@@ -73,6 +76,8 @@ try {
       ),
       false,
     );
+  assert.match(run('init'), /editable starter kit/);
+  assert.match(run('list'), /starter \[Needs setup\]/);
   console.log(
     'Packed install, CLI, bundled assets, repeat apply, and removal passed.',
   );

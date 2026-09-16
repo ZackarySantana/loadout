@@ -52,11 +52,15 @@ export function readExternal(root: string): {
   raw?: Buffer;
   store: ExternalStore;
 } {
-  const raw = readOptional(root, '.loadout/external.json');
+  const raw = readOptional(root, '.loadout-personal/external.json');
   return {
     raw,
     store: raw
-      ? parse(storeSchema, JSON.parse(raw.toString()), '.loadout/external.json')
+      ? parse(
+          storeSchema,
+          JSON.parse(raw.toString()),
+          '.loadout-personal/external.json',
+        )
       : { schemaVersion: 1, kits: {} },
   };
 }

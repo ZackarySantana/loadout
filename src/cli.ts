@@ -12,7 +12,7 @@ import {
   confirmRetry,
   confirmAdoption,
 } from './interactive.js';
-import { apply, applyAll, plan, type Plan } from './storage.js';
+import { apply, applyAll, hasChanges, plan, type Plan } from './storage.js';
 import { renderWithExternal } from './external.js';
 import { DownloadCancelledError } from './retry.js';
 import { loadTarget, type Target } from './targets.js';
@@ -35,7 +35,7 @@ const program = new Command()
   .name('loadout')
   .description('Configure your repository’s agent tools.')
   .version(version)
-  .option('-g, --global', 'use the Loadout catalog in your home directory')
+  .option('-g, --global', 'enable kits for all repositories')
   .option('--offline', 'use saved external kits without network requests')
   .option(
     '-C, --cwd <directory>',
@@ -61,10 +61,7 @@ function context(): { catalog: Catalog; state: State } {
   const { root, global } = targetRoot();
   const target = loadTarget(root, global);
   if (!target.catalog || !target.state)
-    throw new Error(
-      target.error ??
-        `Loadout is not initialized here. Run loadout ${global ? '--global ' : ''}init.`,
-    );
+    throw new Error(target.error ?? 'Cannot load kits for this location.');
   return { catalog: target.catalog, state: target.state };
 }
 function interactiveTargets(): { targets: Target[]; initial: number } {
@@ -85,20 +82,28 @@ function interactiveTargets(): { targets: Target[]; initial: number } {
   const initial = global ? targets.length - 1 : 0;
   const current = targets[initial]!;
   if (!current.catalog)
-    throw new Error(
-      current.error ??
-        `Loadout is not initialized here. Run loadout ${global ? '--global ' : ''}init.`,
-    );
+    throw new Error(current.error ?? 'Cannot load kits for this location.');
   return { targets, initial };
 }
+function showSkipped(result: Plan, preview = false): void {
+  for (const skipped of result.skippedInstructions ?? [])
+    console.log(
+      `Skipped instructions from ${skipped.kits.join(', ')} (${skipped.paths.join(', ')}): ${skipped.reason}.`,
+    );
+  for (const id of result.kitsWithoutOutputs ?? [])
+    console.log(
+      `${id}: no agent outputs ${preview ? 'will be applied' : 'applied'}; all instructions skipped.`,
+    );
+}
 function preview(result: Plan, diff = false): void {
+  showSkipped(result, true);
   const changed = result.changes.filter(
-    (c) => c.kind !== 'unchanged' && c.path !== '.gitignore',
+    (c) => c.kind !== 'unchanged' && !c.path.startsWith('.loadout-personal/'),
   );
   if (!changed.length) {
     console.log(
-      result.changes.some((c) => c.kind !== 'unchanged')
-        ? 'Ignore rules will be refreshed.'
+      hasChanges(result)
+        ? 'Local settings will be refreshed.'
         : 'Generated files are unchanged.',
     );
     return;
@@ -110,8 +115,6 @@ function preview(result: Plan, diff = false): void {
     );
   if (diff) {
     for (const change of changed) {
-      if (change.path.startsWith('.loadout/') || change.path === '.gitignore')
-        continue;
       const before = change.before?.content ?? Buffer.alloc(0),
         after = change.after?.content ?? Buffer.alloc(0);
       if (before.equals(after)) continue;
@@ -195,6 +198,7 @@ async function generate(
   else {
     const count = apply(result);
     if (count) console.log(`\nLoadout applied (${count} files changed).`);
+    showSkipped(result);
   }
 }
 async function setup(): Promise<void> {
@@ -231,19 +235,21 @@ async function setup(): Promise<void> {
       throw new DownloadCancelledError();
     plans.push(result);
   }
-  if (
-    !plans.some((result) => result.changes.some((c) => c.kind !== 'unchanged'))
-  )
-    return;
+  if (!plans.some(hasChanges)) return;
   if (await confirmApply()) {
     applyAll(plans);
     console.log('\nYour loadout is ready.');
+    for (const result of plans) {
+      if (!result.skippedInstructions?.length) continue;
+      console.log(result.root);
+      showSkipped(result);
+    }
   } else console.log('Cancelled. No kit selections or agent outputs saved.');
 }
 program.action(setup);
 program
   .command('init')
-  .description('create a starter catalog and open setup in a terminal')
+  .description('create an optional shared catalog and open setup')
   .action(async () => {
     const opts = program.opts<{ cwd: string; global?: boolean }>();
     const root = opts.global ? os.homedir() : opts.cwd;
@@ -279,7 +285,7 @@ program
       );
     }
     if (!catalog.kits.size)
-      console.log('No kits found. Add .loadout/kits/<name>/kit.yaml.');
+      console.log('No kits found. Add ~/.loadout/kits/<name>/kit.yaml.');
   });
 program
   .command('explain <kit>')

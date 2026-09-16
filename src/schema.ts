@@ -27,7 +27,14 @@ export const scopeSchema = relativePath.refine(
     !p
       .split('/')
       .some((s) =>
-        ['.git', '.loadout', '.agents', '.claude', '.codex'].includes(s),
+        [
+          '.git',
+          '.loadout',
+          '.loadout-personal',
+          '.agents',
+          '.claude',
+          '.codex',
+        ].includes(s),
       ),
   'Scope must be a repository directory outside configuration directories',
 );
@@ -153,7 +160,7 @@ export type Kit = z.infer<typeof kitSchema> & {
   directory: string;
   external?: ExternalSource;
   pinned?: ExternalSource;
-  origin?: 'curated' | 'external' | 'bundled';
+  origin?: 'curated' | 'external' | 'bundled' | 'personal';
 };
 export type Catalog = {
   root: string;
@@ -181,7 +188,8 @@ export function parse<T>(
 export function kitSource(kit: Kit): string {
   return kit.origin === 'bundled'
     ? 'loadout'
-    : ((kit.pinned ?? kit.external)?.repo ?? 'Repository');
+    : ((kit.pinned ?? kit.external)?.repo ??
+        (kit.origin === 'personal' ? 'Personal' : 'Repository'));
 }
 
 export function sameSource(a: ExternalSource, b: ExternalSource): boolean {

@@ -23,13 +23,16 @@ export function discover(cwd: string): string {
   while (true) {
     // A home catalog is global, never an implicit catalog for child projects.
     if (root === home && root !== initial) break;
-    if (exists(path.join(root, '.loadout/config.yaml'))) return root;
-    if (exists(path.join(root, '.git')) || path.dirname(root) === root) break;
+    if (
+      exists(path.join(root, '.loadout/config.yaml')) ||
+      exists(path.join(root, '.loadout-personal'))
+    )
+      return root;
+    if (exists(path.join(root, '.git'))) return root;
+    if (path.dirname(root) === root) break;
     root = path.dirname(root);
   }
-  throw new Error(
-    'No .loadout/config.yaml found in this repository. Run loadout init at the repository root.',
-  );
+  return initial;
 }
 function readYaml(root: string, relative: string): unknown {
   try {
@@ -38,7 +41,7 @@ function readYaml(root: string, relative: string): unknown {
     throw new Error(`${relative}: ${(error as Error).message}`);
   }
 }
-function validateKit(kit: Kit, root: string, global: boolean): void {
+function validateKit(kit: Kit): void {
   if (kit.ready === false) return;
   const dir = kit.directory;
   for (const [key, q] of Object.entries(kit.questions)) {
@@ -59,17 +62,8 @@ function validateKit(kit: Kit, root: string, global: boolean): void {
         );
     }
     if (output.type === 'instructions') {
-      if (global && output.scope !== '.')
-        throw new Error(`${kit.id}: global instructions must use scope: .`);
       if (!fs.statSync(source).isFile())
         throw new Error(`${kit.id}: instructions source must be a file`);
-      if (output.scope !== '.') {
-        const scope = safePath(root, output.scope);
-        if (!exists(scope) || !fs.statSync(scope).isDirectory())
-          throw new Error(
-            `${kit.id}: scope directory does not exist: ${output.scope}`,
-          );
-      }
     } else {
       if (!fs.statSync(source).isDirectory())
         throw new Error(`${kit.id}: skill source must be a directory`);
@@ -99,26 +93,57 @@ export function loadCatalog(
   root: string,
   global = path.resolve(root) === fs.realpathSync(os.homedir()),
 ): Catalog {
-  const config = parse(
-    configSchema,
-    readYaml(root, '.loadout/config.yaml'),
-    '.loadout/config.yaml',
-  );
-  const directory = safePath(root, '.loadout/kits');
-  const kits: Catalog['kits'] = new Map();
-  for (const folder of exists(directory)
-    ? fs.readdirSync(directory).sort()
-    : []) {
-    const dir = safePath(directory, folder);
-    if (!fs.statSync(dir).isDirectory()) continue;
-    const manifest = `.loadout/kits/${folder}/kit.yaml`;
-    const kit = {
-      ...parse(kitSchema, readYaml(root, manifest), manifest),
-      directory: dir,
+  const home = fs.realpathSync(os.homedir());
+  const sources = [
+    ...(!global && root !== home
+      ? [
+          { root: home, directory: '.loadout', personal: true },
+          { root: home, directory: '.loadout-personal', personal: true },
+        ]
+      : []),
+    { root, directory: '.loadout', personal: global },
+    { root, directory: '.loadout-personal', personal: true },
+  ];
+  const configs = sources.map((source) => {
+    const file = `${source.directory}/config.yaml`;
+    const present = exists(safePath(source.root, file));
+    return {
+      ...source,
+      present,
+      config: parse(
+        configSchema,
+        present ? readYaml(source.root, file) : { schemaVersion: 1 },
+        `${source.root}/${file}`,
+      ),
     };
-    if (kits.has(kit.id)) throw new Error(`Duplicate kit ID: ${kit.id}`);
-    validateKit(kit, root, global);
-    kits.set(kit.id, kit);
+  });
+  const config = {
+    curated:
+      [...configs].reverse().find((source) => source.present)?.config.curated ??
+      true,
+    externalKits: configs.flatMap(({ config }) => config.externalKits),
+  };
+  const kits: Catalog['kits'] = new Map();
+  for (const source of configs) {
+    const directory = safePath(source.root, `${source.directory}/kits`);
+    for (const folder of exists(directory)
+      ? fs.readdirSync(directory).sort()
+      : []) {
+      const dir = safePath(directory, folder);
+      if (!fs.statSync(dir).isDirectory()) continue;
+      const manifest = `${source.directory}/kits/${folder}/kit.yaml`;
+      const kit: Kit = {
+        ...parse(kitSchema, readYaml(source.root, manifest), manifest),
+        directory: dir,
+        ...(source.personal ? { origin: 'personal' as const } : {}),
+      };
+      if (kits.has(kit.id))
+        throw new Error(
+          `Duplicate kit ID: ${kit.id}. Personal and repository kits must have distinct IDs.`,
+        );
+      validateKit(kit);
+      kits.set(kit.id, kit);
+    }
   }
   for (const [definitions, origin] of [
     [config.curated ? curatedKits : [], 'curated'],
@@ -162,7 +187,7 @@ export function loadCatalog(
         origin: 'bundled',
       };
       if (kits.has(kit.id)) throw new Error(`Duplicate kit ID: ${kit.id}`);
-      validateKit(kit, root, global);
+      validateKit(kit);
       kits.set(kit.id, kit);
     }
   }

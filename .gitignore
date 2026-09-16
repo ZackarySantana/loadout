@@ -1,12 +1,3 @@
 node_modules/
 dist/
 *.tgz
-
-# >>> loadout
-/.loadout/adopted.json
-/.loadout/adopted/
-/.loadout/apply.lock/
-/.loadout/external.json
-/.loadout/generated.json
-/.loadout/local.json
-# <<< loadout

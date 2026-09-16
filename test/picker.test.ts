@@ -182,7 +182,7 @@ test('installed bundled kits retain pending removals and allow undo across tabs'
     columns: 80,
     rows: 24,
   });
-  ui.events.keypress('left');
+  ui.events.keypress('right');
   ui.events.keypress('space');
   assert.match(ui.getScreen(), /› ○ loadout-testing[^\n]*Will uninstall/);
   assert.match(ui.getScreen(), /Select again to keep/);
@@ -216,7 +216,7 @@ test('pending uninstalls respect shared dependencies and exclude cached inactive
     columns: 80,
     rows: 40,
   });
-  ui.events.keypress('left');
+  ui.events.keypress('right');
   ui.events.keypress('space');
   assert.match(ui.getScreen(), /○ first[^\n]*Will uninstall/);
   assert.match(ui.getScreen(), /◆ shared[^\n]*required/);
@@ -244,7 +244,6 @@ test('large provider catalogs stay paginated and searchable within terminal boun
     columns: 40,
     rows: 16,
   });
-  events.keypress('tab');
   assert.match(getScreen(), /of 12/);
   for (const line of getScreen().split('\n'))
     assert.ok(stringWidth(line) <= 40, line);
@@ -395,7 +394,6 @@ test('Space and Enter open and toggle without continuing; only the Continue butt
     void ui.answer.then(() => {
       finished = true;
     });
-    ui.events.keypress('right');
     assert.match(ui.getScreen(), /alpha\/skills[^\n]*1 downloaded/);
     assert.match(ui.getScreen(), /\[ Continue \]/);
     ui.events.keypress(key);

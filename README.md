@@ -1,12 +1,12 @@
 # Loadout
 
-Share a collection of agent skills and instructions with your team. Everyone in the repository picks the kits they want, keeping the full collection available without adding it all to their agent's context.
+Choose agent skills and instructions for yourself or your team. Loadout configures Codex and Claude Code.
 
-Kit definitions live in the repository. Each developer's selections and generated files stay local and ignored by Git. Loadout configures both Codex and Claude Code.
+Private kits and selections live in `.loadout-personal/`, ignored by Git. Add reusable kits to `~/.loadout/kits/` and enable them per repository.
 
 ## Use it
 
-Requires Node.js **22.13+**. In a repository using Loadout:
+Requires Node.js **22.13+**. Run in any repository:
 
 ```sh
 npm install -g @lidtop/loadout
@@ -15,7 +15,9 @@ loadout
 
 Pick your kits, select **Continue**, and confirm. Run `loadout` again to change your selection.
 
-## Add it to your repository
+Conflicting project instructions are skipped with a warning; the kit’s skills still install.
+
+## Share kits with your team
 
 ```sh
 loadout init

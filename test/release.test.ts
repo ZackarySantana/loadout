@@ -19,10 +19,22 @@ import { configSchema, stateSchema } from '../src/schema.js';
 import { retryDownload, DownloadCancelledError } from '../src/retry.js';
 import { confirmRetry, confirmAdoption } from '../src/interactive.js';
 
-function fixture(t: TestContext, global = false, examples = true): string {
-  // Storage's tracked-file probe is stubbed: these tests never execute Git.
-  t.mock.method(childProcess, 'execFileSync', () => '');
+function mockGit(t: TestContext, tracked = ''): void {
+  t.mock.method(
+    childProcess,
+    'execFileSync',
+    (_file: string, args: readonly string[]) => {
+      if (args.includes('ls-files')) return tracked;
+      throw Object.assign(new Error('not a git repository'), {
+        stderr: Buffer.from('not a git repository'),
+      });
+    },
+  );
   syncBuiltinESMExports();
+}
+function fixture(t: TestContext, global = false, examples = true): string {
+  // These filesystem-only tests run outside Git.
+  mockGit(t);
   t.after(() => {
     t.mock.restoreAll();
     syncBuiltinESMExports();
@@ -173,7 +185,7 @@ outputs:
   const before = snapshot(root);
   const rename = fs.renameSync;
   t.mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => {
-    if (String(to) === path.join(root, '.loadout/local.json'))
+    if (String(to) === path.join(root, '.loadout-personal/local.json'))
       throw new Error('Simulated metadata write failure');
     return rename(from, to);
   });
@@ -198,9 +210,9 @@ test('adoption previews preserve content, reuse Claude imports, update once, and
     put(root, agents, original);
     put(root, claude, claudeOriginal);
     const before = snapshot(root);
-    await assert.rejects(
-      prepare(root, ['testing'], global, false),
-      /Unmanaged file/,
+    assert.deepEqual(
+      (await prepare(root, ['testing'], global, false)).kitsWithoutOutputs,
+      ['testing'],
     );
     const preview = await prepare(root, ['testing'], global);
     assert.deepEqual(preview.adopted?.sort(), [agents, claude].sort());
@@ -219,18 +231,19 @@ test('adoption previews preserve content, reuse Claude imports, update once, and
     assert.deepEqual(read(root, agents), original);
     assert.deepEqual(read(root, claude), claudeOriginal);
     assert.equal(
-      fs.existsSync(path.join(root, '.loadout/adopted.json')),
+      fs.existsSync(path.join(root, '.loadout-personal/adopted.json')),
       false,
     );
-    assert.equal(fs.existsSync(path.join(root, '.loadout/adopted')), false);
+    assert.equal(
+      fs.existsSync(path.join(root, '.loadout-personal/adopted')),
+      false,
+    );
     assert.deepEqual(
-      JSON.parse(read(root, '.loadout/generated.json').toString()).files,
+      JSON.parse(read(root, '.loadout-personal/generated.json').toString())
+        .files,
       {},
     );
-    assert.doesNotMatch(
-      read(root, '.gitignore').toString(),
-      /^\/(?:\.codex\/)?AGENTS.md$/m,
-    );
+    assert.equal(fs.existsSync(path.join(root, '.gitignore')), false);
   }
 });
 
@@ -274,28 +287,33 @@ test('identical skills can be adopted and restored; differing or extra files blo
   await assert.rejects(prepare(root, ['graphiffy']), /Existing skill differs/);
 });
 
-test('tracked files, stale previews, edited outputs, and changed baselines block adoption writes', async (t) => {
+test('tracked instructions skip adoption; stale previews, edited outputs, and changed baselines block writes', async (t) => {
   const root = fixture(t);
   put(root, 'AGENTS.md', 'Original');
-  t.mock.method(childProcess, 'execFileSync', () => 'AGENTS.md\0');
-  syncBuiltinESMExports();
-  await assert.rejects(prepare(root, ['testing']), /Git-tracked/);
-  t.mock.method(childProcess, 'execFileSync', () => '');
-  syncBuiltinESMExports();
+  mockGit(t, 'AGENTS.md\0');
+  const skipped = await prepare(root, ['testing']);
+  assert.deepEqual(skipped.adopted, []);
+  assert.match(skipped.skippedInstructions![0]!.reason, /tracked by Git/);
+  mockGit(t);
   const preview = await prepare(root, ['testing']);
   put(root, 'AGENTS.md', 'Changed during preview');
   assert.throws(() => apply(preview), /File changed since preview/);
-  assert.equal(fs.existsSync(path.join(root, '.loadout/adopted')), false);
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/adopted')),
+    false,
+  );
   apply(await prepare(root, ['testing']));
   const generated = read(root, 'AGENTS.md');
   put(root, 'AGENTS.md', 'Manual edits');
   await assert.rejects(prepare(root, []), /manually modified/);
   put(root, 'AGENTS.md', generated);
   const next = await prepare(root, []);
-  const manifest = JSON.parse(read(root, '.loadout/adopted.json').toString());
+  const manifest = JSON.parse(
+    read(root, '.loadout-personal/adopted.json').toString(),
+  );
   put(
     root,
-    `.loadout/adopted/${manifest.files['AGENTS.md'].hash}`,
+    `.loadout-personal/adopted/${manifest.files['AGENTS.md'].hash}`,
     'Corrupt baseline',
   );
   assert.throws(() => apply(next), /File changed since preview/);
@@ -327,8 +345,14 @@ test('failed adoption across two locations restores outputs, baselines, metadata
   assert.throws(() => applyAll(plans), /Simulated write failure/);
   assert.deepEqual([snapshot(first), snapshot(second)], before);
   for (const root of [first, second]) {
-    assert.equal(fs.existsSync(path.join(root, '.loadout/adopted')), false);
-    assert.equal(fs.existsSync(path.join(root, '.loadout/apply.lock')), false);
+    assert.equal(
+      fs.existsSync(path.join(root, '.loadout-personal/adopted')),
+      false,
+    );
+    assert.equal(
+      fs.existsSync(path.join(root, '.loadout-personal/apply.lock')),
+      false,
+    );
   }
 });
 
@@ -345,16 +369,17 @@ test('adoption rechecks skill inventories and tracked status immediately before 
   const preview = plan(catalog, state, generated, { adopt: true });
   put(root, '.agents/skills/graphiffy/extra.md', 'New personal note');
   assert.throws(() => apply(preview), /Skill directory changed since preview/);
-  assert.equal(fs.existsSync(path.join(root, '.loadout/adopted')), false);
-  fs.unlinkSync(path.join(root, '.agents/skills/graphiffy/extra.md'));
-  t.mock.method(
-    childProcess,
-    'execFileSync',
-    () => '.agents/skills/graphiffy/SKILL.md\0',
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/adopted')),
+    false,
   );
-  syncBuiltinESMExports();
+  fs.unlinkSync(path.join(root, '.agents/skills/graphiffy/extra.md'));
+  mockGit(t, '.agents/skills/graphiffy/SKILL.md\0');
   assert.throws(() => apply(preview), /became Git-tracked/);
-  assert.equal(fs.existsSync(path.join(root, '.loadout/adopted')), false);
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/adopted')),
+    false,
+  );
 });
 
 test('shared original blobs survive partial release and originals with restricted modes are restored', (t) => {
@@ -372,19 +397,30 @@ test('shared original blobs survive partial release and originals with restricte
       ['CLAUDE.md', { content: Buffer.from('@AGENTS.md\n'), mode: 0o644 }],
     ]),
     skillRoots: new Set<string>(),
+    instructionGroups: [],
+    skillKits: new Set<string>(),
   };
   apply(plan(catalog, state, generated, { adopt: true }));
-  assert.equal(fs.readdirSync(path.join(root, '.loadout/adopted')).length, 1);
+  assert.equal(
+    fs.readdirSync(path.join(root, '.loadout-personal/adopted')).length,
+    1,
+  );
   generated.files.delete('AGENTS.md');
   apply(plan(catalog, state, generated));
   assert.deepEqual(read(root, 'AGENTS.md'), original);
   if (process.platform !== 'win32')
     assert.equal(fs.statSync(path.join(root, 'AGENTS.md')).mode & 0o777, 0o600);
-  assert.equal(fs.readdirSync(path.join(root, '.loadout/adopted')).length, 1);
+  assert.equal(
+    fs.readdirSync(path.join(root, '.loadout-personal/adopted')).length,
+    1,
+  );
   generated.files.clear();
   apply(plan(catalog, state, generated));
   assert.deepEqual(read(root, 'CLAUDE.md'), original);
-  assert.equal(fs.existsSync(path.join(root, '.loadout/adopted')), false);
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/adopted')),
+    false,
+  );
 });
 
 test('downloads retry once automatically, then allow retry or cancellation', async () => {

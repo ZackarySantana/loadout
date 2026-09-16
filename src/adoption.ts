@@ -15,7 +15,7 @@ import { parse } from './schema.js';
 import type { FileContent, Rendered } from './render.js';
 import type { Change } from './storage.js';
 
-const manifestPath = '.loadout/adopted.json';
+const manifestPath = '.loadout-personal/adopted.json';
 const digest = (bytes: Buffer) =>
   createHash('sha256').update(bytes).digest('hex');
 const manifestSchema = z
@@ -100,11 +100,11 @@ export function prepareAdoption(
   for (const [file, entry] of Object.entries(manifest.files)) {
     if (!isOutput(file, global) || !Object.hasOwn(owned, file))
       throw new Error(`Unexpected adopted output: ${file}`);
-    const blobPath = `.loadout/adopted/${entry.hash}`;
+    const blobPath = `.loadout-personal/adopted/${entry.hash}`;
     const blob = read(root, blobPath);
     if (!blob || digest(blob.content) !== entry.hash)
       throw new Error(
-        `Original content is missing or changed for ${file}. Restore its .loadout/adopted backup before applying.`,
+        `Original content is missing or changed for ${file}. Restore its .loadout-personal/adopted backup before applying.`,
       );
     blobs.set(blobPath, blob);
     originals.set(file, { content: blob.content, mode: entry.mode });
@@ -181,7 +181,7 @@ export function prepareAdoption(
       });
     const hash = digest(original.content);
     nextManifest.files[file] = { hash, mode: original.mode };
-    const blobPath = `.loadout/adopted/${hash}`;
+    const blobPath = `.loadout-personal/adopted/${hash}`;
     const existing = blobs.get(blobPath) ?? read(root, blobPath);
     if (existing && !existing.content.equals(original.content))
       throw new Error(`Original backup changed: ${blobPath}`);

@@ -8,7 +8,7 @@ import stringWidth from 'string-width';
 import { continuePicker } from './picker-helpers.js';
 import { targetPicker } from '../src/picker.js';
 import { initialize } from './examples.js';
-import { loadTarget, initializeTarget, type Target } from '../src/targets.js';
+import { loadTarget, type Target } from '../src/targets.js';
 import { loadCatalog, discover } from '../src/catalog.js';
 import { configure } from '../src/resolve.js';
 import { render } from '../src/render.js';
@@ -28,67 +28,27 @@ async function preview(target: Target, selected: string[]) {
   return plan(catalog, state, render(catalog, state));
 }
 
-test('scope switch gates global initialization, loads saved state, and retains drafts in both locations', async (t) => {
+test('scope switching works without global initialization and retains independent selections', async (t) => {
   const { home, repo } = fixture(t);
   const repository = loadTarget(repo, false);
   apply(await preview(repository, ['testing']));
   const screen = await prompt(targetPicker, {
     targets: [loadTarget(repo, false), loadTarget(home, true)],
-    initialize: initializeTarget,
     columns: 80,
     rows: 24,
   });
   const switchScope = () => screen.input.write('\u001b[D\r');
-  assert.match(screen.getScreen(), /\[ Go to Global \]/);
-  screen.input.write('\u001b[C');
-  assert.match(screen.getScreen(), /\[Browse\]/);
-  screen.events.keypress('tab');
-  assert.match(screen.getScreen(), /\[Installed\]/);
-  screen.input.write('\u001b[C');
-  assert.match(screen.getScreen(), /space\/enter setup/);
-  assert.match(screen.getScreen(), /Set up Global\n/);
-  assert.doesNotMatch(screen.getScreen(), /Kits for all repositories/);
-  assert.doesNotMatch(screen.getScreen(), /selected|Search|\[Installed\]/);
-  screen.events.keypress('escape');
-  assert.doesNotMatch(screen.getScreen(), /space\/enter setup/);
-  screen.events.keypress('tab');
-  screen.input.write('\u001b[C');
-  assert.match(screen.getScreen(), /\[Kits\]/);
+  assert.match(screen.getScreen(), /Repository/);
   switchScope();
-  assert.match(screen.getScreen(), /Set up Global and switch\?/);
-  assert.match(screen.getScreen(), /Create .*\/\.loadout/);
-  assert.match(screen.getScreen(), /\[Enter\/Esc\] Cancel   \[y\] Set up/);
-  assert.doesNotMatch(screen.getScreen(), /is not initialized|y to initialize/);
-  assert.equal(fs.existsSync(path.join(home, '.loadout')), false);
-  screen.events.keypress('enter');
-  assert.equal(fs.existsSync(path.join(home, '.loadout')), false);
-  assert.match(screen.getScreen(), /Repository ·/);
-  screen.events.keypress('space');
-  switchScope();
-  assert.match(screen.getScreen(), /Unapplied changes in Repository/);
-  screen.events.keypress('y');
   assert.match(screen.getScreen(), /Global/);
   assert.match(screen.getScreen(), /\[Browse\]/);
-  assert.doesNotMatch(screen.getScreen(), /\bKits\b/);
-  assert.match(screen.getScreen(), /\[ Go to Repository \]/);
-  assert.match(screen.getScreen(), /0 selected/);
-  assert.equal(fs.existsSync(path.join(home, '.loadout/kits')), false);
-  assert.match(screen.getScreen(), /› ▸ loadout/);
+  assert.doesNotMatch(screen.getScreen(), /Set up Global/);
+  assert.equal(fs.existsSync(path.join(home, '.loadout')), false);
   screen.events.keypress('space');
   screen.events.type('write-kit');
   screen.events.keypress('space');
   switchScope();
   assert.match(screen.getScreen(), /Unapplied changes in Global/);
-  assert.match(screen.getScreen(), /Selections stay in this session/);
-  screen.events.keypress('enter'); // Stay by default without losing the draft.
-  assert.match(screen.getScreen(), /1 selected/);
-  switchScope();
-  screen.events.keypress('y');
-  assert.match(screen.getScreen(), /2 selected/);
-  assert.match(screen.getScreen(), /● code-navigation/);
-  assert.match(screen.getScreen(), /● testing/);
-  switchScope();
-  assert.match(screen.getScreen(), /Unapplied changes in Repository/);
   screen.events.keypress('y');
   assert.match(screen.getScreen(), /1 selected/);
   continuePicker(screen);
@@ -96,12 +56,15 @@ test('scope switch gates global initialization, loads saved state, and retains d
   assert.deepEqual(
     selections.map(({ target, state }) => [target.global, state.selected]),
     [
-      [false, ['code-navigation', 'testing']],
+      [false, ['testing']],
       [true, ['loadout-write-kit']],
     ],
   );
   assert.deepEqual(loadState(repository.catalog!).selected, ['testing']);
-  assert.equal(fs.existsSync(path.join(home, '.loadout/local.json')), false);
+  assert.equal(
+    fs.existsSync(path.join(home, '.loadout-personal/local.json')),
+    false,
+  );
 });
 
 test('initialized locations display their own selections, errors preserve the active location, and narrow layout fits', async (t) => {
@@ -181,10 +144,10 @@ test('global generation uses personal paths, supports both targets in one apply,
     path.join(home, '.claude/CLAUDE.md'),
     'My existing preferences',
   );
-  await assert.rejects(
-    preview(global, ['testing']),
-    /Unmanaged file already exists/,
-  );
+  const skipped = await preview(global, ['testing']);
+  assert.deepEqual(skipped.kitsWithoutOutputs, ['testing']);
+  apply(skipped);
+  assert.equal(fs.existsSync(path.join(home, '.codex/AGENTS.md')), false);
   assert.equal(read(home, '.claude/CLAUDE.md'), 'My existing preferences');
 });
 
@@ -203,8 +166,14 @@ test('multiple-location apply rolls back both roots and releases every lock on f
   });
   assert.throws(() => applyAll(plans), /Simulated global write failure/);
   for (const root of [home, repo]) {
-    assert.equal(fs.existsSync(path.join(root, '.loadout/apply.lock')), false);
-    assert.equal(fs.existsSync(path.join(root, '.loadout/local.json')), false);
+    assert.equal(
+      fs.existsSync(path.join(root, '.loadout-personal/apply.lock')),
+      false,
+    );
+    assert.equal(
+      fs.existsSync(path.join(root, '.loadout-personal/local.json')),
+      false,
+    );
   }
   assert.equal(fs.existsSync(path.join(repo, 'AGENTS.md')), false);
   assert.equal(fs.existsSync(path.join(home, '.claude/CLAUDE.md')), false);
@@ -224,10 +193,16 @@ test('a stale global preview prevents repository writes, and an existing global 
   );
   assert.throws(() => applyAll(plans), /File changed since preview/);
   assert.equal(fs.existsSync(path.join(repo, 'AGENTS.md')), false);
-  fs.mkdirSync(path.join(home, '.loadout/apply.lock'));
+  fs.mkdirSync(path.join(home, '.loadout-personal/apply.lock'));
   assert.throws(() => applyAll(plans), /Another apply/);
-  assert.equal(fs.existsSync(path.join(home, '.loadout/apply.lock')), true);
-  assert.equal(fs.existsSync(path.join(repo, '.loadout/apply.lock')), false);
+  assert.equal(
+    fs.existsSync(path.join(home, '.loadout-personal/apply.lock')),
+    true,
+  );
+  assert.equal(
+    fs.existsSync(path.join(repo, '.loadout-personal/apply.lock')),
+    false,
+  );
 });
 
 test('home catalogs are not discovered for uninitialized child projects and global scopes are validated', (t) => {
@@ -237,7 +212,7 @@ test('home catalogs are not discovered for uninitialized child projects and glob
   assert.equal(discover(repo), repo);
   const empty = path.join(home, 'uninitialized');
   fs.mkdirSync(empty);
-  assert.throws(() => discover(empty), /No .loadout/);
+  assert.equal(discover(empty), empty);
   assert.equal(discover(home), home);
   assert.equal(loadCatalog(home).global, true);
   const file = path.join(home, '.loadout/kits/testing/kit.yaml');
@@ -245,7 +220,11 @@ test('home catalogs are not discovered for uninitialized child projects and glob
     file,
     fs.readFileSync(file, 'utf8') + '    scope: project\n',
   );
-  assert.throws(() => loadCatalog(home), /global instructions must use scope/);
+  const catalog = loadCatalog(home);
+  assert.throws(
+    () => render(catalog, { ...loadState(catalog), selected: ['testing'] }),
+    /global instructions must use scope/,
+  );
 });
 
 test('scope warning detects removals, ignores reverted edits, and preserves the filter on cancellation', async (t) => {

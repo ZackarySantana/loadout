@@ -2,7 +2,7 @@ import { checkbox, confirm, select } from '@inquirer/prompts';
 import { configure } from './resolve.js';
 import { validAnswer, type Catalog, type State } from './schema.js';
 import { targetPicker, type TargetSelection } from './picker.js';
-import { initializeTarget, type Target } from './targets.js';
+import { type Target } from './targets.js';
 import { availableUpdates, updateDescription } from './updates.js';
 
 export async function interactive(
@@ -16,7 +16,6 @@ export async function interactive(
   const chosen = await targetPicker({
     targets,
     initial,
-    initialize: initializeTarget,
   });
   const configured: TargetSelection[] = [];
   for (const { target, state } of chosen) {
