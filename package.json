@@ -1,6 +1,6 @@
 {
   "name": "@lidtop/loadout",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Choose and manage agent instruction and skill kits for repositories and your home directory.",
   "type": "module",
   "bin": {
