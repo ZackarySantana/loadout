@@ -126,7 +126,10 @@ test('agent CLI kits browse and install under their own provider with stable IDs
   });
   ui.events.type('loadout-agent-clis');
   assert.match(ui.getScreen(), /› ▸ loadout-agent-clis\s+3 kits/);
-  assert.match(ui.getScreen(), /Included with Loadout/);
+  assert.match(
+    ui.getScreen(),
+    /Delegate tasks through agent CLI harnesses/,
+  );
   ui.events.keypress('space');
   for (const name of ['claude-cli', 'codex-cli', 'opencode-cli'])
     assert.match(ui.getScreen(), new RegExp(`○ ${name}`));

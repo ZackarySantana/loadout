@@ -197,7 +197,9 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
           const count = kits.filter((kit) => enabledSet.has(kit.id)).length;
           const origins = new Set(kits.map((kit) => kit.origin));
           const description = origins.has('bundled')
-            ? 'Included with Loadout'
+            ? id === 'loadout-agent-clis'
+              ? 'Delegate tasks through agent CLI harnesses'
+              : 'Included with Loadout'
             : id === 'Personal'
               ? 'Your personal kits'
               : origins.has('curated') && providerDescriptions[id]
