@@ -59,11 +59,12 @@ type Row = {
 };
 const providerFor = (kit: Kit): string | undefined =>
   kit.origin === 'bundled'
-    ? 'loadout'
+    ? kitSource(kit)
     : (kit.external?.repo ??
       (kit.origin === 'personal' ? 'Personal' : undefined));
 const providerPrefixes: Readonly<Record<string, string>> = {
   loadout: 'loadout-',
+  'loadout-agent-clis': 'loadout-',
   'mattpocock/skills': 'matt-pocock-',
   'anthropics/skills': 'anthropic-',
 };
@@ -195,18 +196,17 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
           if (!matching.length) return [];
           const count = kits.filter((kit) => enabledSet.has(kit.id)).length;
           const origins = new Set(kits.map((kit) => kit.origin));
-          const description =
-            id === 'loadout'
-              ? 'Included with Loadout'
-              : id === 'Personal'
-                ? 'Your personal kits'
-                : origins.has('curated') && providerDescriptions[id]
-                  ? providerDescriptions[id]!
-                  : origins.size > 1
-                    ? 'Curated and repository sources'
-                    : origins.has('curated')
-                      ? 'Curated kits'
-                      : 'Repository sources';
+          const description = origins.has('bundled')
+            ? 'Included with Loadout'
+            : id === 'Personal'
+              ? 'Your personal kits'
+              : origins.has('curated') && providerDescriptions[id]
+                ? providerDescriptions[id]!
+                : origins.size > 1
+                  ? 'Curated and repository sources'
+                  : origins.has('curated')
+                    ? 'Curated kits'
+                    : 'Repository sources';
           return [
             {
               id,

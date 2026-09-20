@@ -11,6 +11,7 @@ import { continuePicker } from './picker-helpers.js';
 import { initialize } from '../src/init.js';
 import { loadTarget } from '../src/targets.js';
 import { targetPicker } from '../src/picker.js';
+import { kitSource } from '../src/schema.js';
 
 const cli = path.resolve('dist/cli.js');
 
@@ -40,8 +41,14 @@ test('global CLI init starts empty and the bundled authoring kit installs offlin
     assert.deepEqual(
       [...loadTarget(home, true).catalog!.kits.values()]
         .filter((kit) => kit.origin === 'bundled')
-        .map((kit) => kit.id),
-      ['loadout-greenfield', 'loadout-write-kit'],
+        .map((kit) => [kit.id, kitSource(kit)]),
+      [
+        ['loadout-claude-cli', 'loadout-agent-clis'],
+        ['loadout-codex-cli', 'loadout-agent-clis'],
+        ['loadout-greenfield', 'loadout'],
+        ['loadout-opencode-cli', 'loadout-agent-clis'],
+        ['loadout-write-kit', 'loadout'],
+      ],
     );
     run('--offline', 'enable', 'loadout-write-kit');
     const source = fs.readFileSync(
@@ -91,6 +98,7 @@ test('Loadout leads Browse and selected bundled kits appear in Installed', async
     assert.ok(ui.getScreen().split('\n').length <= rows!);
     assert.doesNotMatch(ui.getScreen(), /ctrl\+c|esc×2/);
     ui.events.keypress('space');
+    assert.doesNotMatch(ui.getScreen(), /claude-cli|codex-cli|opencode-cli/);
     ui.events.type('write-kit');
     ui.events.keypress('space');
     ui.events.keypress('right');
@@ -105,4 +113,38 @@ test('Loadout leads Browse and selected bundled kits appear in Installed', async
       'loadout-write-kit',
     ]);
   }
+});
+
+test('agent CLI kits browse and install under their own provider with stable IDs', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'loadout-agent-clis-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  initialize(home, true);
+  const ui = await render(targetPicker, {
+    targets: [loadTarget(home, true)],
+    columns: 80,
+    rows: 32,
+  });
+  ui.events.type('loadout-agent-clis');
+  assert.match(ui.getScreen(), /› ▸ loadout-agent-clis\s+3 kits/);
+  assert.match(ui.getScreen(), /Included with Loadout/);
+  ui.events.keypress('space');
+  for (const name of ['claude-cli', 'codex-cli', 'opencode-cli'])
+    assert.match(ui.getScreen(), new RegExp(`○ ${name}`));
+  assert.doesNotMatch(ui.getScreen(), /greenfield|write-kit|○ loadout-/);
+  ui.events.keypress('space');
+  ui.events.keypress('down');
+  ui.events.keypress('space');
+  ui.events.keypress('down');
+  ui.events.keypress('space');
+  ui.events.keypress('right');
+  assert.match(ui.getScreen(), /\[Installed\]/);
+  for (const name of ['claude-cli', 'codex-cli', 'opencode-cli'])
+    assert.match(ui.getScreen(), new RegExp(`● loadout-${name}`));
+  assert.match(ui.getScreen(), /loadout-agent-clis · Run non-interactive/);
+  continuePicker(ui);
+  assert.deepEqual((await ui.answer)[0]!.state.selected, [
+    'loadout-claude-cli',
+    'loadout-codex-cli',
+    'loadout-opencode-cli',
+  ]);
 });

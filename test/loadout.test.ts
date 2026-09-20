@@ -315,6 +315,99 @@ test('tracked instructions are skipped while mixed kits install skills and repor
   }
 });
 
+for (const cliKit of ['claude-cli', 'codex-cli', 'opencode-cli']) {
+  test(`${cliKit} kit requires placement and can switch between context and skill`, (t) => {
+    const root = fixture(t);
+    const id = `loadout-${cliKit}`;
+    const instructions = fs.readFileSync(
+      `kits/${cliKit}/instructions.md`,
+      'utf8',
+    );
+    const skill = fs.readFileSync(
+      `kits/${cliKit}/skills/${id}/SKILL.md`,
+      'utf8',
+    );
+    assert.match(
+      run(root, ['enable', id], 1),
+      new RegExp(`${id}\\.placement: missing required answer`),
+    );
+    for (const file of [
+      'AGENTS.md',
+      'CLAUDE.md',
+      '.loadout-personal/local.json',
+    ])
+      assert.equal(fs.existsSync(path.join(root, file)), false);
+    run(root, ['enable', id, '--answer', `${id}.placement=context`]);
+    assert.equal(read(root, 'AGENTS.md'), instructions);
+    assert.equal(read(root, 'CLAUDE.md'), '@AGENTS.md\n');
+    for (const agent of ['.agents', '.claude'])
+      assert.equal(fs.existsSync(path.join(root, agent, 'skills', id)), false);
+
+    run(root, ['enable', id, '--answer', `${id}.placement=skill`]);
+    for (const file of ['AGENTS.md', 'CLAUDE.md'])
+      assert.equal(fs.existsSync(path.join(root, file)), false);
+    for (const agent of ['.agents', '.claude'])
+      assert.equal(read(root, `${agent}/skills/${id}/SKILL.md`), skill);
+    assert.match(run(root, ['apply']), /Generated files are unchanged/);
+
+    run(root, ['enable', id, '--answer', `${id}.placement=context`]);
+    assert.equal(read(root, 'AGENTS.md'), instructions);
+    assert.equal(read(root, 'CLAUDE.md'), '@AGENTS.md\n');
+    for (const agent of ['.agents', '.claude'])
+      assert.equal(fs.existsSync(path.join(root, agent, 'skills', id)), false);
+  });
+
+  test(`${cliKit} skill installs after context is skipped for existing project instructions`, (t) => {
+    for (const { existing, tracked } of [
+      { existing: ['AGENTS.md'], tracked: true },
+      { existing: ['CLAUDE.md'], tracked: true },
+      { existing: ['AGENTS.md', 'CLAUDE.md'], tracked: true },
+      { existing: ['AGENTS.md', 'CLAUDE.md'], tracked: false },
+    ]) {
+      const root = fixture(t);
+      const id = `loadout-${cliKit}`;
+      execFileSync('git', ['init', '-q', root]);
+      for (const file of existing) put(root, file, `Team ${file}\n`);
+      if (tracked) execFileSync('git', ['-C', root, 'add', ...existing]);
+      assert.match(
+        run(root, ['enable', id, '--answer', `${id}.placement=context`]),
+        new RegExp(`${id}: no agent outputs applied; all instructions skipped`),
+      );
+      const output = run(root, [
+        'enable',
+        id,
+        '--answer',
+        `${id}.placement=skill`,
+        '--adopt',
+      ]);
+      assert.doesNotMatch(output, /Skipped instructions|no agent outputs/);
+      for (const agent of ['.agents', '.claude'])
+        assert.equal(
+          read(root, `${agent}/skills/${id}/SKILL.md`),
+          fs.readFileSync(`kits/${cliKit}/skills/${id}/SKILL.md`, 'utf8'),
+        );
+      const owned = JSON.parse(
+        read(root, '.loadout-personal/generated.json'),
+      ).files;
+      for (const file of ['AGENTS.md', 'CLAUDE.md']) {
+        assert.equal(owned[file], undefined);
+        if (existing.includes(file))
+          assert.equal(read(root, file), `Team ${file}\n`);
+        else assert.equal(fs.existsSync(path.join(root, file)), false);
+      }
+      assert.match(run(root, ['apply']), /Generated files are unchanged/);
+      run(root, ['disable', id]);
+      for (const file of existing)
+        assert.equal(read(root, file), `Team ${file}\n`);
+      for (const agent of ['.agents', '.claude'])
+        assert.equal(
+          fs.existsSync(path.join(root, agent, 'skills', id)),
+          false,
+        );
+    }
+  });
+}
+
 test('instruction-only kits report no outputs and unaffected scopes still apply', (t) => {
   const root = fixture(t);
   put(root, 'AGENTS.md', 'Team guidance');

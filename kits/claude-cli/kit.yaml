@@ -1,0 +1,19 @@
+schemaVersion: 1
+id: claude-cli
+description: Run non-interactive Claude CLI conversations
+questions:
+  placement:
+    type: choice
+    message: Add Claude CLI guidance to context or as a skill?
+    choices: [context, skill]
+outputs:
+  - type: instructions
+    source: instructions.md
+    when:
+      answer: placement
+      equals: context
+  - type: skill
+    source: skills/loadout-claude-cli
+    when:
+      answer: placement
+      equals: skill
