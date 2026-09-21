@@ -2,6 +2,8 @@
 
 Choose agent skills and instructions for yourself or your team. Loadout configures Codex and Claude Code.
 
+[Watch the demo](demo.mp4)
+
 Private kits and selections live in `.loadout-personal/`, ignored by Git. Add reusable kits to `~/.loadout/kits/` and enable them per repository.
 
 ## Use it
