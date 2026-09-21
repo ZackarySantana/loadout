@@ -22,6 +22,11 @@ const scopeColor = (target: Target, value: string) =>
   styleText(target.global ? 'magenta' : 'cyan', value);
 const clean = (value: string) =>
   stripVTControlCharacters(value).replace(/[\x00-\x1f\x7f]/g, ' ');
+function installationTime(value: string): string {
+  const date = new Date(value);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 function fit(value: string, width: number): string {
   const text = clean(value);
   if (stringWidth(text) <= width) return text;
@@ -270,16 +275,17 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
         .filter((kit) => {
           if (!matches(kit)) return false;
           if (section === 'Kits') return !providerFor(kit);
-          if (section === 'Installed')
-            return (
-              !!providerFor(kit) &&
-              (!!kit.pinned ||
-                enabledSet.has(kit.id) ||
-                installedSet.has(kit.id))
-            );
+          if (section === 'Installed') return installedSet.has(kit.id);
           return providerFor(kit) === provider;
         })
-        .sort((a, b) => Number(a.ready === false) - Number(b.ready === false))
+        .sort((a, b) => {
+          if (section === 'Installed') {
+            const time = (id: string) =>
+              target.installedAt?.[id] ? Date.parse(target.installedAt[id]) : 0;
+            return time(b.id) - time(a.id);
+          }
+          return Number(a.ready === false) - Number(b.ready === false);
+        })
         .map((kit) => ({ id: kit.id, description: kit.description, kit }));
     }
     if (provider)
@@ -460,7 +466,7 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
         `  ${accent('✓')} ${selected.length} selected${requiredCount ? muted(` · ${requiredCount} required`) : ''}\n`,
       ].join('\n');
 
-    const updates = availableUpdates(catalog).length;
+    const updates = availableUpdates(catalog, selected).length;
     const counts = `${selected.length} selected${requiredCount ? ` · ${requiredCount} required` : ''}`;
     const tabLabel = (name: Section) =>
       name === 'Browse' && provider ? `Browse › ${clean(provider)}` : name;
@@ -536,7 +542,13 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
     if (spacing) beforeList.push('');
     const pageSize = Math.max(
       1,
-      Math.min(8, Math.floor((height - beforeList.length - footerHeight) / 2)),
+      Math.min(
+        8,
+        Math.floor(
+          (height - beforeList.length - footerHeight) /
+            (section === 'Installed' ? 3 : 2),
+        ),
+      ),
     );
     const listEntries = entries.filter((row) => !row.action);
     const listCursor = Math.min(cursor, Math.max(0, listEntries.length - 1));
@@ -600,6 +612,13 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
         `  ${focus ? accent('›') : ' '} ${marker} ${row.kit?.ready === false ? muted(name) : focus ? bold(name) : name}${gap}${badge}`,
         `      ${muted(fit(row.kit && section === 'Installed' ? `${kitSource(row.kit)} · ${row.description}` : row.description, width - 6))}`,
       );
+      if (section === 'Installed' && row.kit) {
+        const timestamp = target.installedAt?.[row.id];
+        const installed = timestamp
+          ? `Installed ${installationTime(timestamp)}`
+          : 'Installed';
+        lines.push(`      ${muted(fit(installed, width - 6))}`);
+      }
     }
     if (!page.length) {
       const empty = !catalog.kits.size

@@ -74,7 +74,7 @@ test('global CLI init starts empty and the bundled authoring kit installs offlin
   }
 });
 
-test('Loadout leads Browse and selected bundled kits appear in Installed', async (t) => {
+test('Loadout leads Browse and pending bundled selections stay out of Installed', async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'loadout-browse-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   initialize(home, true);
@@ -103,7 +103,8 @@ test('Loadout leads Browse and selected bundled kits appear in Installed', async
     ui.events.keypress('space');
     ui.events.keypress('right');
     assert.match(ui.getScreen(), /\[Installed\]/);
-    assert.match(ui.getScreen(), /● loadout-write-kit/);
+    assert.doesNotMatch(ui.getScreen(), /● loadout-write-kit/);
+    assert.match(ui.getScreen(), /No kits installed/);
     assert.doesNotMatch(ui.getScreen(), /ctrl\+c|esc×2/);
     for (const line of ui.getScreen().split('\n'))
       assert.ok(stringWidth(line) <= columns!, line);
@@ -126,10 +127,7 @@ test('agent CLI kits browse and install under their own provider with stable IDs
   });
   ui.events.type('loadout-agent-clis');
   assert.match(ui.getScreen(), /› ▸ loadout-agent-clis\s+3 kits/);
-  assert.match(
-    ui.getScreen(),
-    /Delegate tasks through agent CLI harnesses/,
-  );
+  assert.match(ui.getScreen(), /Delegate tasks through agent CLI harnesses/);
   ui.events.keypress('space');
   for (const name of ['claude-cli', 'codex-cli', 'opencode-cli'])
     assert.match(ui.getScreen(), new RegExp(`○ ${name}`));
@@ -142,8 +140,8 @@ test('agent CLI kits browse and install under their own provider with stable IDs
   ui.events.keypress('right');
   assert.match(ui.getScreen(), /\[Installed\]/);
   for (const name of ['claude-cli', 'codex-cli', 'opencode-cli'])
-    assert.match(ui.getScreen(), new RegExp(`● loadout-${name}`));
-  assert.match(ui.getScreen(), /loadout-agent-clis · Run non-interactive/);
+    assert.doesNotMatch(ui.getScreen(), new RegExp(`● loadout-${name}`));
+  assert.match(ui.getScreen(), /No kits installed/);
   continuePicker(ui);
   assert.deepEqual((await ui.answer)[0]!.state.selected, [
     'loadout-claude-cli',

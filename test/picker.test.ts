@@ -163,9 +163,9 @@ test('separate repository, installed, and provider browsing preserves selections
   events.keypress('escape'); // Return to providers.
   assert.match(getScreen(), /other\/skills[^\n]*1 selected/);
   events.keypress('right');
-  assert.match(getScreen(), /● interview/);
+  assert.doesNotMatch(getScreen(), /● interview/);
   assert.match(getScreen(), /● remote-alpha/);
-  events.keypress('space'); // Disable the downloaded kit, retaining its snapshot row.
+  events.keypress('space'); // Keep the installed kit visible until removal is applied.
   assert.match(getScreen(), /○ remote-alpha[^\n]*Will uninstall/);
   assert.doesNotMatch(getScreen(), /Catalog update/);
   continuePicker({ events, getScreen });
@@ -226,7 +226,10 @@ test('pending uninstalls respect shared dependencies and exclude cached inactive
   ui.events.keypress('enter');
   assert.match(ui.getScreen(), /○ second[^\n]*Will uninstall/);
   assert.match(ui.getScreen(), /○ shared[^\n]*Will uninstall/);
-  assert.doesNotMatch(ui.getScreen(), /cached[^\n]*Will uninstall/);
+  assert.doesNotMatch(
+    ui.getScreen(),
+    /cached|Downloaded only|Not installed yet/,
+  );
   continuePicker(ui);
   assert.deepEqual(await ui.answer, []);
 });
@@ -427,7 +430,7 @@ test('Review changes follows kits, with Back to providers first inside a provide
   for (const view of ['Kits', 'Provider', 'Installed']) {
     const ui = await render(kitPicker, {
       catalog: mixed,
-      selected: [],
+      selected: view === 'Installed' ? [remote.id] : [],
       columns: 40,
       rows: 16,
     });
@@ -437,7 +440,7 @@ test('Review changes follows kits, with Back to providers first inside a provide
     } else if (view === 'Installed') ui.events.keypress('left');
     const id = view === 'Kits' ? 'testing' : 'remote';
     ui.events.type(id);
-    ui.events.keypress('enter');
+    if (view !== 'Installed') ui.events.keypress('enter');
     assert.match(ui.getScreen(), new RegExp(`● ${id}`));
     assert.match(ui.getScreen(), /\[ Review changes \]/);
     ui.events.keypress('down');

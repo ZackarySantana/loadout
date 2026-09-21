@@ -394,6 +394,12 @@ test('offered revisions stay pinned until explicit update, and disabling works o
   );
   apply(await prepare(root, [], offlineFetch));
   assert.equal(fs.existsSync(path.join(root, '.agents/skills/alpha')), false);
+  assert.equal(fs.existsSync(path.join(root, '.claude/skills/alpha')), false);
+  assert.deepEqual(loadState(loadCatalog(root)).selected, []);
+  assert.ok(
+    readExternal(root).store.kits['acme-alpha'],
+    'only the internal snapshot cache remains',
+  );
   apply(await prepare(root, ['acme-alpha'], offlineFetch));
 });
 

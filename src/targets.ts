@@ -1,6 +1,6 @@
 import { loadCatalog } from './catalog.js';
 import { readExternal } from './external.js';
-import { loadState } from './storage.js';
+import { loadGenerated, loadState } from './storage.js';
 import { type Catalog, type State } from './schema.js';
 
 export type Target = {
@@ -9,6 +9,7 @@ export type Target = {
   global: boolean;
   catalog?: Catalog;
   state?: State;
+  installedAt?: Record<string, string>;
   error?: string;
 };
 
@@ -25,7 +26,12 @@ export function loadTarget(root: string, global: boolean): Target {
       const kit = catalog.kits.get(id);
       if (kit?.external) kit.pinned = snapshot.source;
     }
-    return { ...target, catalog, state: loadState(catalog) };
+    return {
+      ...target,
+      catalog,
+      state: loadState(catalog),
+      installedAt: loadGenerated(root).installedAt,
+    };
   } catch (error) {
     return { ...target, error: (error as Error).message };
   }

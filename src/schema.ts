@@ -140,9 +140,10 @@ export const stateSchema = z
     ),
   })
   .strict();
-export const ownedSchema = z
+export const generatedSchema = z
   .object({
     schemaVersion: z.literal(1),
+    installedAt: z.record(idSchema, z.iso.datetime()),
     files: z.record(
       z.string(),
       z
@@ -157,6 +158,7 @@ export const ownedSchema = z
 export type Question = z.infer<typeof question>;
 export type Answer = boolean | string;
 export type State = z.infer<typeof stateSchema>;
+export type Generated = z.infer<typeof generatedSchema>;
 export type Kit = z.infer<typeof kitSchema> & {
   directory: string;
   external?: ExternalSource;

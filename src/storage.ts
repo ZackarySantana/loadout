@@ -15,12 +15,14 @@ import {
 } from './fs.js';
 import {
   parse,
-  ownedSchema,
+  generatedSchema,
   stateSchema,
   type Catalog,
   type State,
+  type Generated,
 } from './schema.js';
 import { type FileContent, type Rendered } from './render.js';
+import { resolveKits } from './resolve.js';
 
 export type Change = {
   path: string;
@@ -31,6 +33,7 @@ export type Change = {
 export type Plan = {
   root: string;
   changes: Change[];
+  installing?: string[];
   adopted?: string[];
   skippedInstructions?: { paths: string[]; kits: string[]; reason: string }[];
   kitsWithoutOutputs?: string[];
@@ -51,6 +54,16 @@ export function loadState(catalog: Catalog): State {
         '.loadout-personal/local.json',
       )
     : { schemaVersion: 1, selected: [], answers: {} };
+}
+export function loadGenerated(root: string): Generated {
+  const raw = readOptional(root, '.loadout-personal/generated.json');
+  return raw
+    ? parse(
+        generatedSchema,
+        JSON.parse(raw.toString()),
+        '.loadout-personal/generated.json',
+      )
+    : { schemaVersion: 1 as const, installedAt: {}, files: {} };
 }
 function snapshot(root: string, relative: string): FileContent | undefined {
   const content = readOptional(root, relative);
@@ -128,14 +141,16 @@ export function plan(
   options: { adopt?: boolean } = {},
 ): Plan {
   const root = catalog.root;
-  const raw = readOptional(root, '.loadout-personal/generated.json');
-  const owned = raw
-    ? parse(
-        ownedSchema,
-        JSON.parse(raw.toString()),
-        '.loadout-personal/generated.json',
-      ).files
-    : {};
+  const generated = loadGenerated(root);
+  const owned = generated.files;
+  const enabled = resolveKits(catalog, state.selected).sort();
+  const installing = enabled.filter(
+    (id) => !Object.hasOwn(generated.installedAt, id),
+  );
+  const plannedAt = new Date().toISOString();
+  const installedAt = Object.fromEntries(
+    enabled.map((id) => [id, generated.installedAt[id] ?? plannedAt]),
+  );
   const tracked = trackedFiles(root);
   const skippedInstructions: NonNullable<Plan['skippedInstructions']> = [];
   const retainedKits = new Set(rendered.skillKits);
@@ -235,7 +250,10 @@ export function plan(
   );
   const metadata = new Map<string, Buffer>([
     ['.loadout-personal/local.json', json(state)],
-    ['.loadout-personal/generated.json', json({ schemaVersion: 1, files })],
+    [
+      '.loadout-personal/generated.json',
+      json({ schemaVersion: 1, installedAt, files }),
+    ],
   ]);
   if (rendered.external) {
     const current = readOptional(root, '.loadout-personal/external.json');
@@ -266,6 +284,7 @@ export function plan(
   return {
     root,
     changes,
+    installing,
     adopted: adoption.adopted,
     skippedInstructions,
     kitsWithoutOutputs,
@@ -426,8 +445,27 @@ export function applyAll(plans: Plan[]): number {
         throw new Error(
           `File changed since preview: ${change.path}. Run the command again.`,
         );
-    for (const { root, change } of writes) {
+    const installedAt = new Date().toISOString();
+    for (const { root, change: planned } of writes) {
+      let change = planned;
       if (change.kind === 'unchanged') continue;
+      const installing = plans.find((plan) => plan.root === root)?.installing;
+      if (
+        change.path === '.loadout-personal/generated.json' &&
+        change.after &&
+        installing?.length
+      ) {
+        const generated = parse(
+          generatedSchema,
+          JSON.parse(change.after.content.toString()),
+          change.path,
+        );
+        for (const id of installing) generated.installedAt[id] = installedAt;
+        change = {
+          ...change,
+          after: { ...change.after, content: json(generated) },
+        };
+      }
       if (change.after) writeAtomic(root, change.path, change.after);
       else fs.unlinkSync(safePath(root, change.path));
       written.push({ root, change });

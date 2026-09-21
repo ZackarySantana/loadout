@@ -627,6 +627,7 @@ test('malformed ownership and ignore blocks fail before any writes', async (t) =
     '.loadout-personal/generated.json',
     JSON.stringify({
       schemaVersion: 1,
+      installedAt: {},
       files: { '../outside': { hash: 'a'.repeat(64), mode: 420 } },
     }),
   );
