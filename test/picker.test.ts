@@ -95,6 +95,7 @@ test('picker supports empty catalogs and cancellation', async () => {
     selected: [],
   });
   assert.match(empty.getScreen(), /No kits in this catalog/);
+  assert.doesNotMatch(empty.getScreen(), /Review Repository|before applying/);
   continuePicker(empty);
   assert.deepEqual(await empty.answer, []);
   const cancelled = await render(kitPicker, {
@@ -141,12 +142,12 @@ test('separate repository, installed, and provider browsing preserves selections
     rows: 24,
   });
   assert.doesNotMatch(getScreen(), /remote-alpha|acme\/skills|other\/skills/);
-  events.keypress({ name: 'tab', shift: true });
+  events.keypress('left');
   assert.match(getScreen(), /\[Installed\]/);
   assert.match(getScreen(), /● remote-alpha/);
   assert.match(getScreen(), /Catalog update/);
   assert.doesNotMatch(getScreen(), /code-navigation|interview/);
-  events.keypress({ name: 'tab', shift: true });
+  events.keypress('left');
   assert.match(getScreen(), /\[Browse\]/);
   assert.match(getScreen(), /acme\/skills/);
   assert.match(getScreen(), /other\/skills/);
@@ -155,13 +156,13 @@ test('separate repository, installed, and provider browsing preserves selections
   assert.doesNotMatch(getScreen(), /acme\/skills/);
   events.keypress('space');
   assert.match(getScreen(), /○ interview/);
-  assert.match(getScreen(), /Includes interview, grilling/);
+  assert.match(getScreen(), /Workflow for interview/);
   events.keypress('space');
   events.keypress('escape'); // Clear the retained search.
   await new Promise((resolve) => setTimeout(resolve, 550));
   events.keypress('escape'); // Return to providers.
   assert.match(getScreen(), /other\/skills[^\n]*1 selected/);
-  events.keypress('tab');
+  events.keypress('right');
   assert.match(getScreen(), /● interview/);
   assert.match(getScreen(), /● remote-alpha/);
   events.keypress('space'); // Disable the downloaded kit, retaining its snapshot row.
@@ -190,7 +191,8 @@ test('installed bundled kits retain pending removals and allow undo across tabs'
   ui.events.keypress('right');
   assert.match(ui.getScreen(), /○ loadout-testing[^\n]*Will uninstall/);
   ui.events.keypress('enter');
-  assert.match(ui.getScreen(), /● loadout-testing[^\n]*selected/);
+  assert.match(ui.getScreen(), /● loadout-testing/);
+  assert.doesNotMatch(ui.getScreen(), /● loadout-testing[^\n]*selected/);
   assert.doesNotMatch(ui.getScreen(), /Will uninstall/);
   ui.events.keypress('space');
   continuePicker(ui);
@@ -356,24 +358,21 @@ test('live resizing expands beyond the previous width cap and preserves search a
   assert.match(ui.getScreen(), /● navigation/);
   assert.match(
     ui.getScreen(),
-    /↑↓ move[^\n]*space\/enter toggle[^\n]*←→\/tab switch[^\n]*esc clear/,
+    /↑↓ move[^\n]*Space toggle[^\n]*←→ tabs[^\n]*Esc clear/,
   );
   resize(40, 16);
   assert.ok(maxWidth() <= 40);
   assert.match(ui.getScreen(), /LOADOUT/);
   assert.match(ui.getScreen(), /\/ navigation/);
   assert.match(ui.getScreen(), /● navigation/);
-  assert.match(
-    ui.getScreen(),
-    /↑↓ move[^\n]*space\/enter toggle\n[^\n]*←→\/tab switch[^\n]*esc clear/,
-  );
+  assert.match(ui.getScreen(), /Space toggle · ←→ tabs · Esc clear/);
   resize(100, 24);
   assert.equal(maxWidth(), 98);
   continuePicker(ui);
   assert.deepEqual(await ui.answer, ['navigation']);
 });
 
-test('Space and Enter open and toggle without continuing; only the Continue button finishes', async () => {
+test('Space and Enter open and toggle without continuing; only Review changes finishes', async () => {
   const first = externalKit('first', 'alpha/skills', true);
   const second = externalKit('second', 'beta/skills');
   const mixed = {
@@ -395,7 +394,7 @@ test('Space and Enter open and toggle without continuing; only the Continue butt
       finished = true;
     });
     assert.match(ui.getScreen(), /alpha\/skills[^\n]*1 downloaded/);
-    assert.match(ui.getScreen(), /\[ Continue \]/);
+    assert.match(ui.getScreen(), /\[ Review changes \]/);
     ui.events.keypress(key);
     assert.match(ui.getScreen(), /○ first/);
     ui.events.keypress(key);
@@ -419,7 +418,7 @@ test('Space and Enter open and toggle without continuing; only the Continue butt
   }
 });
 
-test('Continue is reachable directly below repository, provider, and installed kits', async () => {
+test('Review changes follows kits, with Back to providers first inside a provider', async () => {
   const remote = externalKit('remote', 'acme/skills', true);
   const mixed = {
     ...catalog,
@@ -440,12 +439,145 @@ test('Continue is reachable directly below repository, provider, and installed k
     ui.events.type(id);
     ui.events.keypress('enter');
     assert.match(ui.getScreen(), new RegExp(`● ${id}`));
-    assert.match(ui.getScreen(), /\[ Continue \]/);
+    assert.match(ui.getScreen(), /\[ Review changes \]/);
     ui.events.keypress('down');
-    assert.match(ui.getScreen(), /› \[ Continue \]/);
-    assert.match(ui.getScreen(), /─\n[^\n]*› \[ Continue \]/);
+    if (view === 'Provider') {
+      assert.match(ui.getScreen(), /› \[ Back to providers \]/);
+      ui.events.keypress('down');
+      assert.match(
+        ui.getScreen(),
+        /\[ Back to providers \][^\n]*\n[^\n]*› \[ Review changes \]/,
+      );
+    } else {
+      assert.doesNotMatch(ui.getScreen(), /\[ Back to providers \]/);
+      assert.match(ui.getScreen(), /─\n[^\n]*› \[ Review changes \]/);
+    }
+    assert.match(ui.getScreen(), /› \[ Review changes \]/);
     assert.ok(ui.getScreen().split('\n').length <= 16);
     ui.events.keypress('space');
     assert.deepEqual(await ui.answer, [id]);
+  }
+});
+
+test('Back and Escape restore provider-list focus and editable search while retaining selections', async () => {
+  const kits = [
+    externalKit('first', 'alpha/vendor'),
+    externalKit('second', 'beta/vendor'),
+    externalKit('third', 'gamma/other'),
+  ];
+  for (const key of ['enter', 'space', 'escape'] as const) {
+    const ui = await render(kitPicker, {
+      catalog: { root: '.', kits: new Map(kits.map((kit) => [kit.id, kit])) },
+      selected: [],
+    });
+    ui.events.type('vendor');
+    ui.events.keypress('down');
+    ui.events.keypress('enter');
+    assert.match(ui.getScreen(), /Browse › beta\/vendor/);
+    ui.events.keypress('space');
+    ui.events.keypress('escape'); // Clear the inherited search, staying inside.
+    assert.match(ui.getScreen(), /Browse › beta\/vendor/);
+    assert.match(ui.getScreen(), /● second/);
+    if (key === 'escape') {
+      ui.events.keypress('down'); // Reset the double-Escape cancellation pair.
+      ui.events.keypress('escape');
+    } else {
+      ui.events.type('no-match');
+      assert.match(ui.getScreen(), /No matching kits/);
+      assert.match(ui.getScreen(), /› \[ Back to providers \]/);
+      assert.match(ui.getScreen(), /Keeps your selections/);
+      ui.events.keypress(key); // Back navigates even with an active filter.
+    }
+    assert.match(ui.getScreen(), /› ▸ beta\/vendor[^\n]*1 selected/);
+    assert.match(ui.getScreen(), /\/ vendor/);
+    assert.doesNotMatch(ui.getScreen(), /gamma\/other|\[ Back to providers \]/);
+    ui.events.type('x');
+    assert.match(ui.getScreen(), /\/ vendorx/);
+    ui.events.keypress('backspace');
+    continuePicker(ui);
+    assert.deepEqual(await ui.answer, ['second']);
+  }
+});
+
+test('provider footer fits narrow terminals and Review accepts removal-only changes', async () => {
+  const kit = externalKit('remote', 'acme/skills', true);
+  for (const columns of [22, 40, 80]) {
+    const ui = await render(kitPicker, {
+      catalog: { root: '.', kits: new Map([[kit.id, kit]]) },
+      selected: ['remote'],
+      columns,
+      rows: 24,
+    });
+    ui.events.keypress('enter');
+    ui.events.keypress('space'); // Remove the only installed kit.
+    ui.events.keypress('down');
+    assert.match(
+      ui.getScreen(),
+      columns === 22 ? /› \[ Back \]/ : /› \[ Back to providers \]/,
+    );
+    ui.events.keypress('down');
+    assert.match(
+      ui.getScreen(),
+      columns === 22 ? /› \[ Review \]/ : /› \[ Review changes \]/,
+    );
+    assert.doesNotMatch(ui.getScreen(), /Review Repository|before applying/);
+    for (const line of ui.getScreen().split('\n'))
+      assert.ok(stringWidth(line) <= columns, line);
+    assert.ok(ui.getScreen().split('\n').length <= 24);
+    ui.events.keypress('enter');
+    assert.deepEqual(await ui.answer, []);
+  }
+});
+
+test('compact picker shows descriptions under every provider and kit, with responsive breadcrumbs', async () => {
+  const first = externalKit('first', 'acme/skills');
+  const second = externalKit('second', 'acme/skills');
+  const third = externalKit('third', 'other/skills');
+  for (const columns of [40, 80]) {
+    const ui = await render(kitPicker, {
+      catalog: {
+        root: '/work/project',
+        kits: new Map([
+          [first.id, first],
+          [second.id, second],
+          [third.id, third],
+        ]),
+      },
+      selected: [],
+      columns,
+      rows: columns === 40 ? 16 : 24,
+    });
+    assert.match(ui.getScreen(), /acme\/skills[^\n]*\n\s+Repository sources/);
+    assert.match(ui.getScreen(), /other\/skills[^\n]*\n\s+Repository sources/);
+    ui.events.keypress('enter');
+    assert.match(ui.getScreen(), /○ first[^\n]*\n\s+Workflow for first/);
+    assert.match(ui.getScreen(), /○ second[^\n]*\n\s+Workflow for second/);
+    assert.match(ui.getScreen(), /Workflow for first/);
+    assert.doesNotMatch(
+      ui.getScreen(),
+      /Destination:|Pending|\/work\/project|This repository only/,
+    );
+    assert.match(
+      ui.getScreen(),
+      columns === 80
+        ? /\[Browse › acme\/skills\]/
+        : /\[Browse\][^\n]*\n\s+acme\/skills/,
+    );
+    ui.events.keypress('down');
+    assert.match(ui.getScreen(), /Workflow for second/);
+    assert.match(ui.getScreen(), /Workflow for first/);
+    ui.events.keypress('space');
+    assert.match(ui.getScreen(), /● second/);
+    assert.doesNotMatch(ui.getScreen(), /● second[^\n]*selected/);
+    assert.match(ui.getScreen(), /1 selected/);
+    assert.match(ui.getScreen(), /Esc back/);
+    ui.events.type('second');
+    assert.match(ui.getScreen(), /Esc clear/);
+    assert.doesNotMatch(ui.getScreen(), /Esc back/);
+    for (const line of ui.getScreen().split('\n'))
+      assert.ok(stringWidth(line) <= columns, line);
+    assert.ok(ui.getScreen().split('\n').length <= (columns === 40 ? 16 : 24));
+    continuePicker(ui);
+    assert.deepEqual(await ui.answer, ['second']);
   }
 });

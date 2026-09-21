@@ -17,6 +17,6 @@ export function continuePicker(
   assert.match(ui.getScreen(), /\[Installed\]/);
   ui.events.keypress('left');
   ui.events.keypress('up');
-  assert.match(ui.getScreen(), /› \[ Continue \]/);
+  assert.match(ui.getScreen(), /› \[ Review changes \]/);
   ui.events.keypress(key);
 }

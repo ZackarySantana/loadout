@@ -37,19 +37,21 @@ test('scope switching works without global initialization and retains independen
     columns: 80,
     rows: 24,
   });
-  const switchScope = () => screen.input.write('\u001b[D\r');
+  const switchScope = (direction: 'left' | 'right') => {
+    screen.events.keypress({ name: 'tab', shift: direction === 'left' });
+  };
   assert.match(screen.getScreen(), /Repository/);
-  switchScope();
-  assert.match(screen.getScreen(), /Global/);
+  switchScope('right');
+  assert.match(screen.getScreen(), /\[● Global\]/);
   assert.match(screen.getScreen(), /\[Browse\]/);
   assert.doesNotMatch(screen.getScreen(), /Set up Global/);
   assert.equal(fs.existsSync(path.join(home, '.loadout')), false);
   screen.events.keypress('space');
   screen.events.type('write-kit');
   screen.events.keypress('space');
-  switchScope();
-  assert.match(screen.getScreen(), /Unapplied changes in Global/);
-  screen.events.keypress('y');
+  switchScope('left');
+  assert.match(screen.getScreen(), /\[○ Global\*\]/);
+  assert.doesNotMatch(screen.getScreen(), /Switch to Repository\?/);
   assert.match(screen.getScreen(), /1 selected/);
   continuePicker(screen);
   const selections = await screen.answer;
@@ -78,22 +80,20 @@ test('initialized locations display their own selections, errors preserve the ac
     rows: 16,
   });
   screen.input.write('\u001b[Z');
-  assert.match(screen.getScreen(), /Switch to Global/);
-  assert.match(screen.getScreen(), /space\/enter switch/);
-  assert.doesNotMatch(screen.getScreen(), /selected|Search/);
+  assert.match(screen.getScreen(), /\[○ Repository[^\]]*\].*\[● Global\]/);
+  assert.match(screen.getScreen(), /Tab switch scope/);
+  assert.match(screen.getScreen(), /Search providers or kits/);
   for (const line of screen.getScreen().split('\n'))
     assert.ok(stringWidth(line) <= 40, line);
   assert.ok(screen.getScreen().split('\n').length <= 16);
-  screen.events.keypress('space');
-  assert.match(screen.getScreen(), /Global/);
+  assert.match(screen.getScreen(), /\[● Global\]/);
   assert.match(screen.getScreen(), /1 selected/);
   for (const line of screen.getScreen().split('\n'))
     assert.ok(stringWidth(line) <= 40, line);
   assert.ok(screen.getScreen().split('\n').length <= 16);
   screen.input.write('\u001b[Z');
-  assert.match(screen.getScreen(), /Switch to Repository/);
-  assert.doesNotMatch(screen.getScreen(), /Kits for this repository/);
-  screen.events.keypress('escape');
+  assert.match(screen.getScreen(), /\[● Repository[^\]]*\].*\[○ Global\]/);
+  screen.events.keypress('tab');
   assert.match(screen.getScreen(), /1 selected/);
   continuePicker(screen);
   assert.deepEqual((await screen.answer)[0]!.state.selected, ['testing']);
@@ -104,9 +104,9 @@ test('initialized locations display their own selections, errors preserve the ac
       { ...global, catalog: undefined, error: 'Invalid home configuration' },
     ],
   });
-  failed.input.write('\u001b[Z ');
+  failed.input.write('\u001b[Z');
   assert.match(failed.getScreen(), /Invalid home configuration/);
-  assert.match(failed.getScreen(), /Repository ·/);
+  assert.match(failed.getScreen(), /\[● Repository[^\]]*\]/);
   continuePicker(failed);
   await failed.answer;
 });
@@ -227,7 +227,7 @@ test('home catalogs are not discovered for uninitialized child projects and glob
   );
 });
 
-test('scope warning detects removals, ignores reverted edits, and preserves the filter on cancellation', async (t) => {
+test('pending scopes detect removals and reverted edits, and switching restores the filter', async (t) => {
   const { home, repo } = fixture(t);
   initialize(home, true);
   apply(await preview(loadTarget(repo, false), ['testing']));
@@ -238,18 +238,18 @@ test('scope warning detects removals, ignores reverted edits, and preserves the 
   });
   ui.events.keypress('space');
   ui.events.keypress('space'); // Revert the selection change.
-  ui.input.write('\u001b[D\r');
+  ui.input.write('\t');
   assert.match(ui.getScreen(), /\[Browse\]/);
-  assert.doesNotMatch(ui.getScreen(), /Unapplied changes/);
-  ui.input.write('\u001b[D\r');
+  assert.doesNotMatch(ui.getScreen(), /\*\]/);
+  ui.input.write('\t');
   ui.events.type('testing');
-  ui.events.keypress('space'); // Removing an installed selection also needs a warning.
-  ui.input.write('\u001b[D\r');
-  assert.match(ui.getScreen(), /Unapplied changes in Repository/);
+  ui.events.keypress('space'); // Removing an installed selection is pending too.
+  ui.input.write('\t');
+  assert.match(ui.getScreen(), /\[○ Repository[^\]]*\*\]/);
   for (const line of ui.getScreen().split('\n'))
     assert.ok(stringWidth(line) <= 40, line);
   assert.ok(ui.getScreen().split('\n').length <= 16);
-  ui.events.keypress('escape');
+  ui.input.write('\t');
   assert.match(ui.getScreen(), /\/ testing/);
   assert.match(ui.getScreen(), /0 selected/);
   assert.deepEqual(loadState(loadTarget(repo, false).catalog!).selected, [

@@ -25,6 +25,7 @@ import {
 } from './resolve.js';
 import { kitSource, type Catalog, type State } from './schema.js';
 import { availableUpdates, hasUpdate, updateDescription } from './updates.js';
+import { type TargetSelection } from './picker.js';
 
 const version = (
   JSON.parse(
@@ -203,7 +204,9 @@ async function generate(
 }
 async function setup(): Promise<void> {
   const { targets, initial } = interactiveTargets();
-  const configured = await interactive(targets, initial);
+  await interactive(targets, initial, { review: reviewSelections });
+}
+async function reviewSelections(configured: TargetSelection[]): Promise<void> {
   const offline = program.opts<{ offline?: boolean }>().offline;
   const plans: Plan[] = [];
   for (const { target, state } of configured) {
@@ -236,7 +239,10 @@ async function setup(): Promise<void> {
     plans.push(result);
   }
   if (!plans.some(hasChanges)) return;
-  if (await confirmApply()) {
+  const scopes = configured
+    .filter((_, index) => hasChanges(plans[index]!))
+    .map(({ target }) => target.label);
+  if (await confirmApply(undefined, scopes)) {
     applyAll(plans);
     console.log('\nYour loadout is ready.');
     for (const result of plans) {

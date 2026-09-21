@@ -1,0 +1,6 @@
+schemaVersion: 1
+id: dont-commit
+description: Leave commits and Git operations to the user
+outputs:
+  - type: instructions
+    source: instructions.md

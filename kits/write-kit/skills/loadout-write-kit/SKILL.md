@@ -5,6 +5,8 @@ description: Create or edit private or shared Loadout kits.
 
 Use `.loadout-personal/kits/` for private kits, `.loadout/kits/` for shared kits, or `~/.loadout/kits/` for kits you can enable in any repository. Adapt this example; drop unused questions, outputs, and files.
 
+State each requirement once as a direct instruction, including its exceptions. Preserve its exact trigger and scope. Omit introductions, summaries, explanations of familiar concepts, and lists of actions a rule already covers. Do not add unrequested rules or steps.
+
 `.loadout-personal/kits/review/kit.yaml`:
 
 ```yaml
@@ -52,4 +54,4 @@ loadout enable review --answer review.diagrams=true --answer review.detail=detai
 loadout disable review
 ```
 
-Drop `--dry-run --diff` to apply, or select via `loadout` → Browse → Personal → Continue.
+Drop `--dry-run --diff` to apply, or select via `loadout` → Browse → Personal → Review changes.

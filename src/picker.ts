@@ -8,6 +8,7 @@ import {
 } from '@inquirer/core';
 import { stripVTControlCharacters, styleText } from 'node:util';
 import stringWidth from 'string-width';
+import path from 'node:path';
 import { resolveKits, reasons } from './resolve.js';
 import { kitSource, type Catalog, type Kit, type State } from './schema.js';
 import { type Target } from './targets.js';
@@ -15,9 +16,10 @@ import { availableUpdates, hasUpdate } from './updates.js';
 import { prepareInput } from './terminal.js';
 import { providerDescriptions } from './curated.js';
 
-const accent = (value: string) => styleText('cyan', value);
 const muted = (value: string) => styleText('dim', value);
 const bold = (value: string) => styleText('bold', value);
+const scopeColor = (target: Target, value: string) =>
+  styleText(target.global ? 'magenta' : 'cyan', value);
 const clean = (value: string) =>
   stripVTControlCharacters(value).replace(/[\x00-\x1f\x7f]/g, ' ');
 function fit(value: string, width: number): string {
@@ -30,7 +32,11 @@ function fit(value: string, width: number): string {
   }
   return width > 0 ? `${result}…` : '';
 }
-function wordmark(width: number, rows: number): string[] {
+function wordmark(
+  width: number,
+  rows: number,
+  accent: (value: string) => string,
+): string[] {
   if (width < 43 || rows < 20) return ['', `  ${accent(bold('LOADOUT'))}`, ''];
   return [
     '',
@@ -52,7 +58,7 @@ type Row = {
   id: string;
   description: string;
   kit?: Kit;
-  action?: 'continue';
+  action?: 'back' | 'review';
   count?: number;
   selectedCount?: number;
   downloadedCount?: number;
@@ -74,6 +80,33 @@ export type TargetPickerConfig = {
   initial?: number;
   columns?: number;
   rows?: number;
+  session?: PickerSession;
+};
+type PickerView = {
+  section: Section;
+  provider: string | undefined;
+  providerList: { query: string; active: number };
+  query: string;
+  active: number;
+};
+const initialView = (target: Target): PickerView => ({
+  section:
+    target.global ||
+    ![...(target.catalog?.kits.values() ?? [])].some((kit) => !providerFor(kit))
+      ? 'Browse'
+      : 'Kits',
+  provider: undefined,
+  providerList: { query: '', active: 0 },
+  query: '',
+  active: 0,
+});
+export type PickerSession = {
+  snapshot?: PickerView & {
+    targetIndex: number;
+    visited: number[];
+    selections: string[][];
+    views: PickerView[];
+  };
 };
 export type TargetSelection = { target: Target; state: State };
 const emptyState = (): State => ({
@@ -84,23 +117,30 @@ const emptyState = (): State => ({
 
 const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
   (config, done) => {
-    const [targets, setTargets] = useState(config.targets);
-    const [targetIndex, setTargetIndex] = useState(config.initial ?? 0);
-    const [visited, setVisited] = useState([config.initial ?? 0]);
-    const [selections, setSelections] = useState(
-      config.targets.map((target) =>
-        (target.state?.selected ?? []).filter(
-          (id) =>
-            target.catalog?.kits.has(id) &&
-            target.catalog.kits.get(id)?.ready !== false,
-        ),
-      ),
+    const snapshot = config.session?.snapshot;
+    const targets = config.targets;
+    const [views, setViews] = useState(
+      snapshot?.views ?? targets.map(initialView),
     );
-    const [pendingSwitch, setPendingSwitch] = useState<number | undefined>(
-      undefined,
+    const [targetIndex, setTargetIndex] = useState(
+      snapshot?.targetIndex ?? config.initial ?? 0,
+    );
+    const [visited, setVisited] = useState(
+      snapshot?.visited ?? [config.initial ?? 0],
+    );
+    const [selections, setSelections] = useState(
+      snapshot?.selections ??
+        config.targets.map((target) =>
+          (target.state?.selected ?? []).filter(
+            (id) =>
+              target.catalog?.kits.has(id) &&
+              target.catalog.kits.get(id)?.ready !== false,
+          ),
+        ),
     );
     const [notice, setNotice] = useState('');
     const target = targets[targetIndex]!;
+    const accent = (value: string) => scopeColor(target, value);
     const sections: readonly Section[] = target.global
       ? ['Browse', 'Installed']
       : repositorySections;
@@ -109,23 +149,29 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
       kits: new Map<string, Kit>(),
     };
     const selected = selections[targetIndex]!;
-    const hasSelectionChanges =
-      JSON.stringify([...selected].sort()) !==
-      JSON.stringify([...(target.state?.selected ?? [])].sort());
+    const pendingTargets = targets.filter(
+      (item, index) =>
+        JSON.stringify([...selections[index]!].sort()) !==
+        JSON.stringify([...(item.state?.selected ?? [])].sort()),
+    );
     const setSelected = (value: string[]) =>
       setSelections(
         selections.map((ids, index) => (index === targetIndex ? value : ids)),
       );
     const [section, setSection] = useState<Section>(
-      target.global ||
-        ![...catalog.kits.values()].some((kit) => !providerFor(kit))
-        ? 'Browse'
-        : 'Kits',
+      snapshot?.section ?? views[targetIndex]!.section,
     );
-    const [scopeFocused, setScopeFocused] = useState(false);
-    const [provider, setProvider] = useState<string | undefined>(undefined);
-    const [query, setQuery] = useState('');
-    const [active, setActive] = useState(0);
+    const [provider, setProvider] = useState<string | undefined>(
+      snapshot?.provider,
+    );
+    const [providerList, setProviderList] = useState(
+      snapshot?.providerList ?? { query: '', active: 0 },
+    );
+    const [query, setQuery] = useState(snapshot?.query ?? '');
+    const [active, setActive] = useState(snapshot?.active ?? 0);
+    useEffect((rl) => {
+      if (snapshot?.query) rl.write(snapshot.query);
+    }, []);
     const [finished, setFinished] = useState(false);
     const [size, setSize] = useState({
       columns: process.stdout.columns || 80,
@@ -236,10 +282,16 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
         .sort((a, b) => Number(a.ready === false) - Number(b.ready === false))
         .map((kit) => ({ id: kit.id, description: kit.description, kit }));
     }
+    if (provider)
+      entries.push({
+        id: '@back',
+        action: 'back',
+        description: 'Keeps your selections',
+      });
     entries.push({
-      id: '@continue',
-      action: 'continue',
-      description: 'Review selections and apply',
+      id: '@review',
+      action: 'review',
+      description: '',
     });
     const cursor = Math.min(active, Math.max(0, entries.length - 1));
     const focused = entries[cursor];
@@ -253,64 +305,59 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
         rl.clearLine(0);
         rl.write(query);
       };
-      const switchTarget = (index: number) => {
-        setScopeFocused(false);
-        setTargetIndex(index);
-        setSection(
-          targets[index]!.global ||
-            ![...targets[index]!.catalog!.kits.values()].some(
-              (kit) => !providerFor(kit),
-            )
-            ? 'Browse'
-            : 'Kits',
-        );
-        setVisited([...new Set([...visited, index])]);
+      const backToProviders = () => {
         setProvider(undefined);
-        setNotice('');
-        reset();
-      };
-      if (pendingSwitch !== undefined) {
-        if (key.name === 'y') {
-          switchTarget(pendingSwitch);
-          setPendingSwitch(undefined);
-        } else if (
-          key.name === 'n' ||
-          key.name === 'escape' ||
-          isEnterKey(key)
-        ) {
-          setPendingSwitch(undefined);
-          restoreInput();
-        }
-        return;
-      }
-      if (scopeFocused && (isEnterKey(key) || isSpaceKey(key))) {
-        setScopeFocused(false);
-        const next = (targetIndex + 1) % targets.length;
-        const other = targets[next]!;
-        if (other.error) setNotice(other.error);
-        else if (!other.catalog) setNotice('Cannot load this location.');
-        else if (hasSelectionChanges) {
-          setPendingSwitch(next);
-        } else switchTarget(next);
+        setQuery(providerList.query);
+        setActive(providerList.active);
         rl.clearLine(0);
+        rl.write(providerList.query);
+      };
+      const switchTarget = (index: number) => {
+        if (index === targetIndex) {
+          restoreInput();
+          return;
+        }
+        const next = targets[index]!;
+        if (next.error || !next.catalog) {
+          setNotice(next.error ?? 'Cannot load this location.');
+          restoreInput();
+          return;
+        }
+        setViews(
+          views.map((view, index) =>
+            index === targetIndex
+              ? { section, provider, providerList, query, active: cursor }
+              : view,
+          ),
+        );
+        const view = views[index]!;
+        setTargetIndex(index);
+        setSection(view.section);
+        setProvider(view.provider);
+        setProviderList(view.providerList);
+        setQuery(view.query);
+        setActive(view.active);
+        setVisited([...new Set([...visited, index])]);
+        setNotice('');
+        rl.clearLine(0);
+        rl.write(view.query);
+      };
+      if (key.name === 'tab') {
+        switchTarget(
+          (targetIndex + (key.shift ? -1 : 1) + targets.length) %
+            targets.length,
+        );
         return;
       }
-      if (['tab', 'left', 'right'].includes(key.name)) {
-        const index = scopeFocused
-          ? sections.length
-          : sections.indexOf(section);
-        const count = sections.length + (targets.length > 1 ? 1 : 0);
-        const backwards =
-          key.name === 'left' || (key.name === 'tab' && key.shift);
+      if (['left', 'right'].includes(key.name)) {
+        const index = sections.indexOf(section);
+        const count = sections.length;
+        const backwards = key.name === 'left';
         const next = (index + (backwards ? -1 : 1) + count) % count;
-        setScopeFocused(next === sections.length);
-        if (next !== sections.length) {
-          setSection(sections[next]!);
-          setProvider(undefined);
-          reset();
-        } else restoreInput();
+        setSection(sections[next]!);
+        setProvider(undefined);
+        reset();
       } else if (key.name === 'up' || key.name === 'down') {
-        setScopeFocused(false);
         if (entries.length)
           setActive(
             (cursor + (key.name === 'up' ? -1 : 1) + entries.length) %
@@ -318,7 +365,22 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
           );
         restoreInput();
       } else if (isEnterKey(key) || isSpaceKey(key)) {
-        if (focused?.action === 'continue') {
+        if (focused?.action === 'back') {
+          backToProviders();
+          return;
+        } else if (focused?.action === 'review') {
+          if (config.session)
+            config.session.snapshot = {
+              targetIndex,
+              visited,
+              selections,
+              views,
+              section,
+              provider,
+              providerList,
+              query,
+              active: cursor,
+            };
           setFinished(true);
           done(
             targets.flatMap((item, index) => {
@@ -335,6 +397,7 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
             }),
           );
         } else if (browsingProviders && focused) {
+          setProviderList({ query, active: cursor });
           setProvider(focused.id);
           setActive(0);
         } else if (focused?.kit && focused.kit.ready !== false) {
@@ -348,136 +411,132 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
         rl.clearLine(0);
         rl.write(query);
       } else if (key.name === 'escape') {
-        if (scopeFocused) {
-          setScopeFocused(false);
-          restoreInput();
-        } else {
-          if (!query && provider) setProvider(undefined);
-          reset();
-        }
+        if (!query && provider) backToProviders();
+        else reset();
       } else if (!['left', 'right', 'home', 'end'].includes(key.name)) {
-        setScopeFocused(false);
         setQuery(clean(rl.line));
         setActive(0);
       }
     });
-    const header = wordmark(width, height);
-    const other =
-      targets.length > 1
-        ? targets[(targetIndex + 1) % targets.length]
-        : undefined;
-    const switchLabel = other
-      ? `[ Go to ${other.label}${other.error ? ' !' : ''} ]`
-      : '';
-    const scopeLabel =
-      width >= 60 ? `${target.label} · ${target.root}` : target.label;
-    const scopeText = fit(scopeLabel, width - switchLabel.length - 4);
+    const scopeLabels = targets.map(
+      (item, index) =>
+        `[${index === targetIndex ? '●' : '○'} ${clean(item.label)}${pendingTargets.includes(item) ? '*' : ''}${item.error || !item.catalog ? ' !' : ''}]`,
+    );
+    const baseWidth =
+      scopeLabels.reduce((sum, label) => sum + stringWidth(label), 0) +
+      (targets.length - 1) * 2;
+    const repositoryIndex = targets.findIndex((item) => !item.global);
+    const nameWidth = width - 4 - baseWidth - 3;
+    if (repositoryIndex >= 0 && nameWidth >= 3) {
+      const repository = targets[repositoryIndex]!;
+      const name = fit(
+        path.basename(repository.root) || repository.root,
+        nameWidth,
+      );
+      scopeLabels[repositoryIndex] = scopeLabels[repositoryIndex]!.replace(
+        clean(repository.label),
+        () => `${clean(repository.label)} · ${name}`,
+      );
+    }
+    const segments = targets.map((item, index) => {
+      const label = scopeLabels[index]!;
+      const colored = scopeColor(item, label);
+      return index === targetIndex
+        ? bold(colored)
+        : pendingTargets.includes(item)
+          ? colored
+          : muted(colored);
+    });
+    const selectorWidth =
+      segments.reduce((sum, item) => sum + stringWidth(item), 0) +
+      (segments.length - 1) * 2;
     const scopeLines =
-      targets.length > 1 || target.global
-        ? [
-            `  ${bold(scopeText)}${' '.repeat(Math.max(2, width - stringWidth(scopeText) - switchLabel.length - 2))}${scopeFocused ? accent(bold(switchLabel)) : muted(switchLabel)}`,
-            ...(width < 60 ? [`  ${muted(fit(target.root, width - 2))}`] : []),
-          ]
-        : [];
-    const selectionWarning = hasSelectionChanges
-      ? [
-          `  ${fit(`Unapplied changes in ${target.label}.`, width - 2)}`,
-          '  Selections stay in this session.',
-        ]
-      : [];
-    if (pendingSwitch !== undefined)
-      return [
-        ...header,
-        ...scopeLines,
-        '',
-        `  ${bold(fit(`Switch to ${targets[pendingSwitch]!.label}?`, width - 2))}`,
-        ...selectionWarning,
-        '',
-        `  ${accent('[Enter/Esc]')} Stay   ${accent('[y]')} Switch`,
-        '\u001b[?25l',
-      ].join('\n');
+      selectorWidth <= width - 4
+        ? [`    ${segments.join('  ')}`]
+        : segments.map((item) => `    ${item}`);
     if (finished)
       return [
-        ...header,
+        ...wordmark(width, height, accent),
         `  ${accent('✓')} ${selected.length} selected${requiredCount ? muted(` · ${requiredCount} required`) : ''}\n`,
       ].join('\n');
 
     const updates = availableUpdates(catalog).length;
     const counts = `${selected.length} selected${requiredCount ? ` · ${requiredCount} required` : ''}`;
+    const tabLabel = (name: Section) =>
+      name === 'Browse' && provider ? `Browse › ${clean(provider)}` : name;
+    const inlineProvider =
+      !!provider && sections.map(tabLabel).join('    ').length + 2 <= width - 2;
     const tabs =
       width >= 34
-        ? `  ${sections.map((name) => (name === section && !scopeFocused ? accent(bold(`[${name}]`)) : muted(name))).join('    ')}`
-        : `  ${scopeFocused ? muted(section) : accent(bold(`[${section}]`))} ${muted('←→/tab')}`;
+        ? `  ${sections
+            .map((name) => {
+              const label = inlineProvider ? tabLabel(name) : name;
+              return name === section
+                ? accent(bold(`[${label}]`))
+                : muted(label);
+            })
+            .join('    ')}`
+        : `  ${accent(bold(`[${section}]`))}`;
     const filter = `  ${accent('/')} ${query ? `${fit(query, width - 6)}${accent('▏')}` : muted(browsingProviders ? 'Search providers or kits' : 'Search kits')}`;
-    const rule = `  ${muted('─'.repeat(width - 2))}`;
-    const detailed = height >= 20;
-    const hints = scopeFocused
-      ? [
-          `space/enter ${other?.error || !other?.catalog ? 'details' : 'switch'}`,
-          '←→/tab move',
-          'esc back',
-        ]
-      : [
-          '↑↓ move',
-          `space/enter ${focused?.action ? 'select' : browsingProviders ? 'open' : 'toggle'}`,
-          '←→/tab switch',
-          `esc ${provider ? 'back' : 'clear'}`,
-        ];
-    const helpLines: string[] = [];
-    const separator = width >= 100 ? '    ' : ' · ';
+    const escapeHint = query ? 'Esc clear' : provider ? 'Esc back' : '';
+    const hints = [
+      ...(width >= 60 ? ['↑↓ move'] : []),
+      focused?.action
+        ? 'Enter select'
+        : browsingProviders
+          ? 'Space open'
+          : 'Space toggle',
+      targets.length > 1 ? 'Tab switch scope' : '←→ tabs',
+      escapeHint,
+    ].filter(Boolean);
+    let helpText = '';
     for (const hint of hints) {
-      const previous = helpLines.at(-1);
-      const combined = previous ? `${previous}${separator}${hint}` : hint;
-      if (previous && stringWidth(combined) <= width - 2)
-        helpLines[helpLines.length - 1] = combined;
-      else helpLines.push(fit(hint, width - 2));
+      const combined = helpText ? `${helpText} · ${hint}` : hint;
+      if (stringWidth(combined) <= width - 2) helpText = combined;
     }
-    const help = helpLines.map((line) => `  ${muted(line)}`);
-    if (scopeFocused && other) {
-      const action =
-        other.error || !other.catalog
-          ? `${other.label} is unavailable`
-          : `Switch to ${other.label}`;
-      return [
-        ...header,
-        ...scopeLines,
-        '',
-        tabs,
-        rule,
-        `  ${bold(fit(action, width - 2))}`,
-        ...(other.error ? [`  ${fit(other.error, width - 2)}`] : []),
-        `  ${muted(fit(other.root, width - 2))}`,
-        rule,
-        ...help,
-        '\u001b[?25l',
-      ].join('\n');
-    }
+    const help = [`  ${muted(helpText)}`];
     const beforeList = [
-      ...header,
       ...scopeLines,
-      ...(scopeLines.length && detailed ? [''] : []),
       tabs,
-      ...(provider ? [`  ${muted(fit(provider, width - 2))}`] : []),
-      ...(detailed ? [''] : []),
-      rule,
+      ...(provider && !inlineProvider
+        ? [`  ${muted(fit(provider, width - 2))}`]
+        : []),
       filter,
-      ...(detailed ? [''] : []),
     ];
     const summary = fit(
       `${counts}${updates ? ` · ${updates} updates` : ''}`,
       width - 6,
     );
-    const bottomRule = `  ${muted(`${'─'.repeat(Math.max(1, width - stringWidth(summary) - 6))}  ${summary} ─`)}`;
-    // Border, detail, spacing, keyboard help, and cursor-control line.
-    const footerHeight = 5 + help.length;
+    const actions = entries.filter((row) => row.action);
+    const kit = focused?.kit;
+    const why = kit ? reasons(catalog, selected, kit.id) : [];
+    const detail =
+      notice ||
+      (kit?.ready === false
+        ? 'Edit this kit, then set ready: true in kit.yaml'
+        : kit && willUninstall(kit.id)
+          ? 'Uninstall on apply. Select again to keep.'
+          : why.length
+            ? `Required by ${why.map(displayName).join(', ')}${selected.includes(kit!.id) ? ' · also selected' : ' · space to keep explicitly'}`
+            : kit?.requires.length
+              ? `Requires ${kit.requires.map(displayName).join(', ')}`
+              : kit && hasUpdate(kit)
+                ? `Catalog update · ${kit.pinned!.ref.slice(0, 8)} → ${kit.external!.ref.slice(0, 8)}`
+                : '');
+    // Keep the contextual row allocated so focus changes never move the footer.
+    const footerHeight = 3 + actions.length + help.length;
+    // Prefer useful list rows over decorative branding on short terminals.
+    const header = wordmark(width, height, accent);
+    const headerBudget =
+      height - beforeList.length - footerHeight - (height >= 20 ? 8 : 4);
+    if (header.length <= headerBudget) beforeList.unshift(...header);
+    else if (headerBudget >= 1)
+      beforeList.unshift(`  ${accent(bold('LOADOUT'))}`);
+    const spacing = height - beforeList.length - footerHeight >= 8 ? 1 : 0;
+    if (spacing) beforeList.push('');
     const pageSize = Math.max(
       1,
-      Math.min(
-        8,
-        Math.floor(
-          (height - beforeList.length - footerHeight) / (detailed ? 2 : 1),
-        ),
-      ),
+      Math.min(8, Math.floor((height - beforeList.length - footerHeight) / 2)),
     );
     const listEntries = entries.filter((row) => !row.action);
     const listCursor = Math.min(cursor, Math.max(0, listEntries.length - 1));
@@ -517,20 +576,18 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
             ? 'Will uninstall'
             : hasUpdate(row.kit)
               ? 'update'
-              : explicit
-                ? 'selected'
-                : required
-                  ? 'required'
-                  : row.kit.pinned
-                    ? 'saved'
-                    : '';
+              : required
+                ? 'required'
+                : row.kit.pinned && !explicit
+                  ? 'saved'
+                  : '';
       const marker = !row.kit
         ? accent('▸')
         : explicit
           ? accent('●')
           : required
             ? styleText('yellow', '◆')
-            : muted('○');
+            : muted(accent('○'));
       const badge =
         required || willUninstall(row.id) || (row.kit && hasUpdate(row.kit))
           ? styleText('yellow', label)
@@ -541,11 +598,8 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
       );
       lines.push(
         `  ${focus ? accent('›') : ' '} ${marker} ${row.kit?.ready === false ? muted(name) : focus ? bold(name) : name}${gap}${badge}`,
+        `      ${muted(fit(row.kit && section === 'Installed' ? `${kitSource(row.kit)} · ${row.description}` : row.description, width - 6))}`,
       );
-      if (detailed)
-        lines.push(
-          `      ${muted(fit(row.kit && section === 'Installed' ? `${kitSource(row.kit)} · ${row.description}` : row.description, width - 6))}`,
-        );
     }
     if (!page.length) {
       const empty = !catalog.kits.size
@@ -553,49 +607,44 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
         : query
           ? 'No matching kits. Esc to clear.'
           : section === 'Kits'
-            ? 'No repository kits. Tab to browse.'
+            ? 'No repository kits. ←→ to browse.'
             : section === 'Installed'
-              ? 'No kits installed. Tab to browse.'
+              ? 'No kits installed. ←→ to browse.'
               : 'No external providers configured.';
       lines.push(`  ${muted(fit(empty, width - 2))}`);
     }
-    const kit = focused?.kit;
-    const why = kit ? reasons(catalog, selected, kit.id) : [];
-    const detail = focused?.action
-      ? focused.description
-      : browsingProviders
-        ? [
-            focused?.selectedCount ? `${focused.selectedCount} selected` : '',
-            focused?.downloadedCount
-              ? `${focused.downloadedCount} downloaded`
-              : '',
-          ]
-            .filter(Boolean)
-            .join(' · ') || 'Choose a provider to explore its kits'
-        : kit?.ready === false
-          ? 'Edit this kit, then set ready: true in kit.yaml'
-          : kit && willUninstall(kit.id)
-            ? 'Uninstall on apply. Select again to keep.'
-            : kit && hasUpdate(kit)
-              ? `Catalog update · ${kit.pinned!.ref.slice(0, 8)} → ${kit.external!.ref.slice(0, 8)}`
-              : why.length
-                ? `Required by ${why.map(displayName).join(', ')}${selected.includes(kit!.id) ? ' · also selected' : ' · space to keep explicitly'}`
-                : kit?.requires.length
-                  ? `Requires ${kit.requires.map(displayName).join(', ')}`
-                  : kit?.external
-                    ? `Includes ${(kit.pinned ?? kit.external).skills.map((p) => p.split('/').at(-1)).join(', ')}`
-                    : '';
     const pagination =
       listEntries.length > page.length
         ? `${start + 1}–${start + page.length} of ${listEntries.length}`
         : '';
+    const status = fit(
+      [summary, pagination].filter(Boolean).join(' · '),
+      width - 6,
+    );
+    const bottomRule = `  ${muted('─'.repeat(Math.max(1, width - stringWidth(status) - 6)))}  ${scopeColor(target, status)} ${muted('─')}`;
     return [
       ...beforeList,
       ...lines,
+      `  ${muted(fit(detail, width - 2))}`,
       bottomRule,
-      `  ${focused?.action ? accent('›') : ' '} ${focused?.action ? accent(bold('[ Continue ]')) : '[ Continue ]'}`,
-      `  ${muted(fit(notice || [pagination, detail].filter(Boolean).join(' · '), width - 2))}`,
-      '',
+      ...actions.map((row) => {
+        const label =
+          row.action === 'back'
+            ? width >= 25
+              ? 'Back to providers'
+              : 'Back'
+            : width >= 22
+              ? 'Review changes'
+              : 'Review';
+        const button = fit(`[ ${label} ]`, width - 4);
+        const focus = row.id === focused?.id;
+        const helperWidth = width - stringWidth(button) - 6;
+        const helper =
+          row.description && helperWidth > 0
+            ? `  ${muted(fit(row.description, helperWidth))}`
+            : '';
+        return `  ${focus ? accent('›') : ' '} ${focus ? accent(bold(button)) : button}${helper}`;
+      }),
       ...help,
       '\u001b[?25l',
     ].join('\n');

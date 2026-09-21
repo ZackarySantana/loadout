@@ -94,7 +94,7 @@ test('Loadout leads Browse and selected bundled kits appear in Installed', async
     assert.match(ui.getScreen(), /\[Installed\]/);
     ui.events.keypress('right');
     assert.match(ui.getScreen(), /› ▸ loadout/);
-    assert.match(ui.getScreen(), /\[ Continue \]/);
+    assert.match(ui.getScreen(), /\[ Review changes \]/);
     assert.ok(ui.getScreen().split('\n').length <= rows!);
     assert.doesNotMatch(ui.getScreen(), /ctrl\+c|esc×2/);
     ui.events.keypress('space');

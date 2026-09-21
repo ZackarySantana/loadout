@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { render } from '@inquirer/testing';
-import { configureSelection } from '../src/interactive.js';
+import { configureSelection, confirmApply } from '../src/interactive.js';
 import { type Kit, type State } from '../src/schema.js';
 import { type Target } from '../src/targets.js';
 
@@ -105,5 +105,21 @@ test('declining changes still collects missing and invalid answers', async () =>
       diagrams: true,
       style: 'brief',
     });
+  }
+});
+
+test('apply confirmation names the destinations being changed', async () => {
+  for (const scopes of [['Repository'], ['Global'], ['Repository', 'Global']]) {
+    const ui = await render(
+      (config: string[], context?: Parameters<typeof confirmApply>[0]) =>
+        confirmApply(context, config),
+      scopes,
+    );
+    assert.ok(
+      ui.getScreen().includes(`Apply changes to ${scopes.join(' and ')}?`),
+    );
+    ui.events.type('n');
+    ui.events.keypress('enter');
+    assert.equal(await ui.answer, false);
   }
 });
