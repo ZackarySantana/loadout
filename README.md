@@ -13,11 +13,11 @@ npm install -g @lidtop/loadout
 loadout
 ```
 
-Pick your kits, select **Review changes**, and confirm. Inside a provider, choose **Back to providers** to keep browsing with your selections preserved. Run `loadout` again to change your selection.
+Pick your kits and select **Review changes**. Any kit questions and downloads happen automatically, then one compact review shows your kit changes and file totals for Repository and Global. Expand **Unchanged** to inspect your complete selection, or choose **View files** to browse paths and diffs. Choose **Apply changes** to save, or **Back to kits** to edit your selection. Inside a provider, choose **Back to providers** to keep browsing with your selections preserved. Run `loadout` again to change your selection.
 
 The destination selector above the tabs shows **Repository** in cyan (this repository only) and **Global** in magenta (your user configuration across repositories). Active controls and selection markers follow the destination's color. Press **Tab** to switch destinations instantly, or **Shift+Tab** to cycle backward. **←/→** switches between the Kits, Browse, and Installed sections. Each destination keeps its own selections, provider, search, and cursor position, ready to browse as soon as you switch. A **\*** marks destinations with unapplied selections; **Review changes** includes the session's changes across both. Descriptions appear beneath every provider and kit, with dependency or update notes when needed.
 
-Press **Esc** at a setup question or review prompt to return to the picker with your selections and position preserved. Press **Esc twice quickly** or **Ctrl+C** to cancel setup.
+Press **Esc** from review, questions, or downloads to return to your kits. Inside file details, **Esc** returns to the previous view. Your kit choices, completed answers, and picker position are preserved; completed downloads are reused during the session and file plans are rebuilt before review. In review, **↑/↓** scroll and **Tab** moves between actions. Press **Ctrl+C** to cancel setup, or **Esc twice quickly** from the picker. Nothing is applied until you choose **Apply changes**.
 
 Conflicting project instructions are skipped with a warning; the kit’s skills still install.
 

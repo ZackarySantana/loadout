@@ -14,6 +14,7 @@ import {
   renderWithExternal,
   readExternal,
   type FetchBytes,
+  type SnapshotCache,
 } from '../src/external.js';
 import { type ExternalSource } from '../src/schema.js';
 import { DownloadCancelledError } from '../src/retry.js';
@@ -109,6 +110,82 @@ function mockFetch(files = upstream(), requests: string[] = []): FetchBytes {
 const offlineFetch: FetchBytes = async () => {
   throw new Error('Unexpected network access');
 };
+
+test('session snapshots reuse exact sources across preparation and scopes without saving them', async (t) => {
+  const root = fixture(t);
+  const catalog = loadCatalog(root);
+  const state = { ...loadState(catalog), selected: ['acme-alpha'] };
+  const cache: SnapshotCache = new Map();
+  const requests: string[] = [];
+  const first = await renderWithExternal(catalog, state, {
+    cache,
+    fetch: mockFetch(upstream(), requests),
+  });
+  assert.ok(requests.length > 0);
+  const count = requests.length;
+  const ready: string[] = [];
+  const second = await renderWithExternal(catalog, state, {
+    cache,
+    fetch: offlineFetch,
+    onReady: (id) => ready.push(id),
+    onFetch: () => assert.fail('cached kits must not say Downloading'),
+  });
+  assert.deepEqual(second, first);
+  assert.deepEqual(ready, ['acme-alpha']);
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/external.json')),
+    false,
+  );
+  const other = fixture(t);
+  const crossScope = await renderWithExternal(loadCatalog(other), state, {
+    cache,
+    fetch: offlineFetch,
+  });
+  assert.deepEqual(crossScope.files, first.files);
+  config(root, '2'.repeat(40));
+  await renderWithExternal(loadCatalog(root), state, {
+    cache,
+    fetch: mockFetch(upstream(), requests),
+  });
+  assert.ok(
+    requests.length > count,
+    'a different revision must download again',
+  );
+  assert.equal(cache.size, 2);
+});
+
+test('aborted preparation does not retry or retain a partial snapshot', async (t) => {
+  const root = fixture(t);
+  const catalog = loadCatalog(root);
+  const state = { ...loadState(catalog), selected: ['acme-alpha'] };
+  const cache: SnapshotCache = new Map();
+  const controller = new AbortController();
+  const reason = new Error('Back to selections');
+  let calls = 0;
+  await assert.rejects(
+    renderWithExternal(catalog, state, {
+      cache,
+      signal: controller.signal,
+      fetch: async () => {
+        calls++;
+        controller.abort(reason);
+        throw reason;
+      },
+      onRetry: () => assert.fail('abort must not retry'),
+    }),
+    reason,
+  );
+  assert.equal(calls, 1);
+  assert.equal(cache.size, 0);
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/external.json')),
+    false,
+  );
+  assert.equal(
+    fs.existsSync(path.join(root, '.loadout-personal/local.json')),
+    false,
+  );
+});
 
 test('cancelling a failed download aborts pending requests and saves none of the completed kits', async (t) => {
   const root = fixture(t);

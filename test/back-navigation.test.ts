@@ -1,17 +1,23 @@
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { render } from '@inquirer/testing';
+import { interactive } from '../src/setup.js';
 import {
-  interactive,
+  BackNavigation,
   confirmApply,
   confirmAdoption,
   confirmRetry,
   selectUpdates,
+  type PromptContext,
 } from '../src/interactive.js';
 import { type Kit, type State } from '../src/schema.js';
 import { type Target } from '../src/targets.js';
+import { type FetchBytes } from '../src/external.js';
+import { loadState } from '../src/storage.js';
 
-type Options = NonNullable<Parameters<typeof interactive>[2]>;
 const kit: Kit = {
   schemaVersion: 1,
   id: 'example',
@@ -23,35 +29,44 @@ const kit: Kit = {
   questions: {},
 };
 const empty: State = { schemaVersion: 1, selected: [], answers: {} };
-function target(value = kit): Target {
+function target(t: TestContext, value = kit, global = false): Target {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'loadout-review-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return {
-    label: 'Repository',
-    root: '.',
-    global: false,
-    catalog: { root: '.', kits: new Map([[value.id, value]]) },
+    label: global ? 'Global' : 'Repository',
+    root,
+    global,
+    catalog: {
+      root,
+      kits: new Map([[value.id, { ...value, directory: root }]]),
+    },
     state: structuredClone(empty),
   };
 }
 const flow = (
-  config: { targets: Target[]; review?: Options['review'] },
-  context?: Options['context'],
+  config: { targets: Target[]; fetch?: FetchBytes },
+  context?: PromptContext,
 ) => {
-  // Keep the screen open across prompts, like the real terminal.
   if (context?.output) {
     const output = context.output;
     output.end = (() => output) as typeof output.end;
   }
-  return interactive(config.targets, 0, { context, review: config.review });
+  return interactive(config.targets, 0, { context, fetch: config.fetch });
 };
 type UI = Awaited<ReturnType<typeof render>>;
 function selectAndContinue(ui: UI): void {
-  ui.events.keypress('enter'); // Open Personal.
+  ui.events.keypress('enter');
   ui.events.type('exam');
   ui.events.keypress('space');
   ui.events.keypress('down');
   assert.match(ui.getScreen(), /› \[ Back to providers \]/);
   ui.events.keypress('down');
-  assert.match(ui.getScreen(), /› \[ Review changes \]/);
+  ui.events.keypress('enter');
+}
+function action(ui: UI, label: string): void {
+  for (let i = 0; i < 4 && !ui.getScreen().includes(`› [ ${label} ]`); i++)
+    ui.events.keypress('tab');
+  assert.ok(ui.getScreen().includes(`› [ ${label} ]`), ui.getScreen());
   ui.events.keypress('enter');
 }
 async function cancel(ui: UI): Promise<void> {
@@ -60,8 +75,8 @@ async function cancel(ui: UI): Promise<void> {
   await rejected;
 }
 
-test('Escape after Review changes restores the provider, selections, cursor, and editable search', async () => {
-  const repository = target({
+test('Review changes asks required questions directly; Escape restores the exact picker view', async (t) => {
+  const repository = target(t, {
     ...kit,
     questions: {
       diagrams: {
@@ -74,10 +89,10 @@ test('Escape after Review changes restores the provider, selections, cursor, and
   const ui = await render(flow, { targets: [repository] });
   selectAndContinue(ui);
   await ui.nextRender();
-  assert.match(ui.getScreen(), /Include diagrams\?/);
-  ui.input.write('\u001b'); // Exercise the real terminal Escape decoder.
+  assert.match(ui.getScreen(), /Repository · example · Include diagrams\?/);
+  assert.doesNotMatch(ui.getScreen(), /Prepare|Selections/);
+  ui.input.write('\u001b');
   await ui.nextRender();
-  assert.match(ui.getScreen(), /Personal/);
   assert.match(ui.getScreen(), /● example/);
   assert.match(ui.getScreen(), /› \[ Review changes \]/);
   assert.match(ui.getScreen(), /\/ exam/);
@@ -85,138 +100,80 @@ test('Escape after Review changes restores the provider, selections, cursor, and
   assert.match(ui.getScreen(), /\/ example/);
   ui.events.keypress('backspace');
   assert.match(ui.getScreen(), /\/ exampl/);
-  ui.events.keypress('space'); // Deselect without changing the saved state.
-  ui.events.keypress('down');
+  assert.deepEqual(repository.state, empty);
+  assert.equal(
+    fs.existsSync(path.join(repository.root, '.loadout-personal/local.json')),
+    false,
+  );
+  await cancel(ui);
+});
+
+test('completed answers survive returning directly to the picker', async (t) => {
+  const repository = target(t, {
+    ...kit,
+    questions: {
+      first: {
+        type: 'choice',
+        message: 'Choose style',
+        choices: ['brief', 'detailed'],
+      },
+      second: { type: 'boolean', message: 'Include diagrams?', default: false },
+    },
+  });
+  const ui = await render(flow, { targets: [repository] });
+  selectAndContinue(ui);
+  await ui.nextRender();
   ui.events.keypress('down');
   ui.events.keypress('enter');
+  await ui.nextRender();
+  assert.match(ui.getScreen(), /Include diagrams/);
+  ui.events.keypress('escape');
+  await ui.nextRender();
+  assert.match(ui.getScreen(), /● example/);
+  ui.events.keypress('enter');
+  await ui.nextRender();
+  assert.match(ui.getScreen(), /Change selection\?/);
+  ui.events.keypress('enter');
+  await ui.nextRender();
+  assert.match(ui.getScreen(), /Include diagrams/);
+  ui.events.keypress('enter');
+  await ui.nextRender();
+  assert.match(ui.getScreen(), /Review changes/);
+  assert.match(ui.getScreen(), /first: detailed/);
+  action(ui, 'Apply changes');
   const result = await ui.answer;
-  assert.deepEqual(result[0]!.state.selected, []);
+  assert.deepEqual(result[0]!.state.answers.example, {
+    first: 'detailed',
+    second: false,
+  });
+  assert.deepEqual(
+    loadState(repository.catalog!).answers,
+    result[0]!.state.answers,
+  );
   assert.deepEqual(repository.state, empty);
 });
 
-test('Escape returns from saved-answer confirmation and choice questions', async () => {
-  for (const saved of [false, true]) {
-    const repository = target({
-      ...kit,
-      questions: {
-        style: {
-          type: 'choice',
-          message: 'Choose style',
-          choices: ['brief', 'detailed'],
-        },
-      },
-    });
-    if (saved) repository.state!.answers = { example: { style: 'brief' } };
-    const ui = await render(flow, { targets: [repository] });
-    selectAndContinue(ui);
-    await ui.nextRender();
-    assert.match(ui.getScreen(), saved ? /Change selection\?/ : /Choose style/);
-    ui.events.keypress('escape');
-    await ui.nextRender();
-    assert.match(ui.getScreen(), /● example/);
-    ui.events.keypress('enter');
-    await ui.nextRender();
-    ui.events.keypress('enter');
-    const result = await ui.answer;
-    assert.equal(result[0]!.state.answers.example!.style, 'brief');
-  }
-});
-
-test('Escape from review prompts returns to the picker and reviews the revised selections', async () => {
-  const source = {
-    repo: 'acme/skills',
-    ref: 'new',
-    skills: ['example'],
-    license: 'MIT',
-  };
-  const updateKit: Kit = {
-    ...kit,
-    external: source,
-    pinned: { ...source, ref: 'old' },
-  };
-  const reviewPrompts: Array<{
-    message: RegExp;
-    review: NonNullable<Options['review']>;
-  }> = [
-    {
-      message: /Apply changes\?/,
-      review: async (_, context) => {
-        await confirmApply(context);
-      },
-    },
-    {
-      message: /Keep existing content/,
-      review: async (_, context) => {
-        await confirmAdoption(['AGENTS.md'], context);
-      },
-    },
-    {
-      message: /Download failed/,
-      review: async (_, context) => {
-        await confirmRetry('example', new Error('Download failed'), context);
-      },
-    },
-    {
-      message: /Catalog updates available/,
-      review: async (_, context) => {
-        await selectUpdates(
-          target(updateKit).catalog!,
-          { ...empty, selected: ['example'] },
-          false,
-          context,
-        );
-      },
-    },
-  ];
-  for (const { message, review } of reviewPrompts) {
-    const reviewed: string[][] = [];
-    const ui = await render(flow, {
-      targets: [target()],
-      review: async (selections, context) => {
-        reviewed.push(selections[0]!.state.selected);
-        await review(selections, context);
-      },
-    });
-    selectAndContinue(ui);
-    await ui.nextRender();
-    assert.match(ui.getScreen(), message);
-    ui.events.keypress('escape');
-    await ui.nextRender();
-    assert.match(ui.getScreen(), /● example/);
-    ui.events.keypress('up');
-    ui.events.keypress('up');
-    ui.events.keypress('space');
-    ui.events.keypress('down');
-    ui.events.keypress('down');
-    ui.events.keypress('enter');
-    await ui.nextRender();
-    assert.match(ui.getScreen(), message);
-    ui.events.keypress('enter');
-    assert.deepEqual((await ui.answer)[0]!.state.selected, []);
-    assert.deepEqual(reviewed, [['example'], []]);
-  }
-});
-
-test('returning from review retains both target selections and the active scope', async () => {
-  const repository = target();
-  const global = {
-    ...target(),
-    label: 'Global',
-    root: '/home/example',
-    global: true,
-  };
-  const ui = await render(flow, {
-    targets: [repository, global],
-    review: async (_, context) => {
-      await confirmApply(context);
-    },
-  });
+test('review and files have a Back hierarchy that retains both scopes and browsing positions', async (t) => {
+  const repository = target(t);
+  const global = target(t, kit, true);
+  const ui = await render(flow, { targets: [repository, global] });
   ui.events.keypress('enter');
   ui.events.keypress('space');
   ui.events.keypress('tab');
   selectAndContinue(ui);
   await ui.nextRender();
-  assert.match(ui.getScreen(), /Apply changes\?/);
+  assert.match(ui.getScreen(), /Repository/);
+  assert.match(ui.getScreen(), /Global/);
+  assert.match(ui.getScreen(), /Review changes/);
+  assert.doesNotMatch(ui.getScreen(), /Prepare|Selections/);
+  assert.doesNotMatch(
+    await ui.getFullOutput(),
+    /Prepare changes|\[Selections\]|\[Prepare\]/,
+  );
+  action(ui, 'View files');
+  assert.match(ui.getScreen(), /Files · Enter to inspect a diff/);
+  ui.events.keypress('escape');
+  assert.match(ui.getScreen(), /Review changes/);
   ui.events.keypress('escape');
   await ui.nextRender();
   assert.match(ui.getScreen(), /\[● Global\*\]/);
@@ -224,72 +181,235 @@ test('returning from review retains both target selections and the active scope'
   assert.match(ui.getScreen(), /› \[ Review changes \]/);
   ui.events.keypress('tab');
   assert.match(ui.getScreen(), /\[● Repository[^\]]*\*\]/);
-  assert.match(ui.getScreen(), /Browse › Personal/);
   assert.match(ui.getScreen(), /› ● example/);
   ui.events.keypress('tab');
   assert.match(ui.getScreen(), /\/ exam/);
-  assert.match(ui.getScreen(), /› \[ Review changes \]/);
-  ui.events.keypress('enter');
-  await ui.nextRender();
-  ui.events.keypress('enter');
-  assert.deepEqual(
-    (await ui.answer).map(({ target, state }) => [
-      target.label,
-      state.selected,
-    ]),
-    [
-      ['Repository', ['example']],
-      ['Global', ['example']],
-    ],
-  );
   assert.deepEqual(repository.state, empty);
   assert.deepEqual(global.state, empty);
+  await cancel(ui);
 });
 
-test('Ctrl+C and double Escape still cancel after Review changes', async () => {
-  for (const key of ['ctrl-c', 'combined', 'separate']) {
-    const ui = await render(flow, {
-      targets: [target()],
-      review: async (_, context) => {
-        await confirmApply(context);
+test('deselecting a configured kit before switching scope does not resurrect its draft selection', async (t) => {
+  const repository = target(t, {
+    ...kit,
+    questions: {
+      diagrams: {
+        type: 'boolean',
+        message: 'Include diagrams?',
+        default: false,
       },
-    });
-    selectAndContinue(ui);
-    await ui.nextRender();
-    if (key === 'ctrl-c') await cancel(ui);
-    else {
+    },
+  });
+  const global = target(t, kit, true);
+  const ui = await render(flow, { targets: [repository, global] });
+  selectAndContinue(ui);
+  await ui.nextRender();
+  ui.events.keypress('enter');
+  await ui.nextRender();
+  assert.match(ui.getScreen(), /Review changes/);
+  ui.events.keypress('escape');
+  await ui.nextRender();
+  ui.events.keypress('up');
+  ui.events.keypress('up');
+  ui.events.keypress('space');
+  ui.events.keypress('tab');
+  selectAndContinue(ui);
+  await ui.nextRender();
+  assert.match(ui.getScreen(), /Review changes/);
+  action(ui, 'Apply changes');
+  const result = await ui.answer;
+  assert.deepEqual(
+    result.map(({ state }) => state.selected),
+    [[], ['example']],
+  );
+  assert.deepEqual(loadState(repository.catalog!).selected, []);
+  assert.deepEqual(loadState(global.catalog!).selected, ['example']);
+});
+
+test('a filesystem change after review blocks apply and offers retry or Back to kits', async (t) => {
+  const repository = target(t);
+  const ui = await render(flow, { targets: [repository] });
+  selectAndContinue(ui);
+  await ui.nextRender();
+  assert.match(ui.getScreen(), /Review changes/);
+  const local = path.join(repository.root, '.loadout-personal/local.json');
+  fs.mkdirSync(path.dirname(local));
+  fs.writeFileSync(local, 'concurrent edit');
+  action(ui, 'Apply changes');
+  await ui.nextRender();
+  assert.match(ui.getScreen(), /Could not finish/);
+  assert.match(ui.getScreen(), /Back to kits/);
+  assert.equal(fs.readFileSync(local, 'utf8'), 'concurrent edit');
+  assert.equal(
+    fs.existsSync(
+      path.join(repository.root, '.loadout-personal/generated.json'),
+    ),
+    false,
+  );
+  ui.events.keypress('escape');
+  await ui.nextRender();
+  assert.match(ui.getScreen(), /● example/);
+  await cancel(ui);
+});
+
+test('all scopes finish preparation before review; retry and Back save nothing', async (t) => {
+  const repository = target(t);
+  const global = target(
+    t,
+    {
+      ...kit,
+      external: {
+        repo: 'acme/skills',
+        ref: '1'.repeat(40),
+        skills: ['skills/example'],
+        license: 'LICENSE',
+      },
+    },
+    true,
+  );
+  let requests = 0;
+  const ui = await render(flow, {
+    targets: [repository, global],
+    fetch: async () => {
+      requests++;
+      throw new Error('Connection lost');
+    },
+  });
+  ui.events.keypress('enter');
+  ui.events.keypress('space');
+  ui.events.keypress('tab');
+  selectAndContinue(ui);
+  await ui.nextRender();
+  assert.equal(requests, 2);
+  assert.match(ui.getScreen(), /Repository · Ready/);
+  assert.match(ui.getScreen(), /Connection lost/);
+  assert.doesNotMatch(ui.getScreen(), /Files:|\[Review\]|Apply changes/);
+  ui.events.keypress('enter');
+  await ui.nextRender();
+  assert.equal(requests, 4);
+  ui.events.keypress('escape');
+  await ui.nextRender();
+  assert.match(ui.getScreen(), /● example/);
+  for (const item of [repository, global])
+    assert.equal(
+      fs.existsSync(path.join(item.root, '.loadout-personal')),
+      false,
+    );
+  await cancel(ui);
+});
+
+test('Escape aborts in-flight requests without retrying or applying', async (t) => {
+  const repository = target(t, {
+    ...kit,
+    external: {
+      repo: 'acme/skills',
+      ref: '1'.repeat(40),
+      skills: ['skills/example'],
+      license: 'LICENSE',
+    },
+  });
+  let requests = 0;
+  let aborted = false;
+  const ui = await render(flow, {
+    targets: [repository],
+    fetch: async (_url, _limit, signal) => {
+      requests++;
+      return new Promise((_resolve, reject) =>
+        signal!.addEventListener(
+          'abort',
+          () => {
+            aborted = true;
+            reject(signal!.reason);
+          },
+          { once: true },
+        ),
+      );
+    },
+  });
+  selectAndContinue(ui);
+  await ui.nextRender();
+  // Only a real wait reveals the small download status.
+  await new Promise((resolve) => setTimeout(resolve, 180));
+  await ui.nextRender();
+  assert.match(ui.getScreen(), /Downloading example/);
+  ui.events.keypress('escape');
+  await ui.nextRender();
+  assert.equal(aborted, true);
+  assert.equal(requests, 1);
+  assert.match(ui.getScreen(), /● example/);
+  assert.equal(
+    fs.existsSync(path.join(repository.root, '.loadout-personal')),
+    false,
+  );
+  await cancel(ui);
+});
+
+test('Ctrl+C cancels from review; double Escape still cancels in the picker', async (t) => {
+  for (const stage of ['picker', 'review']) {
+    const ui = await render(flow, { targets: [target(t)] });
+    if (stage === 'picker') {
       const rejected = assert.rejects(ui.answer, { name: 'ExitPromptError' });
-      if (key === 'combined') ui.input.write('\u001b\u001b');
-      else {
-        ui.events.keypress('escape');
-        await ui.nextRender();
-        ui.events.keypress('escape');
-      }
+      ui.input.write('\u001b\u001b');
       await rejected;
+    } else {
+      selectAndContinue(ui);
+      await ui.nextRender();
+      await cancel(ui);
     }
   }
 });
 
-test('Back to providers still restores its search after returning from review', async () => {
-  const ui = await render(flow, {
-    targets: [target()],
-    review: async (_, context) => {
-      await confirmApply(context);
-    },
-  });
+test('Back to providers restores its search after leaving review', async (t) => {
+  const ui = await render(flow, { targets: [target(t)] });
   ui.events.type('exam');
   ui.events.keypress('enter');
   ui.events.keypress('space');
-  ui.events.keypress('up'); // Wrap from the kit to Review changes.
+  ui.events.keypress('up');
   ui.events.keypress('enter');
   await ui.nextRender();
-  ui.events.keypress('escape');
+  action(ui, 'Back to kits');
   await ui.nextRender();
   ui.events.keypress('up');
   assert.match(ui.getScreen(), /› \[ Back to providers \]/);
   ui.events.keypress('enter');
   assert.match(ui.getScreen(), /› ▸ Personal[^\n]*1 selected/);
   assert.match(ui.getScreen(), /\/ exam/);
-  assert.doesNotMatch(ui.getScreen(), /\[ Back to providers \]/);
   await cancel(ui);
+});
+
+test('configuration helpers propagate Escape as Back navigation', async (t) => {
+  const source = {
+    repo: 'acme/skills',
+    ref: 'new',
+    skills: ['example'],
+    license: 'MIT',
+  };
+  const prompts = [
+    (context?: PromptContext) => confirmApply(context),
+    (context?: PromptContext) => confirmAdoption(['AGENTS.md'], context),
+    (context?: PromptContext) =>
+      confirmRetry('example', new Error('Download failed'), context),
+    (context?: PromptContext) =>
+      selectUpdates(
+        target(t, {
+          ...kit,
+          external: source,
+          pinned: { ...source, ref: 'old' },
+        }).catalog!,
+        { ...empty, selected: ['example'] },
+        false,
+        context,
+      ),
+  ];
+  for (const prompt of prompts) {
+    const ui = await render(
+      async (_config: object, context?: PromptContext) => {
+        await prompt(context);
+      },
+      {},
+    );
+    const rejected = assert.rejects(ui.answer, BackNavigation);
+    ui.events.keypress('escape');
+    await rejected;
+  }
 });

@@ -1,18 +1,19 @@
 import { checkbox, confirm, select } from '@inquirer/prompts';
 import { configure } from './resolve.js';
-import { validAnswer, type Catalog, type State } from './schema.js';
 import {
-  targetPicker,
-  type PickerSession,
-  type TargetSelection,
-} from './picker.js';
+  validAnswer,
+  type Answer,
+  type Question,
+  type Catalog,
+  type State,
+} from './schema.js';
 import { type Target } from './targets.js';
 import { availableUpdates, updateDescription } from './updates.js';
 import { prepareInput } from './terminal.js';
 
-type PromptContext = NonNullable<Parameters<typeof confirm>[1]>;
+export type PromptContext = NonNullable<Parameters<typeof confirm>[1]>;
 
-class BackToPicker extends Error {}
+export class BackNavigation extends Error {}
 
 async function backPrompt<T>(
   prompt: (context: PromptContext) => Promise<T>,
@@ -22,7 +23,7 @@ async function backPrompt<T>(
   prepareInput(input);
   const controller = new AbortController();
   const back = (_text: string, key: { name?: string }) => {
-    if (key.name === 'escape') controller.abort(new BackToPicker());
+    if (key.name === 'escape') controller.abort(new BackNavigation());
   };
   input.on('keypress', back);
   try {
@@ -33,7 +34,7 @@ async function backPrompt<T>(
         : controller.signal,
     });
   } catch (error) {
-    if (error instanceof Error && error.cause instanceof BackToPicker)
+    if (error instanceof Error && error.cause instanceof BackNavigation)
       throw error.cause;
     throw error;
   } finally {
@@ -41,95 +42,72 @@ async function backPrompt<T>(
   }
 }
 
-export async function interactive(
-  targets: Target[],
-  initial = 0,
-  options: {
-    context?: PromptContext;
-    review?: (
-      selections: TargetSelection[],
-      context?: PromptContext,
-    ) => Promise<void>;
-  } = {},
-): Promise<TargetSelection[]> {
-  if (!options.context && (!process.stdin.isTTY || !process.stdout.isTTY))
-    throw new Error(
-      'Interactive setup needs a terminal. Use loadout enable <kit>, then loadout apply.',
-    );
-  const session: PickerSession = {};
-  for (;;) {
-    const chosen = await targetPicker(
-      { targets, initial, session },
-      options.context,
-    );
-    try {
-      const configured: TargetSelection[] = [];
-      for (const { target, state } of chosen) {
-        const value = await configureSelection(target, state, options.context);
-        configured.push({ target, state: value });
-      }
-      await options.review?.(configured, options.context);
-      return configured;
-    } catch (error) {
-      if (!(error instanceof BackToPicker)) throw error;
-    }
-  }
-}
 export async function configureSelection(
   target: Target,
   state: State,
   context?: Parameters<typeof confirm>[1],
+  onAnswer?: (kit: string, key: string, answer: Answer) => void,
 ): Promise<State> {
   const change = new Map<string, boolean>();
-  return configure(
-    target.catalog!,
-    state,
-    async (kit, key, question, value) => {
-      if (!change.has(kit)) {
-        const hasSaved = Object.entries(
-          target.catalog!.kits.get(kit)!.questions,
-        ).some(([name, q]) => validAnswer(q, state.answers[kit]?.[name]));
-        change.set(
-          kit,
-          hasSaved
-            ? await backPrompt(
-                (context) =>
-                  confirm(
-                    {
-                      message: `${target.label} · ${kit} · Change selection?`,
-                      default: false,
-                    },
-                    context,
-                  ),
-                context,
-              )
-            : true,
-        );
-      }
-      const saved = state.answers[kit]?.[key];
-      if (!change.get(kit) && validAnswer(question, saved)) return saved;
-      const message = `${target.label} · ${kit} · ${question.message}`;
-      if (question.type === 'boolean')
-        return backPrompt(
-          (context) =>
-            confirm(
-              { message, default: typeof value === 'boolean' ? value : false },
+  const ask = async (
+    kit: string,
+    key: string,
+    question: Question,
+    value: Answer | undefined,
+  ): Promise<Answer> => {
+    if (!change.has(kit)) {
+      const hasSaved = Object.entries(
+        target.catalog!.kits.get(kit)!.questions,
+      ).some(([name, q]) => validAnswer(q, state.answers[kit]?.[name]));
+      change.set(
+        kit,
+        hasSaved
+          ? await backPrompt(
+              (context) =>
+                confirm(
+                  {
+                    message: `${target.label} · ${kit} · Change selection?`,
+                    default: false,
+                  },
+                  context,
+                ),
               context,
-            ),
-          context,
-        );
+            )
+          : true,
+      );
+    }
+    const saved = state.answers[kit]?.[key];
+    if (!change.get(kit) && validAnswer(question, saved)) return saved;
+    const message = `${target.label} · ${kit} · ${question.message}`;
+    if (question.type === 'boolean')
       return backPrompt(
         (context) =>
-          select(
-            {
-              message,
-              choices: question.choices.map((v) => ({ name: v, value: v })),
-              default: typeof value === 'string' ? value : undefined,
-            },
+          confirm(
+            { message, default: typeof value === 'boolean' ? value : false },
             context,
           ),
         context,
       );
+    return backPrompt(
+      (context) =>
+        select(
+          {
+            message,
+            choices: question.choices.map((v) => ({ name: v, value: v })),
+            default: typeof value === 'string' ? value : undefined,
+          },
+          context,
+        ),
+      context,
+    );
+  };
+  return configure(
+    target.catalog!,
+    state,
+    async (kit, key, question, value) => {
+      const answer = await ask(kit, key, question, value);
+      onAnswer?.(kit, key, answer);
+      return answer;
     },
   );
 }
@@ -158,13 +136,15 @@ export async function selectUpdates(
   state: State,
   offline = false,
   context?: Parameters<typeof checkbox>[1],
+  options: { message?: string; selected?: string[]; quiet?: boolean } = {},
 ): Promise<string[]> {
   const updates = availableUpdates(catalog, state.selected);
   if (!updates.length) return [];
   if (offline) {
-    console.log(
-      `${updates.length} catalog update(s) available. Run loadout online to review them; keeping saved versions.`,
-    );
+    if (!options.quiet)
+      console.log(
+        `${updates.length} catalog update(s) available. Run loadout online to review them; keeping saved versions.`,
+      );
     return [];
   }
   return backPrompt(
@@ -172,11 +152,13 @@ export async function selectUpdates(
       checkbox(
         {
           message:
+            options.message ??
             'Catalog updates available · choose kits to update (Enter skips)',
           choices: updates.map((kit) => ({
             name: kit.id,
             value: kit.id,
             description: updateDescription(kit),
+            checked: options.selected?.includes(kit.id) ?? false,
           })),
           required: false,
         },
@@ -210,16 +192,42 @@ export async function confirmRetry(
 export async function confirmAdoption(
   paths: string[],
   context?: Parameters<typeof confirm>[1],
+  scope?: string,
 ): Promise<boolean> {
   return backPrompt(
     (context) =>
       confirm(
         {
-          message: `Keep existing content and let Loadout manage ${paths.join(', ')}? Originals will be restored when disabled.`,
+          message: `${scope ? `${scope} · ` : ''}Keep existing content and let Loadout manage ${paths.join(', ')}? Originals will be restored when disabled.`,
           default: true,
         },
         context,
       ),
     context,
   );
+}
+
+export async function retryReview(
+  error: unknown,
+  context?: PromptContext,
+): Promise<boolean> {
+  try {
+    return await backPrompt(
+      (context) =>
+        select(
+          {
+            message: `Could not finish: ${error instanceof Error ? error.message : String(error)}`,
+            choices: [
+              { name: 'Try again', value: true },
+              { name: 'Back to kits', value: false },
+            ],
+          },
+          context,
+        ),
+      context,
+    );
+  } catch (failure) {
+    if (failure instanceof BackNavigation) return false;
+    throw failure;
+  }
 }

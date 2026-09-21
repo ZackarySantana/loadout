@@ -42,6 +42,14 @@ const storeSchema = z
   })
   .strict();
 export type Snapshot = z.infer<typeof snapshotSchema>;
+export type SnapshotCache = Map<string, Snapshot>;
+const sourceKey = (source: ExternalSource) =>
+  JSON.stringify({
+    repo: source.repo,
+    ref: source.ref,
+    license: source.license,
+    skills: [...source.skills].sort(),
+  });
 export type ExternalStore = z.infer<typeof storeSchema>;
 export type FetchBytes = (
   url: string,
@@ -297,8 +305,12 @@ export async function renderWithExternal(
     onFetch?: (id: string, source: ExternalSource) => void;
     onRetry?: (id: string) => void;
     retry?: (id: string, error: Error) => Promise<boolean>;
+    signal?: AbortSignal;
+    cache?: SnapshotCache;
+    onReady?: (id: string) => void;
   } = {},
 ): Promise<Rendered> {
+  options.signal?.throwIfAborted();
   const result = render(catalog, state);
   const enabled = resolveKits(catalog, state.selected);
   const { raw, store } = readExternal(catalog.root);
@@ -306,43 +318,60 @@ export async function renderWithExternal(
     if (!enabled.includes(id) || !catalog.kits.get(id)?.external)
       throw new Error(`Cannot update ${id}: choose an enabled external kit.`);
   for (const id of enabled) {
+    options.signal?.throwIfAborted();
     const kit = catalog.kits.get(id)!;
     const source = kit.external;
-    if (!source) continue;
+    if (!source) {
+      options.onReady?.(id);
+      continue;
+    }
     let snapshot = Object.hasOwn(store.kits, id) ? store.kits[id] : undefined;
     const unchanged = snapshot && sameSource(snapshot.source, source);
     if (
       !snapshot ||
       (options.update?.includes(id) && !(options.offline && unchanged))
     ) {
-      if (options.offline)
+      const cached = options.cache?.get(sourceKey(source));
+      if (!cached && options.offline)
         throw new Error(
           `${id} is not available at the requested revision offline. Run without --offline once to fetch it.`,
         );
-      options.onFetch?.(id, source);
-      snapshot = await retryDownload(
-        async () => {
-          const controller = new AbortController();
-          const requests = new Map<string, Promise<Buffer>>();
-          const get: FetchBytes = (url, limit) => {
-            if (!requests.has(url))
-              requests.set(
-                url,
-                (options.fetch ?? fetchBytes)(url, limit, controller.signal),
-              );
-            return requests.get(url)!;
-          };
-          try {
-            return await download(source, get);
-          } finally {
-            controller.abort();
-            await Promise.allSettled(requests.values());
-            requests.clear();
-          }
-        },
-        options.retry ? (error) => options.retry!(id, error) : undefined,
-        () => options.onRetry?.(id),
-      );
+      if (!cached) options.onFetch?.(id, source);
+      snapshot =
+        cached ??
+        (await retryDownload(
+          async () => {
+            const controller = new AbortController();
+            const requests = new Map<string, Promise<Buffer>>();
+            const get: FetchBytes = (url, limit) => {
+              if (!requests.has(url))
+                requests.set(
+                  url,
+                  (options.fetch ?? fetchBytes)(
+                    url,
+                    limit,
+                    options.signal
+                      ? AbortSignal.any([options.signal, controller.signal])
+                      : controller.signal,
+                  ),
+                );
+              return requests.get(url)!;
+            };
+            try {
+              return await download(source, get);
+            } finally {
+              controller.abort();
+              await Promise.allSettled(requests.values());
+              requests.clear();
+            }
+          },
+          options.retry ? (error) => options.retry!(id, error) : undefined,
+          () => options.onRetry?.(id),
+          options.signal,
+        ));
+      options.signal?.throwIfAborted();
+      validateSnapshot(snapshot, id);
+      options.cache?.set(sourceKey(source), snapshot);
       store.kits[id] = snapshot;
     }
     validateSnapshot(snapshot, id);
@@ -366,6 +395,7 @@ export async function renderWithExternal(
         });
       }
     }
+    options.onReady?.(id);
   }
   if (raw || Object.keys(store.kits).length)
     result.external = {

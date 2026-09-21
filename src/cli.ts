@@ -5,16 +5,9 @@ import { readFileSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import { discover } from './catalog.js';
 import { initialize } from './init.js';
-import {
-  interactive,
-  confirmApply,
-  selectUpdates,
-  confirmRetry,
-  confirmAdoption,
-} from './interactive.js';
-import { apply, applyAll, hasChanges, plan, type Plan } from './storage.js';
+import { interactive } from './setup.js';
+import { apply, hasChanges, plan, type Plan } from './storage.js';
 import { renderWithExternal } from './external.js';
-import { DownloadCancelledError } from './retry.js';
 import { loadTarget, type Target } from './targets.js';
 import {
   configure,
@@ -25,7 +18,6 @@ import {
 } from './resolve.js';
 import { kitSource, type Catalog, type State } from './schema.js';
 import { availableUpdates, hasUpdate, updateDescription } from './updates.js';
-import { type TargetSelection } from './picker.js';
 
 const version = (
   JSON.parse(
@@ -204,53 +196,9 @@ async function generate(
 }
 async function setup(): Promise<void> {
   const { targets, initial } = interactiveTargets();
-  await interactive(targets, initial, { review: reviewSelections });
-}
-async function reviewSelections(configured: TargetSelection[]): Promise<void> {
   const offline = program.opts<{ offline?: boolean }>().offline;
-  const plans: Plan[] = [];
-  for (const { target, state } of configured) {
-    const catalog = target.catalog!;
-    console.log(`\n${target.label} · ${target.root}`);
-    const update = await selectUpdates(catalog, state, offline);
-    const rendered = await renderWithExternal(catalog, state, {
-      offline,
-      update,
-      retry: confirmRetry,
-      onRetry: (id) => console.log(`Retrying ${id}…`),
-      onFetch: (id, source) =>
-        console.log(`Fetching ${id} from ${source.repo}…`),
-    });
-    for (const id of resolveKits(catalog, state.selected)) {
-      const kit = catalog.kits.get(id)!;
-      if (kit.external) {
-        const source = update.includes(id)
-          ? kit.external
-          : (kit.pinned ?? kit.external);
-        console.log(
-          `${id}: ${source.repo}@${source.ref.slice(0, 12)} · license: ${source.license}`,
-        );
-      }
-    }
-    const result = plan(catalog, state, rendered, { adopt: true });
-    preview(result, update.length > 0 || !!result.adopted?.length);
-    if (result.adopted?.length && !(await confirmAdoption(result.adopted)))
-      throw new DownloadCancelledError();
-    plans.push(result);
-  }
-  if (!plans.some(hasChanges)) return;
-  const scopes = configured
-    .filter((_, index) => hasChanges(plans[index]!))
-    .map(({ target }) => target.label);
-  if (await confirmApply(undefined, scopes)) {
-    applyAll(plans);
-    console.log('\nYour loadout is ready.');
-    for (const result of plans) {
-      if (!result.skippedInstructions?.length) continue;
-      console.log(result.root);
-      showSkipped(result);
-    }
-  } else console.log('Cancelled. No kit selections or agent outputs saved.');
+  await interactive(targets, initial, { offline });
+  console.log('\nYour loadout is ready.');
 }
 program.action(setup);
 program
