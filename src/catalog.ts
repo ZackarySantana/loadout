@@ -173,22 +173,31 @@ export function loadCatalog(
     }
   }
   if (config.curated) {
-    for (const folder of fs.readdirSync(bundledRoot).sort()) {
-      const definition = parse(
-        kitSchema,
-        readYaml(bundledRoot, `${folder}/kit.yaml`),
-        `loadout/${folder}`,
-      );
-      const kit: Kit = {
-        ...definition,
-        id: `loadout-${definition.id}`,
-        requires: definition.requires.map((id) => `loadout-${id}`),
-        directory: safePath(bundledRoot, folder),
-        origin: 'bundled',
-      };
-      if (kits.has(kit.id)) throw new Error(`Duplicate kit ID: ${kit.id}`);
-      validateKit(kit);
-      kits.set(kit.id, kit);
+    for (const provider of fs.readdirSync(bundledRoot).sort()) {
+      const directory = safePath(bundledRoot, provider);
+      if (!fs.statSync(directory).isDirectory()) continue;
+      parse(idSchema, provider, 'Bundled provider');
+      for (const folder of fs.readdirSync(directory).sort()) {
+        const dir = safePath(directory, folder);
+        if (!fs.statSync(dir).isDirectory()) continue;
+        const manifest = `${provider}/${folder}/kit.yaml`;
+        const definition = parse(
+          kitSchema,
+          readYaml(bundledRoot, manifest),
+          manifest,
+        );
+        const kit: Kit = {
+          ...definition,
+          id: `loadout-${definition.id}`,
+          requires: definition.requires.map((id) => `loadout-${id}`),
+          directory: dir,
+          origin: 'bundled',
+          provider,
+        };
+        if (kits.has(kit.id)) throw new Error(`Duplicate kit ID: ${kit.id}`);
+        validateKit(kit);
+        kits.set(kit.id, kit);
+      }
     }
   }
   const catalog = { root, kits, global };

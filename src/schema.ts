@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { bundledProvider } from './bundled.js';
 
 export const idSchema = z
   .string()
@@ -164,6 +163,7 @@ export type Kit = z.infer<typeof kitSchema> & {
   external?: ExternalSource;
   pinned?: ExternalSource;
   origin?: 'curated' | 'external' | 'bundled' | 'personal';
+  provider?: string;
 };
 export type Catalog = {
   root: string;
@@ -190,7 +190,7 @@ export function parse<T>(
 
 export function kitSource(kit: Kit): string {
   return kit.origin === 'bundled'
-    ? bundledProvider(kit.id)
+    ? (kit.provider ?? 'loadout')
     : ((kit.pinned ?? kit.external)?.repo ??
         (kit.origin === 'personal' ? 'Personal' : 'Repository'));
 }

@@ -16,7 +16,9 @@ try {
   const files = packed.files.map((file) => file.path);
   assert.ok(files.includes('LICENSE'));
   assert.ok(files.includes('dist/cli.js'));
-  assert.ok(files.includes('kits/write-kit/skills/loadout-write-kit/SKILL.md'));
+  assert.ok(
+    files.includes('kits/loadout/write-kit/skills/loadout-write-kit/SKILL.md'),
+  );
   assert.ok(
     files.every(
       (file) => !/^(src|test|scripts|\.loadout|\.github)\//.test(file),

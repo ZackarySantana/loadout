@@ -41,10 +41,12 @@ test('global CLI init starts empty and the bundled authoring kit installs offlin
     assert.deepEqual(
       [...loadTarget(home, true).catalog!.kits.values()]
         .filter((kit) => kit.origin === 'bundled')
-        .map((kit) => [kit.id, kitSource(kit)]),
+        .map((kit) => [kit.id, kitSource(kit)])
+        .sort(([a], [b]) => a!.localeCompare(b!)),
       [
         ['loadout-claude-cli', 'loadout-agent-clis'],
         ['loadout-codex-cli', 'loadout-agent-clis'],
+        ['loadout-dont-commit', 'loadout'],
         ['loadout-greenfield', 'loadout'],
         ['loadout-opencode-cli', 'loadout-agent-clis'],
         ['loadout-write-kit', 'loadout'],
@@ -52,7 +54,7 @@ test('global CLI init starts empty and the bundled authoring kit installs offlin
     );
     run('--offline', 'enable', 'loadout-write-kit');
     const source = fs.readFileSync(
-      'kits/write-kit/skills/loadout-write-kit/SKILL.md',
+      'kits/loadout/write-kit/skills/loadout-write-kit/SKILL.md',
       'utf8',
     );
     for (const agent of ['.agents', '.claude']) {

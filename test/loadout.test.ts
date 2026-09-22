@@ -320,11 +320,11 @@ for (const cliKit of ['claude-cli', 'codex-cli', 'opencode-cli']) {
     const root = fixture(t);
     const id = `loadout-${cliKit}`;
     const instructions = fs.readFileSync(
-      `kits/${cliKit}/instructions.md`,
+      `kits/loadout-agent-clis/${cliKit}/instructions.md`,
       'utf8',
     );
     const skill = fs.readFileSync(
-      `kits/${cliKit}/skills/${id}/SKILL.md`,
+      `kits/loadout-agent-clis/${cliKit}/skills/${id}/SKILL.md`,
       'utf8',
     );
     assert.match(
@@ -384,7 +384,10 @@ for (const cliKit of ['claude-cli', 'codex-cli', 'opencode-cli']) {
       for (const agent of ['.agents', '.claude'])
         assert.equal(
           read(root, `${agent}/skills/${id}/SKILL.md`),
-          fs.readFileSync(`kits/${cliKit}/skills/${id}/SKILL.md`, 'utf8'),
+          fs.readFileSync(
+            `kits/loadout-agent-clis/${cliKit}/skills/${id}/SKILL.md`,
+            'utf8',
+          ),
         );
       const owned = JSON.parse(
         read(root, '.loadout-personal/generated.json'),

@@ -15,6 +15,7 @@ import { type Target } from './targets.js';
 import { availableUpdates, hasUpdate } from './updates.js';
 import { prepareInput } from './terminal.js';
 import { providerDescriptions } from './curated.js';
+import { bundledProviders } from './bundled.js';
 
 const muted = (value: string) => styleText('dim', value);
 const bold = (value: string) => styleText('bold', value);
@@ -74,8 +75,6 @@ const providerFor = (kit: Kit): string | undefined =>
     : (kit.external?.repo ??
       (kit.origin === 'personal' ? 'Personal' : undefined));
 const providerPrefixes: Readonly<Record<string, string>> = {
-  loadout: 'loadout-',
-  'loadout-agent-clis': 'loadout-',
   'mattpocock/skills': 'matt-pocock-',
   'anthropics/skills': 'anthropic-',
 };
@@ -223,7 +222,10 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
         providerFor(kit) !== provider
       )
         return id;
-      const prefix = providerPrefixes[provider];
+      const prefix =
+        kit.origin === 'bundled'
+          ? (bundledProviders[provider]?.prefix ?? 'loadout-')
+          : providerPrefixes[provider];
       return prefix && id.startsWith(prefix) && id.length > prefix.length
         ? id.slice(prefix.length)
         : id;
@@ -248,9 +250,7 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
           const count = kits.filter((kit) => enabledSet.has(kit.id)).length;
           const origins = new Set(kits.map((kit) => kit.origin));
           const description = origins.has('bundled')
-            ? id === 'loadout-agent-clis'
-              ? 'Delegate tasks through agent CLI harnesses'
-              : 'Included with Loadout'
+            ? (bundledProviders[id]?.description ?? 'Included with Loadout')
             : id === 'Personal'
               ? 'Your personal kits'
               : origins.has('curated') && providerDescriptions[id]
