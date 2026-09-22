@@ -16,7 +16,11 @@ import {
   type FetchBytes,
   type SnapshotCache,
 } from '../src/external.js';
-import { type ExternalSource } from '../src/schema.js';
+import {
+  externalSourceSchema,
+  sameSource,
+  type ExternalSource,
+} from '../src/schema.js';
 import { DownloadCancelledError } from '../src/retry.js';
 
 const revision = '1'.repeat(40);
@@ -110,6 +114,114 @@ function mockFetch(files = upstream(), requests: string[] = []): FetchBytes {
 const offlineFetch: FetchBytes = async () => {
   throw new Error('Unexpected network access');
 };
+
+test('mapped upstream skill names preserve content, resources, licenses, and offline snapshots', async (t) => {
+  const root = fixture(t);
+  const mapped = {
+    ...source,
+    skillNames: { 'skills/alpha': 'acme-alpha' },
+    license: 'README.md',
+  };
+  fs.writeFileSync(
+    path.join(root, '.loadout/config.yaml'),
+    stringify({
+      schemaVersion: 1,
+      externalKits: [
+        { id: 'acme-alpha', description: 'Mapped skill', source: mapped },
+      ],
+    }),
+  );
+  const files = upstream();
+  const skill = files.get('skills/alpha/SKILL.md')!;
+  skill.content = Buffer.from(
+    skill.content.toString().replace('name: alpha', 'name: acme-alpha'),
+  );
+  files.set('README.md', files.get('LICENSE')!);
+  files.delete('LICENSE');
+  apply(await prepare(root, ['acme-alpha'], mockFetch(files)));
+  for (const agent of ['.agents', '.claude']) {
+    const directory = path.join(root, agent, 'skills/acme-alpha');
+    assert.deepEqual(
+      fs.readFileSync(path.join(directory, 'SKILL.md')),
+      skill.content,
+    );
+    assert.equal(
+      fs.readFileSync(path.join(directory, 'references/details.md'), 'utf8'),
+      'Details',
+    );
+    assert.match(
+      fs.readFileSync(path.join(directory, 'LICENSE.upstream'), 'utf8'),
+      /MIT License/,
+    );
+    assert.equal(fs.existsSync(path.join(root, agent, 'skills/alpha')), false);
+  }
+  const offline = await prepare(
+    root,
+    ['acme-alpha'],
+    offlineFetch,
+    undefined,
+    true,
+  );
+  assert.ok(offline.changes.every((change) => change.kind === 'unchanged'));
+  const snapshot = readExternal(root).store;
+  snapshot.kits['acme-alpha']!.source.skillNames!['skills/alpha'] = 'tampered';
+  fs.writeFileSync(
+    path.join(root, '.loadout-personal/external.json'),
+    JSON.stringify(snapshot),
+  );
+  await assert.rejects(
+    prepare(root, ['acme-alpha'], offlineFetch, undefined, true),
+    /manifest checksum mismatch/,
+  );
+});
+
+test('skill name mappings are validated and distinguish source revisions and session caches', async (t) => {
+  assert.equal(
+    externalSourceSchema.safeParse({
+      ...source,
+      skillNames: { 'skills/other': 'other' },
+    }).success,
+    false,
+  );
+  assert.equal(
+    externalSourceSchema.safeParse({
+      ...source,
+      skillNames: { 'skills/alpha': '../escape' },
+    }).success,
+    false,
+  );
+  const mapped = { ...source, skillNames: { 'skills/alpha': 'acme-alpha' } };
+  assert.equal(sameSource(source, mapped), false);
+  assert.equal(
+    sameSource(source, { ...source, skillNames: { 'skills/alpha': 'alpha' } }),
+    true,
+  );
+  const root = fixture(t);
+  const catalog = loadCatalog(root);
+  const state = { ...loadState(catalog), selected: ['acme-alpha'] };
+  const cache: SnapshotCache = new Map();
+  await renderWithExternal(catalog, state, { cache, fetch: mockFetch() });
+  catalog.kits.get('acme-alpha')!.external = mapped;
+  const files = upstream();
+  files.get('skills/alpha/SKILL.md')!.content = Buffer.from(
+    '---\nname: acme-alpha\ndescription: Mapped skill\n---\n',
+  );
+  const result = await renderWithExternal(catalog, state, {
+    cache,
+    fetch: mockFetch(files),
+  });
+  assert.ok(result.files.has('.agents/skills/acme-alpha/SKILL.md'));
+  assert.equal(cache.size, 2);
+  catalog.kits.get('acme-alpha')!.external = {
+    ...source,
+    skills: ['skills/alpha', 'skills/beta'],
+    skillNames: { 'skills/beta': 'alpha' },
+  };
+  await assert.rejects(
+    renderWithExternal(catalog, state, { fetch: offlineFetch }),
+    /duplicate skill names/,
+  );
+});
 
 test('session snapshots reuse exact sources across preparation and scopes without saving them', async (t) => {
   const root = fixture(t);

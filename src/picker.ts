@@ -77,6 +77,8 @@ const providerFor = (kit: Kit): string | undefined =>
 const providerPrefixes: Readonly<Record<string, string>> = {
   'mattpocock/skills': 'matt-pocock-',
   'anthropics/skills': 'anthropic-',
+  'vercel-labs/agent-skills': 'vercel-',
+  'obra/superpowers': 'superpowers-',
 };
 
 export type TargetPickerConfig = {

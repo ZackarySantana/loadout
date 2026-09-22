@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import path from 'node:path';
 import { parse as yaml } from 'yaml';
 import { z } from 'zod';
 import {
@@ -9,6 +8,7 @@ import {
   relativePath,
   parse,
   sameSource,
+  skillName,
   type Catalog,
   type State,
   type ExternalSource,
@@ -48,7 +48,9 @@ const sourceKey = (source: ExternalSource) =>
     repo: source.repo,
     ref: source.ref,
     license: source.license,
-    skills: [...source.skills].sort(),
+    skills: [...source.skills]
+      .sort()
+      .map((skill) => [skill, skillName(source, skill)]),
   });
 export type ExternalStore = z.infer<typeof storeSchema>;
 export type FetchBytes = (
@@ -121,7 +123,7 @@ const treeSchema = z.object({
   ),
 });
 function skillNames(source: ExternalSource): string[] {
-  const names = source.skills.map((p) => path.posix.basename(p));
+  const names = source.skills.map((skill) => skillName(source, skill));
   if (new Set(names).size !== names.length)
     throw new Error(
       `External kit has duplicate skill names: ${names.join(', ')}`,
@@ -143,6 +145,13 @@ function snapshotIntegrity(
         source.skills,
         source.license,
         files,
+        ...(Object.keys(source.skillNames ?? {}).length
+          ? [
+              Object.entries(source.skillNames!).sort(([a], [b]) =>
+                a.localeCompare(b),
+              ),
+            ]
+          : []),
       ]),
     )
     .digest('hex');
@@ -222,7 +231,7 @@ async function download(
   )
     throw new Error(`Missing regular license file: ${source.license}`);
   for (const skill of source.skills) {
-    const name = path.posix.basename(skill);
+    const name = skillName(source, skill);
     for (const entry of tree.tree.filter((f) =>
       f.path.startsWith(`${skill}/`),
     )) {

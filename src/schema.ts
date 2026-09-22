@@ -110,9 +110,17 @@ export const externalSourceSchema = z
       )
       .min(1)
       .max(20),
+    skillNames: z.record(relativePath, idSchema).optional(),
     license: relativePath.default('LICENSE'),
   })
-  .strict();
+  .strict()
+  .refine(
+    (source) =>
+      Object.keys(source.skillNames ?? {}).every((skill) =>
+        source.skills.includes(skill),
+      ),
+    'Skill name mappings must refer to selected skill paths',
+  );
 export const externalKitSchema = z
   .object({
     id: idSchema,
@@ -201,6 +209,11 @@ export function sameSource(a: ExternalSource, b: ExternalSource): boolean {
     a.ref === b.ref &&
     a.license === b.license &&
     JSON.stringify([...a.skills].sort()) ===
-      JSON.stringify([...b.skills].sort())
+      JSON.stringify([...b.skills].sort()) &&
+    a.skills.every((skill) => skillName(a, skill) === skillName(b, skill))
   );
+}
+
+export function skillName(source: ExternalSource, skill: string): string {
+  return source.skillNames?.[skill] ?? skill.split('/').at(-1)!;
 }

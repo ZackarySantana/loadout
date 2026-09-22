@@ -16,7 +16,7 @@ import {
   resolveKits,
   setAnswers,
 } from './resolve.js';
-import { kitSource, type Catalog, type State } from './schema.js';
+import { kitSource, skillName, type Catalog, type State } from './schema.js';
 import { availableUpdates, hasUpdate, updateDescription } from './updates.js';
 
 const version = (
@@ -254,7 +254,7 @@ program
         `Source: https://github.com/${source.repo}/tree/${source.ref}`,
       );
       console.log(
-        `Skills: ${source.skills.map((p) => p.split('/').at(-1)).join(', ')}`,
+        `Skills: ${source.skills.map((skill) => skillName(source, skill)).join(', ')}`,
       );
       if (hasUpdate(kit))
         console.log(
