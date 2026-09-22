@@ -13,6 +13,7 @@ import {
 } from './interactive.js';
 import {
   renderWithExternal,
+  catalogForUpdates,
   type FetchBytes,
   type SnapshotCache,
 } from './external.js';
@@ -85,24 +86,27 @@ export async function interactive(
           // Finish questions for every destination before starting any downloads.
           for (const selection of selections) {
             const { target, state } = selection;
-            selection.state = await configureSelection(
-              target,
-              state,
-              context,
-              (kit, key, answer) => {
-                state.answers[kit] ??= {};
-                state.answers[kit]![key] = answer;
-              },
-            );
             selection.update = await selectUpdates(
               target.catalog!,
-              selection.state,
+              state,
               options.offline,
               context,
               {
                 message: `${target.label} · Choose catalog updates (Enter keeps your choices)`,
                 selected: selection.update,
                 quiet: true,
+              },
+            );
+            selection.state = await configureSelection(
+              {
+                ...target,
+                catalog: catalogForUpdates(target.catalog!, selection.update),
+              },
+              state,
+              context,
+              (kit, key, answer) => {
+                state.answers[kit] ??= {};
+                state.answers[kit]![key] = answer;
               },
             );
           }
@@ -113,6 +117,7 @@ export async function interactive(
                 const prepared: PreparedTarget[] = [];
                 for (const [scope, selection] of selections.entries()) {
                   const { target, state, update } = selection;
+                  const catalog = catalogForUpdates(target.catalog!, update);
                   progress(scope, 'Preparing kits…');
                   const rendered = await renderWithExternal(
                     target.catalog!,
@@ -133,7 +138,7 @@ export async function interactive(
                   progress(scope, 'Checking file changes…');
                   prepared.push({
                     ...selection,
-                    plan: plan(target.catalog!, state, rendered, {
+                    plan: plan(catalog, state, rendered, {
                       adopt: true,
                     }),
                   });

@@ -10,12 +10,26 @@ const files = fs
   .sort()
   .map((file) => `test/${file}`);
 const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'loadout-test-home-'));
+const env = {
+  ...process.env,
+  HOME: testHome,
+  USERPROFILE: testHome,
+  LOADOUT_CACHE_DIR: path.join(testHome, 'cache'),
+};
+const seeded = spawnSync(process.execPath, ['test/seed-catalog.mjs'], {
+  stdio: 'inherit',
+  env,
+});
+if (seeded.error || seeded.status) {
+  fs.rmSync(testHome, { recursive: true, force: true });
+  throw seeded.error ?? new Error('Could not seed the test catalog');
+}
 const result = spawnSync(
   process.execPath,
   ['--import', 'tsx', '--test', ...process.argv.slice(2), ...files],
   {
     stdio: 'inherit',
-    env: { ...process.env, HOME: testHome, USERPROFILE: testHome },
+    env,
   },
 );
 fs.rmSync(testHome, { recursive: true, force: true });

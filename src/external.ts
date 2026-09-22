@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { parse as yaml } from 'yaml';
 import { z } from 'zod';
 import {
@@ -9,6 +11,8 @@ import {
   parse,
   sameSource,
   skillName,
+  catalogInfoSchema,
+  stableJson,
   type Catalog,
   type State,
   type ExternalSource,
@@ -17,6 +21,7 @@ import { json, readOptional, portableMode } from './fs.js';
 import { resolveKits } from './resolve.js';
 import { render, type Rendered } from './render.js';
 import { retryDownload } from './retry.js';
+import { cachePath, writeCache } from './subscriptions.js';
 
 const MAX_FILE = 2 * 1024 * 1024;
 const MAX_KIT = 8 * 1024 * 1024;
@@ -33,6 +38,13 @@ const snapshotSchema = z
     integrity: z.string().regex(/^[a-f0-9]{64}$/),
     source: externalSourceSchema,
     files: z.record(relativePath, snapshotFile),
+    registration: z
+      .object({
+        description: z.string(),
+        catalog: catalogInfoSchema.optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 const storeSchema = z
@@ -44,14 +56,20 @@ const storeSchema = z
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type SnapshotCache = Map<string, Snapshot>;
 const sourceKey = (source: ExternalSource) =>
-  JSON.stringify({
-    repo: source.repo,
-    ref: source.ref,
-    license: source.license,
-    skills: [...source.skills]
-      .sort()
-      .map((skill) => [skill, skillName(source, skill)]),
-  });
+  source.integrity
+    ? stableJson({
+        integrity: source.integrity,
+        manifest: source.kit?.manifest,
+      })
+    : JSON.stringify({
+        repo: source.repo,
+        ref: source.ref,
+        license: source.license,
+        kit: source.kit,
+        skills: [...source.skills]
+          .sort()
+          .map((skill) => [skill, skillName(source, skill)]),
+      });
 export type ExternalStore = z.infer<typeof storeSchema>;
 export type FetchBytes = (
   url: string,
@@ -74,7 +92,7 @@ export function readExternal(root: string): {
       : { schemaVersion: 1, kits: {} },
   };
 }
-function blobHash(content: Buffer): string {
+export function blobHash(content: Buffer): string {
   return createHash('sha1')
     .update(`blob ${content.length}\0`)
     .update(content)
@@ -131,7 +149,7 @@ function skillNames(source: ExternalSource): string[] {
   return names;
 }
 function snapshotIntegrity(
-  snapshot: Pick<Snapshot, 'source' | 'files'>,
+  snapshot: Pick<Snapshot, 'source' | 'files' | 'registration'>,
 ): string {
   const source = snapshot.source;
   const files = Object.entries(snapshot.files)
@@ -152,19 +170,33 @@ function snapshotIntegrity(
               ),
             ]
           : []),
+        ...(source.kit ? [source.kit] : []),
+        ...(source.integrity ? [source.integrity] : []),
+        ...(snapshot.registration ? [snapshot.registration] : []),
       ]),
     )
     .digest('hex');
 }
-function validateSnapshot(snapshot: Snapshot, label: string): void {
+export function validateSnapshot(snapshot: Snapshot, label: string): void {
   if (snapshot.integrity !== snapshotIntegrity(snapshot))
     throw new Error(`${label}: external snapshot manifest checksum mismatch`);
+  if (
+    snapshot.source.integrity &&
+    snapshot.source.integrity !== kitIntegrity(snapshot)
+  )
+    throw new Error(
+      `${label}: kit content hash mismatch. Refresh the catalog before downloading changed content.`,
+    );
   const names = skillNames(snapshot.source);
   let size = 0;
   if (Object.keys(snapshot.files).length > MAX_FILES)
     throw new Error(`${label}: too many external files`);
   for (const [file, stored] of Object.entries(snapshot.files)) {
-    if (!names.some((name) => file.startsWith(`${name}/`)))
+    if (
+      !(snapshot.source.kit
+        ? file.startsWith('kit/')
+        : names.some((name) => file.startsWith(`${name}/`)))
+    )
       throw new Error(`${label}: invalid external output ${file}`);
     const data = Buffer.from(stored.data, 'base64');
     size += data.length;
@@ -176,24 +208,46 @@ function validateSnapshot(snapshot: Snapshot, label: string): void {
     if (data.length > MAX_FILE || size > MAX_KIT)
       throw new Error(`${label}: external snapshot exceeds size limit`);
   }
+  if (snapshot.source.kit) {
+    if (!snapshot.files['kit/LICENSE.upstream'])
+      throw new Error(`${label}: missing upstream license`);
+    for (const output of snapshot.source.kit.manifest.outputs) {
+      if (output.type === 'instructions') {
+        if (!snapshot.files[`kit/${output.source}`])
+          throw new Error(`${label}: missing ${output.source}`);
+      } else {
+        validateSkill(
+          snapshot.files[`kit/${output.source}/SKILL.md`],
+          path.posix.basename(output.source),
+          label,
+        );
+      }
+    }
+  }
   for (const name of names) {
-    const file = snapshot.files[`${name}/SKILL.md`];
-    if (!file) throw new Error(`${label}: missing ${name}/SKILL.md`);
-    const text = Buffer.from(file.data, 'base64').toString('utf8');
-    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
-    const meta = frontmatter ? yaml(frontmatter[1]!) : undefined;
-    if (
-      !meta ||
-      meta.name !== name ||
-      typeof meta.description !== 'string' ||
-      !meta.description.trim()
-    )
-      throw new Error(
-        `${label}: ${name}/SKILL.md needs matching name and description`,
-      );
+    validateSkill(snapshot.files[`${name}/SKILL.md`], name, label);
     if (!snapshot.files[`${name}/LICENSE.upstream`])
       throw new Error(`${label}: missing upstream license for ${name}`);
   }
+}
+function validateSkill(
+  file: z.infer<typeof snapshotFile> | undefined,
+  name: string,
+  label: string,
+): void {
+  if (!file) throw new Error(`${label}: missing ${name}/SKILL.md`);
+  const text = Buffer.from(file.data, 'base64').toString('utf8');
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+  const meta = frontmatter ? yaml(frontmatter[1]!) : undefined;
+  if (
+    !meta ||
+    meta.name !== name ||
+    typeof meta.description !== 'string' ||
+    !meta.description.trim()
+  )
+    throw new Error(
+      `${label}: ${name}/SKILL.md needs matching name and description`,
+    );
 }
 async function download(
   source: ExternalSource,
@@ -205,7 +259,7 @@ async function download(
     JSON.parse(
       (
         await get(
-          `https://api.github.com/repos/${source.repo}/git/trees/${source.ref}?recursive=1`,
+          `https://api.github.com/repos/${source.repo}/git/trees/${encodeURIComponent(source.ref)}?recursive=1`,
           MAX_KIT,
         )
       ).toString(),
@@ -230,17 +284,16 @@ async function download(
     !['100644', '100755'].includes(license.mode)
   )
     throw new Error(`Missing regular license file: ${source.license}`);
-  for (const skill of source.skills) {
-    const name = skillName(source, skill);
-    for (const entry of tree.tree.filter((f) =>
-      f.path.startsWith(`${skill}/`),
-    )) {
+  for (const skill of source.kit ? [source.kit.path] : source.skills) {
+    const name = source.kit ? 'kit' : skillName(source, skill);
+    const prefix = skill === '.' ? '' : `${skill}/`;
+    for (const entry of tree.tree.filter((f) => f.path.startsWith(prefix))) {
       if (entry.type === 'tree') continue;
       if (entry.type !== 'blob' || !['100644', '100755'].includes(entry.mode))
         throw new Error(
           `Unsupported external symlink or submodule: ${entry.path}`,
         );
-      const relative = entry.path.slice(skill.length + 1);
+      const relative = entry.path.slice(prefix.length);
       parse(relativePath, relative, `External path ${entry.path}`);
       chosen.push({
         remote: entry.path,
@@ -273,7 +326,7 @@ async function download(
           .map(encodeURIComponent)
           .join('/');
         const content = await get(
-          `https://raw.githubusercontent.com/${source.repo}/${source.ref}/${encoded}`,
+          `https://raw.githubusercontent.com/${source.repo}/${encodeURIComponent(source.ref)}/${encoded}`,
           MAX_FILE,
         );
         if (content.length !== file.size || blobHash(content) !== file.sha)
@@ -304,6 +357,88 @@ async function download(
   validateSnapshot(complete, source.repo);
   return complete;
 }
+
+export function readSharedSnapshot(
+  source: ExternalSource,
+): Snapshot | undefined {
+  const file = cachePath('kits', sourceKey(source));
+  if (!fs.existsSync(file)) return;
+  try {
+    const snapshot = parse(
+      snapshotSchema,
+      JSON.parse(fs.readFileSync(file, 'utf8')),
+      file,
+    );
+    validateSnapshot(snapshot, file);
+    return sameSource(snapshot.source, source) ? snapshot : undefined;
+  } catch {
+    return undefined;
+  }
+}
+export function saveSharedSnapshot(snapshot: Snapshot): void {
+  validateSnapshot(snapshot, snapshot.source.repo);
+  writeCache(cachePath('kits', sourceKey(snapshot.source)), snapshot);
+}
+
+// Content identity is independent of repository, branch, and catalog location.
+export function kitIntegrity(
+  snapshot: Pick<Snapshot, 'source' | 'files'>,
+): string {
+  return createHash('sha256')
+    .update(
+      stableJson({
+        manifest: snapshot.source.kit?.manifest,
+        files: Object.entries(snapshot.files)
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([file, stored]) => [file, stored.sha, stored.mode]),
+      }),
+    )
+    .digest('hex');
+}
+
+export async function hashSource(
+  source: ExternalSource,
+  get: FetchBytes = fetchBytes,
+): Promise<string> {
+  return kitIntegrity(await download({ ...source, integrity: undefined }, get));
+}
+export function snapshotResources(
+  snapshot: Snapshot,
+): NonNullable<import('./schema.js').Kit['resources']> {
+  validateSnapshot(snapshot, snapshot.source.repo);
+  return Object.fromEntries(
+    Object.entries(snapshot.files)
+      .filter(([file]) => file.startsWith('kit/'))
+      .map(([file, stored]) => [
+        file.slice(4),
+        { content: Buffer.from(stored.data, 'base64'), mode: stored.mode },
+      ]),
+  );
+}
+export function catalogForUpdates(
+  catalog: Catalog,
+  update: string[] = [],
+): Catalog {
+  const kits = new Map(catalog.kits);
+  for (const id of update) {
+    const kit = kits.get(id);
+    if (!kit?.external)
+      throw new Error(`Cannot update ${id}: choose an external kit.`);
+    const source = kit.offered ?? kit.external;
+    kits.set(id, {
+      ...kit,
+      ready: undefined,
+      problem: undefined,
+      requires: [],
+      questions: {},
+      outputs: [],
+      ...source.kit?.manifest,
+      external: source,
+      resources: undefined,
+    });
+  }
+  return { ...catalog, kits };
+}
 export async function renderWithExternal(
   catalog: Catalog,
   state: State,
@@ -320,11 +455,15 @@ export async function renderWithExternal(
   } = {},
 ): Promise<Rendered> {
   options.signal?.throwIfAborted();
-  const result = render(catalog, state);
+  const previous = catalog;
+  catalog = catalogForUpdates(catalog, options.update);
   const enabled = resolveKits(catalog, state.selected);
   const { raw, store } = readExternal(catalog.root);
   for (const id of options.update ?? [])
-    if (!enabled.includes(id) || !catalog.kits.get(id)?.external)
+    if (
+      !enabled.includes(id) &&
+      !resolveKits(previous, state.selected).includes(id)
+    )
       throw new Error(`Cannot update ${id}: choose an enabled external kit.`);
   for (const id of enabled) {
     options.signal?.throwIfAborted();
@@ -335,12 +474,20 @@ export async function renderWithExternal(
       continue;
     }
     let snapshot = Object.hasOwn(store.kits, id) ? store.kits[id] : undefined;
+    if (
+      snapshot?.registration?.catalog &&
+      kit.catalog &&
+      snapshot.registration.catalog.id !== kit.catalog.id
+    )
+      snapshot = undefined;
     const unchanged = snapshot && sameSource(snapshot.source, source);
     if (
       !snapshot ||
       (options.update?.includes(id) && !(options.offline && unchanged))
     ) {
-      const cached = options.cache?.get(sourceKey(source));
+      const cached =
+        options.cache?.get(sourceKey(source)) ??
+        (source.kit ? readSharedSnapshot(source) : undefined);
       if (!cached && options.offline)
         throw new Error(
           `${id} is not available at the requested revision offline. Run without --offline once to fetch it.`,
@@ -381,9 +528,32 @@ export async function renderWithExternal(
       options.signal?.throwIfAborted();
       validateSnapshot(snapshot, id);
       options.cache?.set(sourceKey(source), snapshot);
+      if (source.kit) saveSharedSnapshot(snapshot);
+      snapshot = {
+        ...snapshot,
+        registration: {
+          description: kit.description,
+          ...(kit.catalog ? { catalog: kit.catalog } : {}),
+        },
+      };
+      snapshot.integrity = snapshotIntegrity(snapshot);
       store.kits[id] = snapshot;
     }
     validateSnapshot(snapshot, id);
+    if (snapshot.source.kit) {
+      catalog.kits.set(id, {
+        ...kit,
+        ...snapshot.source.kit.manifest,
+        resources: snapshotResources(snapshot),
+      });
+    }
+    options.onReady?.(id);
+  }
+  const result = render(catalog, state);
+  for (const id of enabled) {
+    const kit = catalog.kits.get(id)!;
+    if (!kit.external || kit.external.kit) continue;
+    const snapshot = store.kits[id]!;
     for (const agent of agents) {
       const prefix = `${agent === 'codex' ? '.agents' : '.claude'}/skills`;
       for (const name of skillNames(snapshot.source)) {
@@ -404,7 +574,6 @@ export async function renderWithExternal(
         });
       }
     }
-    options.onReady?.(id);
   }
   if (raw || Object.keys(store.kits).length)
     result.external = {

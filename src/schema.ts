@@ -89,6 +89,45 @@ export const kitSchema = z
   .refine((kit) => kit.ready === false || kit.outputs.length > 0, {
     message: 'Ready kits need at least one output',
     path: ['outputs'],
+  })
+  .superRefine((kit, context) => {
+    if (kit.ready === false) return;
+    for (const [key, question] of Object.entries(kit.questions)) {
+      if (
+        question.default !== undefined &&
+        !validAnswer(question, question.default)
+      )
+        context.addIssue({
+          code: 'custom',
+          message: `${key}: invalid default`,
+        });
+      if (
+        question.type === 'choice' &&
+        new Set(question.choices).size !== question.choices.length
+      )
+        context.addIssue({
+          code: 'custom',
+          message: `${key}: duplicate choices`,
+        });
+    }
+    for (const output of kit.outputs) {
+      if (output.when) {
+        const question = kit.questions[output.when.answer];
+        if (!question || !validAnswer(question, output.when.equals))
+          context.addIssue({
+            code: 'custom',
+            message: `Invalid condition on ${output.when.answer}`,
+          });
+      }
+      if (
+        output.type === 'skill' &&
+        !idSchema.safeParse(output.source.split('/').at(-1)).success
+      )
+        context.addIssue({
+          code: 'custom',
+          message: `Invalid skill directory: ${output.source}`,
+        });
+    }
   });
 export const externalSourceSchema = z
   .object({
@@ -100,7 +139,15 @@ export const externalSourceSchema = z
       ),
     ref: z
       .string()
-      .regex(/^[a-f0-9]{40}$/, 'Use a full 40-character Git commit SHA'),
+      .regex(
+        /^[A-Za-z0-9][A-Za-z0-9._/-]*$/,
+        'Use a Git branch, tag, or commit',
+      )
+      .default('HEAD'),
+    integrity: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/, 'Use a SHA-256 kit content hash')
+      .optional(),
     skills: z
       .array(
         relativePath.refine(
@@ -108,12 +155,25 @@ export const externalSourceSchema = z
           'Use a skill directory with a lowercase name',
         ),
       )
-      .min(1)
-      .max(20),
+      .max(20)
+      .default([]),
     skillNames: z.record(relativePath, idSchema).optional(),
+    kit: z
+      .object({ path: relativePath, manifest: kitSchema })
+      .strict()
+      .optional(),
     license: relativePath.default('LICENSE'),
   })
   .strict()
+  .refine(
+    (source) => !!source.integrity || /^[a-f0-9]{40}$/.test(source.ref),
+    'Provide a kit content hash or a legacy full 40-character Git commit SHA',
+  )
+  .refine(
+    (source) =>
+      source.kit ? source.skills.length === 0 : source.skills.length > 0,
+    'Choose skill directories or a complete kit, not both',
+  )
   .refine(
     (source) =>
       Object.keys(source.skillNames ?? {}).every((skill) =>
@@ -127,14 +187,84 @@ export const externalKitSchema = z
     description: z.string().min(1),
     source: externalSourceSchema,
   })
-  .strict();
+  .strict()
+  .refine(
+    (kit) => !kit.source.kit || kit.source.kit.manifest.id === kit.id,
+    'Manifest ID must match the kit ID',
+  );
 export type ExternalSource = z.infer<typeof externalSourceSchema>;
 export type ExternalKit = z.infer<typeof externalKitSchema>;
+export const catalogUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => {
+    const url = new URL(value);
+    return (
+      !url.username &&
+      !url.password &&
+      !url.hash &&
+      (url.protocol === 'https:' ||
+        (url.protocol === 'http:' &&
+          ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
+    );
+  }, 'Use an HTTPS manifest URL (HTTP is allowed on localhost)');
+export const catalogManifestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    id: idSchema,
+    name: z.string().min(1),
+    description: z.string().default(''),
+    providers: z.array(
+      z
+        .object({
+          id: z.string().min(1),
+          description: z.string().default(''),
+          prefix: z.string().default(''),
+          kits: z.array(externalKitSchema),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .superRefine((manifest, context) => {
+    const providers = new Set<string>();
+    const kits = new Set<string>();
+    for (const provider of manifest.providers) {
+      if (providers.has(provider.id))
+        context.addIssue({
+          code: 'custom',
+          message: `Duplicate provider: ${provider.id}`,
+        });
+      providers.add(provider.id);
+      for (const kit of provider.kits) {
+        if (kits.has(kit.id))
+          context.addIssue({
+            code: 'custom',
+            message: `Duplicate kit ID: ${kit.id}`,
+          });
+        kits.add(kit.id);
+      }
+    }
+  });
+export type CatalogManifest = z.infer<typeof catalogManifestSchema>;
+export const catalogInfoSchema = z
+  .object({
+    id: idSchema,
+    url: catalogUrlSchema,
+    name: z.string(),
+    provider: z.string(),
+    description: z.string(),
+    prefix: z.string(),
+  })
+  .strict();
+export type CatalogInfo = z.infer<typeof catalogInfoSchema>;
+export type Subscription = { url: string; scopes: string[] };
 export const configSchema = z
   .object({
     schemaVersion: z.literal(1),
-    curated: z.boolean().default(true),
+    curated: z.boolean().optional(),
     externalKits: z.array(externalKitSchema).default([]),
+    catalogs: z.array(catalogUrlSchema).default([]),
   })
   .strict();
 export const stateSchema = z
@@ -170,13 +300,20 @@ export type Kit = z.infer<typeof kitSchema> & {
   directory: string;
   external?: ExternalSource;
   pinned?: ExternalSource;
-  origin?: 'curated' | 'external' | 'bundled' | 'personal';
+  origin?: 'curated' | 'external' | 'bundled' | 'personal' | 'catalog';
   provider?: string;
+  catalog?: CatalogInfo;
+  subscriptions?: string[];
+  unavailable?: boolean;
+  problem?: string;
+  offered?: ExternalSource;
+  resources?: Record<string, { content: Buffer; mode: number }>;
 };
 export type Catalog = {
   root: string;
   kits: Map<string, Kit>;
   global?: boolean;
+  subscriptions?: Subscription[];
 };
 export function validAnswer(q: Question, value: unknown): value is Answer {
   return q.type === 'boolean'
@@ -197,6 +334,7 @@ export function parse<T>(
 }
 
 export function kitSource(kit: Kit): string {
+  if (kit.catalog) return kit.catalog.provider;
   return kit.origin === 'bundled'
     ? (kit.provider ?? 'loadout')
     : ((kit.pinned ?? kit.external)?.repo ??
@@ -204,10 +342,16 @@ export function kitSource(kit: Kit): string {
 }
 
 export function sameSource(a: ExternalSource, b: ExternalSource): boolean {
+  if (a.integrity || b.integrity)
+    return (
+      a.integrity === b.integrity &&
+      stableJson(a.kit?.manifest) === stableJson(b.kit?.manifest)
+    );
   return (
     a.repo === b.repo &&
     a.ref === b.ref &&
     a.license === b.license &&
+    JSON.stringify(a.kit) === JSON.stringify(b.kit) &&
     JSON.stringify([...a.skills].sort()) ===
       JSON.stringify([...b.skills].sort()) &&
     a.skills.every((skill) => skillName(a, skill) === skillName(b, skill))
@@ -216,4 +360,22 @@ export function sameSource(a: ExternalSource, b: ExternalSource): boolean {
 
 export function skillName(source: ExternalSource, skill: string): string {
   return source.skillNames?.[skill] ?? skill.split('/').at(-1)!;
+}
+
+export function offeredSource(kit: Kit): ExternalSource | undefined {
+  return kit.offered ?? kit.external;
+}
+
+export function sourceVersion(source: ExternalSource): string {
+  return source.integrity ?? source.ref;
+}
+
+export function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, item) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(
+          Object.entries(item).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+        )
+      : item,
+  );
 }

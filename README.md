@@ -19,6 +19,14 @@ Pick your kits, select **Review changes**, then **Apply changes**. Run `loadout`
 
 Choose **Repository** for the current project or **Global** for your user configuration across repositories.
 
+## Subscribe to catalogs
+
+```sh
+loadout catalog add https://example.com/catalog.yaml
+```
+
+See the [catalog guide](docs/catalogs.md) for subscription scopes, offline use, and publishing.
+
 ## Share kits with your team
 
 ```sh

@@ -15,7 +15,7 @@ import { kitSource } from '../src/schema.js';
 
 const cli = path.resolve('dist/cli.js');
 
-test('global CLI init starts empty and the bundled authoring kit installs offline', (t) => {
+test('global CLI init starts empty and the cached remote authoring kit installs offline', (t) => {
   for (const explicitGlobal of [true, false]) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'loadout-bundled-'));
     t.after(() => fs.rmSync(home, { recursive: true, force: true }));
@@ -40,7 +40,7 @@ test('global CLI init starts empty and the bundled authoring kit installs offlin
     assert.deepEqual(loadTarget(home, true).state?.selected, []);
     assert.deepEqual(
       [...loadTarget(home, true).catalog!.kits.values()]
-        .filter((kit) => kit.origin === 'bundled')
+        .filter((kit) => kit.external?.kit)
         .map((kit) => [kit.id, kitSource(kit)])
         .sort(([a], [b]) => a!.localeCompare(b!)),
       [

@@ -394,7 +394,7 @@ test('catalog offers optional attributed recommendations without network access'
   const root = fixture(t);
   const catalog = loadCatalog(root);
   const grill = catalog.kits.get('matt-pocock-grill-me')!;
-  assert.equal(grill.origin, 'curated');
+  assert.equal(grill.origin, 'catalog');
   assert.deepEqual(grill.external?.skills, [
     'skills/productivity/grill-me',
     'skills/productivity/grilling',

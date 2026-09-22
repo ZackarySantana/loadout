@@ -21,14 +21,16 @@ export function render(catalog: Catalog, state: State): Rendered {
   const sections = new Map<string, string[]>();
   for (const id of resolveKits(catalog, state.selected)) {
     const kit = catalog.kits.get(id)!;
-    if (kit.external) skillKits.add(id);
+    if (kit.external && !kit.external.kit) skillKits.add(id);
     for (const output of kit.outputs) {
       if (
         output.when &&
         state.answers[id]?.[output.when.answer] !== output.when.equals
       )
         continue;
-      const source = safePath(kit.directory, output.source);
+      const source = kit.resources
+        ? output.source
+        : safePath(kit.directory, output.source);
       if (output.type === 'instructions') {
         if (catalog.global && output.scope !== '.')
           throw new Error(`${kit.id}: global instructions must use scope: .`);
@@ -39,7 +41,15 @@ export function render(catalog: Catalog, state: State): Rendered {
               `${kit.id}: scope directory does not exist: ${output.scope}`,
             );
         }
-        const section = fs.readFileSync(source, 'utf8').trim();
+        const section = (
+          kit.resources
+            ? kit.resources[output.source]?.content
+            : fs.readFileSync(source)
+        )
+          ?.toString('utf8')
+          .trim();
+        if (section === undefined)
+          throw new Error(`${kit.id}: missing ${output.source}`);
         const kits = instructionKits.get(output.scope) ?? new Set<string>();
         kits.add(id);
         instructionKits.set(output.scope, kits);
@@ -56,12 +66,32 @@ export function render(catalog: Catalog, state: State): Rendered {
               `Output collision: multiple skills target ${destination}`,
             );
           skillRoots.add(destination);
-          for (const file of walk(source)) {
-            const src = safePath(source, file);
+          const sourceFiles = kit.resources
+            ? Object.keys(kit.resources)
+                .filter((file) => file.startsWith(`${output.source}/`))
+                .map((file) => file.slice(output.source.length + 1))
+            : walk(source);
+          for (const file of sourceFiles) {
+            const resource = kit.resources?.[`${output.source}/${file}`];
+            const src = resource ? undefined : safePath(source, file);
             files.set(`${destination}/${file}`, {
-              content: fs.readFileSync(src),
-              mode: portableMode(fs.statSync(src).mode & 0o111 ? 0o755 : 0o644),
+              content: resource?.content ?? fs.readFileSync(src!),
+              mode: portableMode(
+                (resource?.mode ?? fs.statSync(src!).mode) & 0o111
+                  ? 0o755
+                  : 0o644,
+              ),
             });
+          }
+          if (kit.resources?.['LICENSE.upstream']) {
+            if (files.has(`${destination}/LICENSE.upstream`))
+              throw new Error(
+                `Output collision: ${destination}/LICENSE.upstream`,
+              );
+            files.set(
+              `${destination}/LICENSE.upstream`,
+              kit.resources['LICENSE.upstream'],
+            );
           }
         }
       }

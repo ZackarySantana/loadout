@@ -1,0 +1,401 @@
+schemaVersion: 1
+id: loadout
+name: Loadout
+description: The official Loadout catalog
+providers:
+  - id: loadout
+    description: Instructions and kit authoring from Loadout
+    prefix: loadout-
+    kits:
+      - id: loadout-dont-commit
+        description: Leave commits and Git operations to the user
+        source:
+          repo: ZackarySantana/loadout
+          integrity: 7790ecccc0dfdf5202a6f260bfb1832dd19870534afde75249a90f347cb74e18
+          skills: []
+          kit:
+            path: kits/loadout/dont-commit
+            manifest:
+              schemaVersion: 1
+              id: loadout-dont-commit
+              description: Leave commits and Git operations to the user
+              requires: []
+              questions: {}
+              outputs:
+                - type: instructions
+                  source: instructions.md
+                  scope: .
+          license: LICENSE
+      - id: loadout-greenfield
+        description: Develop an undeployed project without legacy compatibility code
+        source:
+          repo: ZackarySantana/loadout
+          integrity: 8c704a463f42cfdc5d39709e93ddcb2bdba6fbb0eca87cc0fab8d65097d45574
+          skills: []
+          kit:
+            path: kits/loadout/greenfield
+            manifest:
+              schemaVersion: 1
+              id: loadout-greenfield
+              description: Develop an undeployed project without legacy compatibility code
+              requires: []
+              questions: {}
+              outputs:
+                - type: instructions
+                  source: instructions.md
+                  scope: .
+          license: LICENSE
+      - id: loadout-write-kit
+        description: Write a Loadout kit from a minimal example
+        source:
+          repo: ZackarySantana/loadout
+          integrity: 86287b4f56be9cd4b74fe7e374df2e3ca03b510ccef8c110ec4288a23f3ce6f4
+          skills: []
+          kit:
+            path: kits/loadout/write-kit
+            manifest:
+              schemaVersion: 1
+              id: loadout-write-kit
+              description: Write a Loadout kit from a minimal example
+              requires: []
+              questions: {}
+              outputs:
+                - type: skill
+                  source: skills/loadout-write-kit
+          license: LICENSE
+  - id: loadout-agent-clis
+    description: Delegate tasks through agent CLI harnesses
+    prefix: loadout-
+    kits:
+      - id: loadout-claude-cli
+        description: Run non-interactive Claude CLI conversations
+        source:
+          repo: ZackarySantana/loadout
+          integrity: 0cdc1aa038f6ae2816d1d9824716457d300bc5f686018ced4a65404907e79151
+          skills: []
+          kit:
+            path: kits/loadout-agent-clis/claude-cli
+            manifest:
+              schemaVersion: 1
+              id: loadout-claude-cli
+              description: Run non-interactive Claude CLI conversations
+              requires: []
+              questions:
+                placement:
+                  type: choice
+                  message: Add Claude CLI guidance to context or as a skill?
+                  choices:
+                    - context
+                    - skill
+              outputs:
+                - type: instructions
+                  source: instructions.md
+                  scope: .
+                  when:
+                    answer: placement
+                    equals: context
+                - type: skill
+                  source: skills/loadout-claude-cli
+                  when:
+                    answer: placement
+                    equals: skill
+          license: LICENSE
+      - id: loadout-codex-cli
+        description: Run non-interactive Codex CLI conversations
+        source:
+          repo: ZackarySantana/loadout
+          integrity: dcfcf59e1a8f26a3f1e4b66ce169db94ccd4f8abfa37e0505982ca0c9392cc37
+          skills: []
+          kit:
+            path: kits/loadout-agent-clis/codex-cli
+            manifest:
+              schemaVersion: 1
+              id: loadout-codex-cli
+              description: Run non-interactive Codex CLI conversations
+              requires: []
+              questions:
+                placement:
+                  type: choice
+                  message: Add Codex CLI guidance to context or as a skill?
+                  choices:
+                    - context
+                    - skill
+              outputs:
+                - type: instructions
+                  source: instructions.md
+                  scope: .
+                  when:
+                    answer: placement
+                    equals: context
+                - type: skill
+                  source: skills/loadout-codex-cli
+                  when:
+                    answer: placement
+                    equals: skill
+          license: LICENSE
+      - id: loadout-opencode-cli
+        description: Run non-interactive OpenCode CLI conversations
+        source:
+          repo: ZackarySantana/loadout
+          integrity: 6ec315e265620033cff8565d651d793656ff0ded02b44a80676af4f34ff88f10
+          skills: []
+          kit:
+            path: kits/loadout-agent-clis/opencode-cli
+            manifest:
+              schemaVersion: 1
+              id: loadout-opencode-cli
+              description: Run non-interactive OpenCode CLI conversations
+              requires: []
+              questions:
+                placement:
+                  type: choice
+                  message: Add OpenCode CLI guidance to context or as a skill?
+                  choices:
+                    - context
+                    - skill
+              outputs:
+                - type: instructions
+                  source: instructions.md
+                  scope: .
+                  when:
+                    answer: placement
+                    equals: context
+                - type: skill
+                  source: skills/loadout-opencode-cli
+                  when:
+                    answer: placement
+                    equals: skill
+          license: LICENSE
+  - id: mattpocock/skills
+    description: Test-driven development, debugging, planning, and agent workflows
+    prefix: matt-pocock-
+    kits:
+      - id: matt-pocock-tdd
+        description: Build features test-first with behavior checks that survive refactors
+        source:
+          repo: mattpocock/skills
+          integrity: eda40e09766e30e50c6c218ea82bda3c698de4272ff3b84a141ee46040fcef35
+          skills:
+            - skills/engineering/tdd
+            - skills/engineering/codebase-design
+          license: LICENSE
+      - id: matt-pocock-diagnosing-bugs
+        description: Reproduce a failure, isolate its cause, and verify the fix
+        source:
+          repo: mattpocock/skills
+          integrity: c3878fc188c867e22336dfe64df3abfa95301039335ad6318ee2ecbf42d93295
+          skills:
+            - skills/engineering/diagnosing-bugs
+          license: LICENSE
+      - id: matt-pocock-domain-modeling
+        description: Define shared project terms and capture architecture decisions
+        source:
+          repo: mattpocock/skills
+          integrity: 342203010df4b3a48697046a787ca5802215d178034807a57f35fb181d34e2d6
+          skills:
+            - skills/engineering/domain-modeling
+          license: LICENSE
+      - id: matt-pocock-prototype
+        description: Try an interface or state model before committing to a design
+        source:
+          repo: mattpocock/skills
+          integrity: 2e08d68d3d220275108de39632289779ebc1ba9f5fea7f4b76f03ddda5240035
+          skills:
+            - skills/engineering/prototype
+          license: LICENSE
+      - id: matt-pocock-research
+        description: Investigate a question and save findings with source citations
+        source:
+          repo: mattpocock/skills
+          integrity: 1d7d887b3eee56b6cffcb94006c6255a2b4bd908336aa1093fdc5f6927051b3b
+          skills:
+            - skills/engineering/research
+          license: LICENSE
+      - id: matt-pocock-resolving-merge-conflicts
+        description: Resolve conflicts, verify the result, and commit the merge
+        source:
+          repo: mattpocock/skills
+          integrity: f6f36674d3ea019eaf6eb6f2508359c25cb85818e30b5373a577b424c9acbc2f
+          skills:
+            - skills/engineering/resolving-merge-conflicts
+          license: LICENSE
+      - id: matt-pocock-wizard
+        description: Create a step-by-step Bash wizard for setup only a human can do
+        source:
+          repo: mattpocock/skills
+          integrity: c10bdbc80d4c7e3f0787655d1867adc453d7983b9c0cc0c5c48bd9223b3de1d6
+          skills:
+            - skills/engineering/wizard
+          license: LICENSE
+      - id: matt-pocock-grill-me
+        description: Challenge a plan until its assumptions and trade-offs are clear
+        source:
+          repo: mattpocock/skills
+          integrity: b50ad5cd6f80eda088cf81e629ae55c99bfedbc6b1baadf846f26f4fdbfcddc6
+          skills:
+            - skills/productivity/grill-me
+            - skills/productivity/grilling
+          license: LICENSE
+      - id: matt-pocock-writing-for-agents
+        description: Write concise agent instructions with clear triggers and steps
+        source:
+          repo: mattpocock/skills
+          integrity: 466d9baad3713cf3359c7b81abee6d3df2da21424c0b479d665f7fe488c49777
+          skills:
+            - skills/productivity/writing-for-agents
+          license: LICENSE
+      - id: matt-pocock-handoff
+        description: Save decisions, progress, and next steps for a fresh agent session
+        source:
+          repo: mattpocock/skills
+          integrity: d424ae856874b12fb64a9f0052368622c72e2d469656ab92b942b131d47d547a
+          skills:
+            - skills/productivity/handoff
+          license: LICENSE
+      - id: matt-pocock-teach
+        description: Learn a topic through guided lessons, practice, and saved notes
+        source:
+          repo: mattpocock/skills
+          integrity: 68e39b231446ce0278275cb80299ed3b144204f57d1accefab3aeee2655fdb3d
+          skills:
+            - skills/productivity/teach
+          license: LICENSE
+      - id: matt-pocock-to-questionnaire
+        description: Draft a questionnaire to get missing answers from someone else
+        source:
+          repo: mattpocock/skills
+          integrity: ff22204fa6749f81e3ac9711d8e3c682e1201421ce850f89ee2854daefa27fe4
+          skills:
+            - skills/productivity/to-questionnaire
+          license: LICENSE
+      - id: matt-pocock-wait-what
+        description: Re-explain the last answer with context and simpler language
+        source:
+          repo: mattpocock/skills
+          integrity: d37f40fec173708dd5f49edbe76f37d0150071f95a9e27b9e3c34e069438b360
+          skills:
+            - skills/productivity/wait-what
+          license: LICENSE
+  - id: anthropics/skills
+    description: Interface design, browser testing, MCP servers, art, and skill authoring
+    prefix: anthropic-
+    kits:
+      - id: anthropic-frontend-design
+        description: Build interfaces with a clear visual direction, layout, and typography
+        source:
+          repo: anthropics/skills
+          integrity: c87156ddab8eafaf342f6021551393722d462ca28393f30357d99f3d9a4d9451
+          skills:
+            - skills/frontend-design
+          license: skills/frontend-design/LICENSE.txt
+      - id: anthropic-webapp-testing
+        description: Check UI behavior and capture screenshots with Python + Playwright
+        source:
+          repo: anthropics/skills
+          integrity: 79703d6f42f7ec688003fbc1d083bc29bef546d510920c70c5e921181ab24131
+          skills:
+            - skills/webapp-testing
+          license: skills/webapp-testing/LICENSE.txt
+      - id: anthropic-mcp-builder
+        description: Build and evaluate MCP tools that connect agents to APIs
+        source:
+          repo: anthropics/skills
+          integrity: f1359dba329c4daec0aed275b8ea48cc7d39d1f159e12c4cffd461c2e132eb9e
+          skills:
+            - skills/mcp-builder
+          license: skills/mcp-builder/LICENSE.txt
+      - id: anthropic-algorithmic-art
+        description: Create p5.js art with repeatable seeds and interactive controls
+        source:
+          repo: anthropics/skills
+          integrity: ae3c3d13ae8019f3ae1d9de2f3546ba008b2a1d726bbc02b2000df57b2c48528
+          skills:
+            - skills/algorithmic-art
+          license: skills/algorithmic-art/LICENSE.txt
+      - id: anthropic-skill-creator
+        description: Create, evaluate, and improve skills and their triggering descriptions
+        source:
+          repo: anthropics/skills
+          integrity: f6e6d4ea92bb96d543cf65a8f38ecc275c5e10f3f7a564ea31bb2756def72052
+          skills:
+            - skills/skill-creator
+          license: skills/skill-creator/LICENSE.txt
+  - id: vercel-labs/agent-skills
+    description: React performance, component composition, and web interface reviews
+    prefix: vercel-
+    kits:
+      - id: vercel-react-best-practices
+        description: Optimize React and Next.js rendering, data fetching, and bundle size
+        source:
+          repo: vercel-labs/agent-skills
+          integrity: b6d95782002dabe7dd7fe31e84694b35088f8a221a5a9682283c23e5a5367d78
+          skills:
+            - skills/react-best-practices
+          skillNames:
+            skills/react-best-practices: vercel-react-best-practices
+          license: README.md
+      - id: vercel-composition-patterns
+        description: Design flexible React components with composition and shared state
+        source:
+          repo: vercel-labs/agent-skills
+          integrity: 082ef5c6b9ccd409942166d42470fda49ce3a93f16267053259dfb507000bbd7
+          skills:
+            - skills/composition-patterns
+          skillNames:
+            skills/composition-patterns: vercel-composition-patterns
+          license: README.md
+      - id: vercel-web-design-guidelines
+        description: Review web interfaces for accessibility, interaction, and UX issues
+        source:
+          repo: vercel-labs/agent-skills
+          integrity: 56bbc83007d76f4659cdaad5f5b8babbfeb67dfa074fd609a1f207b1907ee09e
+          skills:
+            - skills/web-design-guidelines
+          skillNames: {}
+          license: README.md
+  - id: obra/superpowers
+    description: Verification, code review, worktrees, and branch completion workflows
+    prefix: superpowers-
+    kits:
+      - id: superpowers-verification-before-completion
+        description: Run fresh checks and confirm evidence before claiming work is complete
+        source:
+          repo: obra/superpowers
+          integrity: 67dc5e695d62480181e95e3c83dc5cd67926b989947193f930763c1679e4e697
+          skills:
+            - skills/verification-before-completion
+          license: LICENSE
+      - id: superpowers-receiving-code-review
+        description:
+          Evaluate review feedback and verify suggestions before implementing
+          them
+        source:
+          repo: obra/superpowers
+          integrity: dab51b843031e69fee2161c667ecf271186fb0810744f5f2c13efdb3b64477b3
+          skills:
+            - skills/receiving-code-review
+          license: LICENSE
+      - id: superpowers-requesting-code-review
+        description: Dispatch a focused reviewer to check changes against requirements
+        source:
+          repo: obra/superpowers
+          integrity: adc449d224991a7e8540779ac3d12e0ba258de8fb5150458f1cd0e09fd7489cd
+          skills:
+            - skills/requesting-code-review
+          license: LICENSE
+      - id: superpowers-using-git-worktrees
+        description: Set up an isolated workspace and verify its starting test baseline
+        source:
+          repo: obra/superpowers
+          integrity: d57f18ff2954c8a528a7540d6c22960b88d2e12933710298b5dca38f165ef0e1
+          skills:
+            - skills/using-git-worktrees
+          license: LICENSE
+      - id: superpowers-finishing-a-development-branch
+        description: Verify changes and choose how to merge, publish, or keep a branch
+        source:
+          repo: obra/superpowers
+          integrity: 226db08307e923ab1daedf5b3078316d1e8827803da57ca90c9ef90348144877
+          skills:
+            - skills/finishing-a-development-branch
+          license: LICENSE

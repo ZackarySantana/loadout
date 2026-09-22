@@ -3,18 +3,27 @@ import path from 'node:path';
 import os from 'node:os';
 import { parse as yaml } from 'yaml';
 import {
-  configSchema,
   kitSchema,
   parse,
   validAnswer,
   idSchema,
   type Catalog,
   type Kit,
+  type ExternalKit,
 } from './schema.js';
-import { exists, safePath, walk } from './fs.js';
-import { curatedKits } from './curated.js';
+import { exists, safePath, walk, readOptional } from './fs.js';
 import { resolveKits } from './resolve.js';
-import { bundledRoot } from './bundled.js';
+import {
+  configSources,
+  subscriptions,
+  readCatalogCache,
+} from './subscriptions.js';
+import {
+  readExternal,
+  readSharedSnapshot,
+  snapshotResources,
+  kitIntegrity,
+} from './external.js';
 
 export function discover(cwd: string): string {
   let root = fs.realpathSync(cwd);
@@ -93,36 +102,8 @@ export function loadCatalog(
   root: string,
   global = path.resolve(root) === fs.realpathSync(os.homedir()),
 ): Catalog {
-  const home = fs.realpathSync(os.homedir());
-  const sources = [
-    ...(!global && root !== home
-      ? [
-          { root: home, directory: '.loadout', personal: true },
-          { root: home, directory: '.loadout-personal', personal: true },
-        ]
-      : []),
-    { root, directory: '.loadout', personal: global },
-    { root, directory: '.loadout-personal', personal: true },
-  ];
-  const configs = sources.map((source) => {
-    const file = `${source.directory}/config.yaml`;
-    const present = exists(safePath(source.root, file));
-    return {
-      ...source,
-      present,
-      config: parse(
-        configSchema,
-        present ? readYaml(source.root, file) : { schemaVersion: 1 },
-        `${source.root}/${file}`,
-      ),
-    };
-  });
-  const config = {
-    curated:
-      [...configs].reverse().find((source) => source.present)?.config.curated ??
-      true,
-    externalKits: configs.flatMap(({ config }) => config.externalKits),
-  };
+  const configs = configSources(root, global);
+  const externalKits = configs.flatMap(({ config }) => config.externalKits);
   const kits: Catalog['kits'] = new Map();
   for (const source of configs) {
     const directory = safePath(source.root, `${source.directory}/kits`);
@@ -145,67 +126,141 @@ export function loadCatalog(
       kits.set(kit.id, kit);
     }
   }
-  for (const [definitions, origin] of [
-    [config.curated ? curatedKits : [], 'curated'],
-    [config.externalKits, 'external'],
-  ] as const) {
-    for (const definition of definitions) {
-      if (
-        origin === 'curated' &&
-        config.externalKits.some((kit) => kit.id === definition.id)
-      )
-        continue;
-      if (kits.has(definition.id))
-        throw new Error(
-          `Duplicate kit ID: ${definition.id}. Local and external kits must have distinct IDs.`,
-        );
-      kits.set(definition.id, {
-        schemaVersion: 1,
-        id: definition.id,
-        description: definition.description,
-        requires: [],
-        questions: {},
-        outputs: [],
-        directory: root,
-        external: definition.source,
-        origin,
-      });
-    }
+  const subscribed = subscriptions(root, global);
+  const identities = new Map<string, string>();
+  for (const subscription of subscribed) {
+    const manifest = readCatalogCache(subscription.url)?.manifest;
+    if (!manifest) continue;
+    const other = identities.get(manifest.id);
+    if (other && other !== subscription.url)
+      throw new Error(
+        `Catalog ID ${manifest.id} is also published at ${other}`,
+      );
+    identities.set(manifest.id, subscription.url);
+    for (const provider of manifest.providers)
+      for (const definition of provider.kits) {
+        // Existing explicit source pins continue to override catalog offers.
+        if (externalKits.some((kit) => kit.id === definition.id)) continue;
+        if (kits.has(definition.id))
+          throw new Error(
+            `Duplicate kit ID: ${definition.id}. Catalogs must use distinct kit IDs.`,
+          );
+        kits.set(definition.id, {
+          ...externalKit(definition, root),
+          origin: 'catalog',
+          catalog: {
+            id: manifest.id,
+            url: subscription.url,
+            name: manifest.name,
+            provider: provider.id,
+            description: provider.description,
+            prefix: provider.prefix,
+          },
+          subscriptions: subscription.scopes,
+        });
+      }
   }
-  if (config.curated) {
-    for (const provider of fs.readdirSync(bundledRoot).sort()) {
-      const directory = safePath(bundledRoot, provider);
-      if (!fs.statSync(directory).isDirectory()) continue;
-      parse(idSchema, provider, 'Bundled provider');
-      for (const folder of fs.readdirSync(directory).sort()) {
-        const dir = safePath(directory, folder);
-        if (!fs.statSync(dir).isDirectory()) continue;
-        const manifest = `${provider}/${folder}/kit.yaml`;
-        const definition = parse(
-          kitSchema,
-          readYaml(bundledRoot, manifest),
-          manifest,
+  for (const definition of externalKits) {
+    if (kits.has(definition.id))
+      throw new Error(
+        `Duplicate kit ID: ${definition.id}. Local and external kits must have distinct IDs.`,
+      );
+    kits.set(definition.id, externalKit(definition, root));
+  }
+  const installed =
+    JSON.parse(
+      readOptional(root, '.loadout-personal/generated.json')?.toString() ??
+        '{}',
+    ).installedAt ?? {};
+  for (const [id, snapshot] of Object.entries(readExternal(root).store.kits)) {
+    let kit = kits.get(id);
+    if (
+      snapshot.registration?.catalog &&
+      kit &&
+      (!kit.external ||
+        (kit.catalog && snapshot.registration.catalog.id !== kit.catalog.id))
+    ) {
+      if (Object.hasOwn(installed, id))
+        throw new Error(
+          `Installed kit ${id} belongs to catalog ${snapshot.registration.catalog.id}, not ${kit.catalog?.id ?? 'a local kit'}`,
         );
-        const kit: Kit = {
-          ...definition,
-          id: `loadout-${definition.id}`,
-          requires: definition.requires.map((id) => `loadout-${id}`),
-          directory: dir,
-          origin: 'bundled',
-          provider,
-        };
-        if (kits.has(kit.id)) throw new Error(`Duplicate kit ID: ${kit.id}`);
-        validateKit(kit);
-        kits.set(kit.id, kit);
+      continue;
+    }
+    if (!kit && Object.hasOwn(installed, id)) {
+      kit = {
+        ...externalKit(
+          {
+            id,
+            description:
+              snapshot.registration?.description ??
+              `${id} (saved installation)`,
+            source: snapshot.source,
+          },
+          root,
+        ),
+        catalog: snapshot.registration?.catalog,
+        origin: snapshot.registration?.catalog ? 'catalog' : 'external',
+        unavailable: true,
+      };
+      kits.set(id, kit);
+    }
+    if (kit?.external) {
+      kit.pinned = snapshot.source;
+      if (
+        !snapshot.source.integrity &&
+        kit.external.integrity &&
+        kitIntegrity(snapshot) === kit.external.integrity
+      )
+        kit.pinned = { ...snapshot.source, integrity: kit.external.integrity };
+      if (snapshot.source.kit || kit.external.kit) {
+        kit.offered = kit.external;
+        Object.assign(
+          kit,
+          { ready: undefined, requires: [], questions: {}, outputs: [] },
+          snapshot.source.kit?.manifest,
+          {
+            external: snapshot.source,
+            resources: snapshot.source.kit
+              ? snapshotResources(snapshot)
+              : undefined,
+          },
+        );
       }
     }
   }
-  const catalog = { root, kits, global };
+  const catalog = { root, kits, global, subscriptions: subscribed };
+  for (const kit of kits.values()) {
+    if (kit.origin !== 'catalog' || kit.ready === false) continue;
+    try {
+      resolveKits(catalog, [kit.id]);
+    } catch (error) {
+      kit.problem = (error as Error).message;
+      kit.ready = false;
+    }
+  }
   resolveKits(
     catalog,
     [...kits.values()]
-      .filter((kit) => kit.ready !== false)
+      .filter((kit) => kit.ready !== false && kit.origin !== 'catalog')
       .map((kit) => kit.id),
   );
   return catalog;
+}
+
+function externalKit(definition: ExternalKit, root: string): Kit {
+  const source = definition.source;
+  const cached = source.kit ? readSharedSnapshot(source) : undefined;
+  return {
+    schemaVersion: 1,
+    requires: [],
+    questions: {},
+    outputs: [],
+    ...source.kit?.manifest,
+    id: definition.id,
+    description: definition.description,
+    directory: root,
+    external: source,
+    origin: 'external',
+    ...(cached ? { resources: snapshotResources(cached) } : {}),
+  };
 }

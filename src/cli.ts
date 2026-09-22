@@ -1,13 +1,19 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { createTwoFilesPatch } from 'diff';
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { parseDocument } from 'yaml';
 import os from 'node:os';
 import { discover } from './catalog.js';
 import { initialize } from './init.js';
 import { interactive } from './setup.js';
 import { apply, hasChanges, plan, type Plan } from './storage.js';
-import { renderWithExternal } from './external.js';
+import {
+  renderWithExternal,
+  catalogForUpdates,
+  hashSource,
+  fetchBytes,
+} from './external.js';
 import { loadTarget, type Target } from './targets.js';
 import {
   configure,
@@ -16,8 +22,23 @@ import {
   resolveKits,
   setAnswers,
 } from './resolve.js';
-import { kitSource, skillName, type Catalog, type State } from './schema.js';
+import {
+  kitSource,
+  skillName,
+  offeredSource,
+  sourceVersion,
+  catalogManifestSchema,
+  parse,
+  type Catalog,
+  type State,
+} from './schema.js';
 import { availableUpdates, hasUpdate, updateDescription } from './updates.js';
+import {
+  refreshCatalogs,
+  subscriptions,
+  readCatalogCache,
+} from './subscriptions.js';
+import { editSubscription } from './catalog-config.js';
 
 const version = (
   JSON.parse(
@@ -50,14 +71,24 @@ function targetRoot(): { root: string; global: boolean } {
   const root = opts.global ? home : discover(opts.cwd);
   return { root, global: root === home };
 }
-function context(): { catalog: Catalog; state: State } {
+async function context(
+  noNetwork = false,
+): Promise<{ catalog: Catalog; state: State }> {
   const { root, global } = targetRoot();
+  await refreshCatalogs(root, {
+    global,
+    offline: noNetwork || program.opts<{ offline?: boolean }>().offline,
+    warn: (message) => console.error(`loadout: ${message}`),
+  });
   const target = loadTarget(root, global);
   if (!target.catalog || !target.state)
     throw new Error(target.error ?? 'Cannot load kits for this location.');
   return { catalog: target.catalog, state: target.state };
 }
-function interactiveTargets(): { targets: Target[]; initial: number } {
+async function interactiveTargets(): Promise<{
+  targets: Target[];
+  initial: number;
+}> {
   const { root, global } = targetRoot();
   const home = realpathSync(os.homedir());
   let local = root;
@@ -68,6 +99,14 @@ function interactiveTargets(): { targets: Target[]; initial: number } {
       local = realpathSync(program.opts<{ cwd: string }>().cwd);
     }
   }
+  for (const location of new Set([local, home]))
+    await refreshCatalogs(location, {
+      global: location === home,
+      offline: program.opts<{ offline?: boolean }>().offline,
+      warn: (message) => console.error(`loadout: ${message}`),
+    }).catch((error) => {
+      if (location === root) throw error;
+    });
   const targets =
     local === home
       ? [loadTarget(home, true)]
@@ -162,10 +201,12 @@ async function generate(
   state: State,
   opts: Options,
 ): Promise<void> {
+  const previous = catalog;
+  catalog = catalogForUpdates(catalog, opts.update);
   setAnswers(catalog, state, opts.answer ?? []);
   const configured = await configure(catalog, state);
   showDependencies(catalog, configured);
-  const rendered = await renderWithExternal(catalog, configured, {
+  const rendered = await renderWithExternal(previous, configured, {
     update: opts.update,
     offline: program.opts<{ offline?: boolean }>().offline,
     onRetry: (id) => console.log(`Retrying ${id}…`),
@@ -175,10 +216,10 @@ async function generate(
     const kit = catalog.kits.get(id)!;
     if (kit.external) {
       const source = opts.update?.includes(id)
-        ? kit.external
+        ? offeredSource(kit)!
         : (kit.pinned ?? kit.external);
       console.log(
-        `${id}: ${source.repo}@${source.ref.slice(0, 12)} · license: ${source.license}`,
+        `${id}: ${source.repo}@${sourceVersion(source).slice(0, 12)} · license: ${source.license}`,
       );
     }
   }
@@ -195,7 +236,7 @@ async function generate(
   }
 }
 async function setup(): Promise<void> {
-  const { targets, initial } = interactiveTargets();
+  const { targets, initial } = await interactiveTargets();
   const offline = program.opts<{ offline?: boolean }>().offline;
   await interactive(targets, initial, { offline });
   console.log('\nYour loadout is ready.');
@@ -222,8 +263,8 @@ program
 program
   .command('list')
   .description('show available kits and why they are enabled')
-  .action(() => {
-    const { catalog, state } = context();
+  .action(async () => {
+    const { catalog, state } = await context();
     const enabled = resolveKits(catalog, state.selected);
     for (const kit of catalog.kits.values()) {
       const status =
@@ -244,17 +285,25 @@ program
 program
   .command('explain <kit>')
   .description('explain why a kit is enabled')
-  .action((id: string) => {
-    const { catalog, state } = context();
+  .action(async (id: string) => {
+    const { catalog, state } = await context();
     if (!catalog.kits.has(id)) throw new Error(`Unknown kit: ${id}`);
     const kit = catalog.kits.get(id)!;
+    if (kit.catalog)
+      console.log(
+        `Catalog: ${kit.catalog.name} (${kit.catalog.url})\nAvailable through: ${kit.unavailable ? 'saved installation; no longer subscribed' : kit.subscriptions?.join(', ')}`,
+      );
     if (kit.external) {
       const source = kit.pinned ?? kit.external;
       console.log(
         `Source: https://github.com/${source.repo}/tree/${source.ref}`,
       );
+      if (source.integrity)
+        console.log(`Kit content hash: ${source.integrity}`);
       console.log(
-        `Skills: ${source.skills.map((skill) => skillName(source, skill)).join(', ')}`,
+        source.kit
+          ? `Kit directory: ${source.kit.path}`
+          : `Skills: ${source.skills.map((skill) => skillName(source, skill)).join(', ')}`,
       );
       if (hasUpdate(kit))
         console.log(
@@ -278,7 +327,7 @@ options(
     .command('enable <kits...>')
     .description('enable kits and their dependencies'),
 ).action(async (ids: string[], opts: Options) => {
-  const { catalog, state } = context();
+  const { catalog, state } = await context();
   state.selected = [...state.selected, ...ids];
   await generate(catalog, state, opts);
 });
@@ -291,7 +340,7 @@ options(
       'also disable explicit selections that require this kit',
     ),
 ).action(async (id: string, opts: Options) => {
-  const { catalog, state } = context();
+  const { catalog, state } = await context();
   if (!catalog.kits.has(id) && !state.selected.includes(id))
     throw new Error(`Unknown kit: ${id}`);
   state.selected = disableKits(
@@ -307,7 +356,7 @@ options(
     .command('apply')
     .description('regenerate using saved selections and answers'),
 ).action(async (opts: Options) => {
-  const { catalog, state } = context();
+  const { catalog, state } = await context();
   await generate(catalog, state, opts);
 });
 program
@@ -315,8 +364,8 @@ program
   .description(
     'compare downloaded external kits with the current catalog (no network)',
   )
-  .action(() => {
-    const { catalog, state } = context();
+  .action(async () => {
+    const { catalog, state } = await context(true);
     const enabled = resolveKits(catalog, state.selected);
     const updates = availableUpdates(catalog);
     for (const kit of updates)
@@ -337,7 +386,7 @@ options(
     .command('update [kits...]')
     .description('update enabled external kits to their catalog revisions'),
 ).action(async (ids: string[], opts: Options) => {
-  const { catalog, state } = context();
+  const { catalog, state } = await context();
   const update = ids.length
     ? ids
     : availableUpdates(catalog, state.selected).map((kit) => kit.id);
@@ -347,6 +396,107 @@ options(
   }
   await generate(catalog, state, { ...opts, update });
 });
+const catalogCommand = program
+  .command('catalog')
+  .description('manage subscribed kit catalogs');
+catalogCommand
+  .command('hash <file>')
+  .description('calculate kit content hashes in a local catalog manifest')
+  .option(
+    '--ref <branch>',
+    'source branch or tag to resolve (otherwise keep each source locator)',
+  )
+  .action(async (file: string, opts: { ref?: string }) => {
+    if (program.opts<{ offline?: boolean }>().offline)
+      throw new Error('Hashing source contents needs an online connection.');
+    const document = parseDocument(readFileSync(file, 'utf8'), { merge: true });
+    if (document.errors.length)
+      throw new Error(document.errors.map((error) => error.message).join('; '));
+    const input = document.toJS();
+    for (const provider of input.providers ?? [])
+      for (const kit of provider.kits ?? []) {
+        kit.source.integrity = '0'.repeat(64);
+        if (opts.ref) kit.source.ref = opts.ref;
+      }
+    const manifest = parse(catalogManifestSchema, input, file);
+    const requests = new Map<string, Promise<Buffer>>();
+    for (const [i, provider] of manifest.providers.entries())
+      for (const [j, kit] of provider.kits.entries()) {
+        const integrity = await hashSource(kit.source, (url, limit) => {
+          if (!requests.has(url)) requests.set(url, fetchBytes(url, limit));
+          return requests.get(url)!;
+        });
+        const source = { ...kit.source, integrity };
+        document.setIn(
+          ['providers', i, 'kits', j, 'source'],
+          Object.fromEntries(
+            Object.entries(source).filter(
+              ([key, value]) => !(key === 'ref' && value === 'HEAD'),
+            ),
+          ),
+        );
+        console.log(`${kit.id}: ${integrity}`);
+      }
+    writeFileSync(file, document.toString());
+  });
+catalogCommand
+  .command('list')
+  .description('show effective catalog URLs and their scopes')
+  .action(() => {
+    const { root, global } = targetRoot();
+    for (const subscription of subscriptions(root, global)) {
+      const name = readCatalogCache(subscription.url)?.manifest.name;
+      console.log(
+        `${name ?? subscription.url} [${subscription.scopes.join(', ')}]${name ? `\n  ${subscription.url}` : ''}`,
+      );
+    }
+  });
+for (const action of ['add', 'remove'] as const) {
+  catalogCommand
+    .command(`${action} <urls...>`)
+    .description(`${action} catalog subscriptions (repository by default)`)
+    .option(
+      '--personal',
+      'apply to your home configuration, across all projects',
+    )
+    .option(
+      '--private',
+      'apply only to your private configuration in this repository',
+    )
+    .action(
+      async (
+        urls: string[],
+        opts: { personal?: boolean; private?: boolean },
+      ) => {
+        if (opts.personal && opts.private)
+          throw new Error('Choose --personal or --private, not both.');
+        const target = targetRoot();
+        const root = opts.personal ? realpathSync(os.homedir()) : target.root;
+        const directory = opts.private ? '.loadout-personal' : '.loadout';
+        const changed = editSubscription(root, directory, action, ...urls);
+        console.log(
+          `${changed ? (action === 'add' ? 'Added' : 'Removed') : 'No change to'} catalog subscriptions in ${root}/${directory}/config.yaml`,
+        );
+        if (action === 'add')
+          await refreshCatalogs(root, {
+            offline: program.opts<{ offline?: boolean }>().offline,
+            warn: (message) => console.error(`loadout: ${message}`),
+          });
+      },
+    );
+}
+catalogCommand
+  .command('refresh')
+  .description('refresh subscribed manifests without updating installed kits')
+  .action(async () => {
+    const { root, global } = targetRoot();
+    await refreshCatalogs(root, {
+      global,
+      force: true,
+      offline: program.opts<{ offline?: boolean }>().offline,
+      warn: (message) => console.error(`loadout: ${message}`),
+    });
+  });
 try {
   await program.parseAsync();
 } catch (error) {

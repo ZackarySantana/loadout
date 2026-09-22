@@ -1,5 +1,4 @@
 import { loadCatalog } from './catalog.js';
-import { readExternal } from './external.js';
 import { loadGenerated, loadState } from './storage.js';
 import { type Catalog, type State } from './schema.js';
 
@@ -21,11 +20,6 @@ export function loadTarget(root: string, global: boolean): Target {
   };
   try {
     const catalog = loadCatalog(root, global);
-    const { store } = readExternal(catalog.root);
-    for (const [id, snapshot] of Object.entries(store.kits)) {
-      const kit = catalog.kits.get(id);
-      if (kit?.external) kit.pinned = snapshot.source;
-    }
     return {
       ...target,
       catalog,

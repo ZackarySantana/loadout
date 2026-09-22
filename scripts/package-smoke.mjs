@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { seedCatalog } from '../test/seed-catalog.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'loadout-package-'));
 const npm = process.env.npm_execpath;
@@ -17,7 +18,10 @@ try {
   assert.ok(files.includes('LICENSE'));
   assert.ok(files.includes('dist/cli.js'));
   assert.ok(
-    files.includes('kits/loadout/write-kit/skills/loadout-write-kit/SKILL.md'),
+    files.every((file) => !file.startsWith('kits/') && file !== 'catalog.yaml'),
+  );
+  assert.ok(
+    !files.includes('dist/curated.js') && !files.includes('dist/bundled.js'),
   );
   assert.ok(
     files.every(
@@ -50,6 +54,8 @@ try {
   assert.ok(fs.existsSync(bin));
   const project = path.join(root, 'project');
   fs.mkdirSync(project);
+  process.env.LOADOUT_CACHE_DIR = path.join(root, 'cache');
+  await seedCatalog();
   const run = (...args) =>
     execFileSync(process.execPath, [cli, '-C', project, ...args], {
       encoding: 'utf8',
@@ -81,7 +87,7 @@ try {
   assert.match(run('init'), /editable starter kit/);
   assert.match(run('list'), /starter \[Needs setup\]/);
   console.log(
-    'Packed install, CLI, bundled assets, repeat apply, and removal passed.',
+    'Packed install, remote catalog cache, repeat apply, and removal passed.',
   );
 } finally {
   fs.rmSync(root, { recursive: true, force: true });

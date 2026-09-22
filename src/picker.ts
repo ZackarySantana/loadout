@@ -10,12 +10,17 @@ import { stripVTControlCharacters, styleText } from 'node:util';
 import stringWidth from 'string-width';
 import path from 'node:path';
 import { resolveKits, reasons } from './resolve.js';
-import { kitSource, type Catalog, type Kit, type State } from './schema.js';
+import {
+  kitSource,
+  offeredSource,
+  sourceVersion,
+  type Catalog,
+  type Kit,
+  type State,
+} from './schema.js';
 import { type Target } from './targets.js';
 import { availableUpdates, hasUpdate } from './updates.js';
 import { prepareInput } from './terminal.js';
-import { providerDescriptions } from './curated.js';
-import { bundledProviders } from './bundled.js';
 
 const muted = (value: string) => styleText('dim', value);
 const bold = (value: string) => styleText('bold', value);
@@ -70,16 +75,12 @@ type Row = {
   downloadedCount?: number;
 };
 const providerFor = (kit: Kit): string | undefined =>
-  kit.origin === 'bundled'
-    ? kitSource(kit)
-    : (kit.external?.repo ??
-      (kit.origin === 'personal' ? 'Personal' : undefined));
-const providerPrefixes: Readonly<Record<string, string>> = {
-  'mattpocock/skills': 'matt-pocock-',
-  'anthropics/skills': 'anthropic-',
-  'vercel-labs/agent-skills': 'vercel-',
-  'obra/superpowers': 'superpowers-',
-};
+  kit.catalog
+    ? kit.catalog.provider
+    : kit.origin === 'bundled'
+      ? kitSource(kit)
+      : (kit.external?.repo ??
+        (kit.origin === 'personal' ? 'Personal' : undefined));
 
 export type TargetPickerConfig = {
   targets: Target[];
@@ -224,10 +225,7 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
         providerFor(kit) !== provider
       )
         return id;
-      const prefix =
-        kit.origin === 'bundled'
-          ? (bundledProviders[provider]?.prefix ?? 'loadout-')
-          : providerPrefixes[provider];
+      const prefix = kit.catalog?.prefix;
       return prefix && id.startsWith(prefix) && id.length > prefix.length
         ? id.slice(prefix.length)
         : id;
@@ -236,6 +234,7 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
     if (browsingProviders) {
       const providers = new Map<string, Kit[]>();
       for (const kit of all) {
+        if (kit.unavailable) continue;
         const name = providerFor(kit);
         if (!name) continue;
         const kits = providers.get(name) ?? [];
@@ -251,17 +250,19 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
           if (!matching.length) return [];
           const count = kits.filter((kit) => enabledSet.has(kit.id)).length;
           const origins = new Set(kits.map((kit) => kit.origin));
-          const description = origins.has('bundled')
-            ? (bundledProviders[id]?.description ?? 'Included with Loadout')
+          const info = kits.find((kit) => kit.catalog)?.catalog;
+          const scopes = [
+            ...new Set(kits.flatMap((kit) => kit.subscriptions ?? [])),
+          ];
+          const description = info
+            ? `${info.description}${scopes.length ? ` · ${scopes.join(', ')}` : ''}`
             : id === 'Personal'
               ? 'Your personal kits'
-              : origins.has('curated') && providerDescriptions[id]
-                ? providerDescriptions[id]!
-                : origins.size > 1
-                  ? 'Curated and repository sources'
-                  : origins.has('curated')
-                    ? 'Curated kits'
-                    : 'Repository sources';
+              : origins.size > 1
+                ? 'Curated and repository sources'
+                : origins.has('curated')
+                  ? 'Curated kits'
+                  : 'Repository sources';
           return [
             {
               id,
@@ -276,6 +277,7 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
       entries = all
         .filter((kit) => {
           if (!matches(kit)) return false;
+          if (kit.unavailable && section !== 'Installed') return false;
           if (section === 'Kits') return !providerFor(kit);
           if (section === 'Installed') return installedSet.has(kit.id);
           return providerFor(kit) === provider;
@@ -521,7 +523,7 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
     const detail =
       notice ||
       (kit?.ready === false
-        ? 'Edit this kit, then set ready: true in kit.yaml'
+        ? (kit.problem ?? 'Edit this kit, then set ready: true in kit.yaml')
         : kit && willUninstall(kit.id)
           ? 'Uninstall on apply. Select again to keep.'
           : why.length
@@ -529,7 +531,7 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
             : kit?.requires.length
               ? `Requires ${kit.requires.map(displayName).join(', ')}`
               : kit && hasUpdate(kit)
-                ? `Catalog update · ${kit.pinned!.ref.slice(0, 8)} → ${kit.external!.ref.slice(0, 8)}`
+                ? `Catalog update · ${sourceVersion(kit.pinned!).slice(0, 8)} → ${sourceVersion(offeredSource(kit)!).slice(0, 8)}`
                 : '');
     // Keep the contextual row allocated so focus changes never move the footer.
     const footerHeight = 3 + actions.length + help.length;
@@ -594,7 +596,9 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
                 ? 'required'
                 : row.kit.pinned && !explicit
                   ? 'saved'
-                  : '';
+                  : row.kit.unavailable
+                    ? 'unsubscribed'
+                    : '';
       const marker = !row.kit
         ? accent('▸')
         : explicit

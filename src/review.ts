@@ -11,7 +11,8 @@ import { stripVTControlCharacters, styleText } from 'node:util';
 import stringWidth from 'string-width';
 import { type TargetSelection } from './picker.js';
 import { type PromptContext } from './interactive.js';
-import { kitSource } from './schema.js';
+import { kitSource, offeredSource, sourceVersion } from './schema.js';
+import { catalogForUpdates } from './external.js';
 import { reasons, resolveKits } from './resolve.js';
 import { hasChanges, type Change, type Plan } from './storage.js';
 import { suspendEscapeCancellation } from './terminal.js';
@@ -40,13 +41,14 @@ export function selectionSummary({
   state,
   update,
 }: ReviewTarget): KitReview[] {
-  const catalog = target.catalog!;
+  const previous = target.catalog!;
+  const catalog = catalogForUpdates(previous, update);
   const saved = target.state ?? { schemaVersion: 1, selected: [], answers: {} };
   const old = new Set([
     ...resolveKits(
-      catalog,
+      previous,
       saved.selected.filter(
-        (id) => catalog.kits.has(id) && catalog.kits.get(id)?.ready !== false,
+        (id) => previous.kits.has(id) && previous.kits.get(id)?.ready !== false,
       ),
     ),
     ...saved.selected,
@@ -80,7 +82,7 @@ export function selectionSummary({
       notes.push('chosen directly');
     if (effect === 'Update' && kit?.external)
       notes.push(
-        `${kit.pinned?.ref.slice(0, 7) ?? 'saved'} → ${kit.external.ref.slice(0, 7)}`,
+        `${kit.pinned ? sourceVersion(kit.pinned).slice(0, 7) : 'saved'} → ${sourceVersion(offeredSource(kit)!).slice(0, 7)}`,
       );
     if (next.has(id))
       for (const key of answerKeys) {
@@ -176,17 +178,18 @@ export function reviewRows(
 
 function fileRows(selections: ReviewTarget[]): Row[] {
   return selections.flatMap(({ target, state, update, plan }, scope) => {
+    const catalog = catalogForUpdates(target.catalog!, update);
     const rows: Row[] = [
       { text: `${target.label} · ${target.root}`, scope, heading: true },
     ];
-    for (const id of resolveKits(target.catalog!, state.selected)) {
-      const kit = target.catalog!.kits.get(id)!;
+    for (const id of resolveKits(catalog, state.selected)) {
+      const kit = catalog.kits.get(id)!;
       if (!kit.external) continue;
       const source = update.includes(id)
-        ? kit.external
+        ? offeredSource(kit)!
         : (kit.pinned ?? kit.external);
       rows.push({
-        text: `${id}: ${source.repo}@${source.ref} · license: ${source.license}`,
+        text: `${id}: ${source.repo}@${sourceVersion(source)} · license: ${source.license}`,
         scope,
       });
     }

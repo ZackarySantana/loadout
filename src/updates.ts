@@ -1,11 +1,17 @@
 import { resolveKits } from './resolve.js';
-import { sameSource, type Catalog, type Kit } from './schema.js';
+import {
+  sameSource,
+  offeredSource,
+  sourceVersion,
+  type Catalog,
+  type Kit,
+} from './schema.js';
 
 export function hasUpdate(kit: Kit): boolean {
   return !!(
     kit.pinned &&
-    kit.external &&
-    !sameSource(kit.pinned, kit.external)
+    offeredSource(kit) &&
+    !sameSource(kit.pinned, offeredSource(kit)!)
   );
 }
 
@@ -21,9 +27,9 @@ export function availableUpdates(catalog: Catalog, selected?: string[]): Kit[] {
 
 export function updateDescription(kit: Kit): string {
   const before = kit.pinned!;
-  const after = kit.external!;
+  const after = offeredSource(kit)!;
   return [
-    `${before.repo}@${before.ref.slice(0, 12)} → ${after.repo}@${after.ref.slice(0, 12)}`,
+    `${before.repo}@${sourceVersion(before).slice(0, 12)} → ${after.repo}@${sourceVersion(after).slice(0, 12)}`,
     ...(before.license !== after.license
       ? [`License: ${before.license} → ${after.license}`]
       : []),

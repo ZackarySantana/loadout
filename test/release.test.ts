@@ -269,7 +269,10 @@ test('identical skills can be adopted and restored; differing or extra files blo
   });
   const generated = render(catalog, state);
   for (const [file, content] of generated.files)
-    if (file.startsWith('.agents/skills/')) put(root, file, content.content);
+    if (file.startsWith('.agents/skills/')) {
+      put(root, file, content.content);
+      fs.chmodSync(path.join(root, file), content.mode);
+    }
   const original = read(root, '.agents/skills/graphiffy/SKILL.md');
   apply(plan(catalog, state, generated, { adopt: true }));
   apply(await prepare(root, []));
@@ -365,7 +368,10 @@ test('adoption rechecks skill inventories and tracked status immediately before 
   });
   const generated = render(catalog, state);
   for (const [file, content] of generated.files)
-    if (file.startsWith('.agents/skills/')) put(root, file, content.content);
+    if (file.startsWith('.agents/skills/')) {
+      put(root, file, content.content);
+      fs.chmodSync(path.join(root, file), content.mode);
+    }
   const preview = plan(catalog, state, generated, { adopt: true });
   put(root, '.agents/skills/graphiffy/extra.md', 'New personal note');
   assert.throws(() => apply(preview), /Skill directory changed since preview/);

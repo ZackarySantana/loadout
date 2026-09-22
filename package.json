@@ -8,7 +8,6 @@
   },
   "files": [
     "dist",
-    "kits",
     "README.md",
     "LICENSE"
   ],
@@ -20,14 +19,14 @@
     "url": "git+https://github.com/ZackarySantana/loadout.git"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/build.mjs",
     "dev": "tsx src/cli.ts",
     "test": "npm run build && node scripts/test.mjs",
     "check": "npm run format:check && tsc --noEmit && tsc -p tsconfig.test.json && npm test",
     "prepare": "npm run build",
     "prepack": "npm run build",
-    "format": "prettier --write src test scripts .github *.json README.md",
-    "format:check": "prettier --check src test scripts .github *.json README.md",
+    "format": "prettier --write src test scripts docs .github *.json *.yaml README.md",
+    "format:check": "prettier --check src test scripts docs .github *.json *.yaml README.md",
     "test:package": "node scripts/package-smoke.mjs"
   },
   "publishConfig": {

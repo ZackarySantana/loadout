@@ -20,7 +20,8 @@ export function resolveKits(catalog: Catalog, selected: string[]): string[] {
       );
     if (kit.ready === false)
       throw new Error(
-        `${id} needs setup before it can be selected. Edit its kit.yaml and set ready: true.`,
+        kit.problem ??
+          `${id} needs setup before it can be selected. Edit its kit.yaml and set ready: true.`,
       );
     visiting.push(id);
     for (const required of [...kit.requires].sort()) visit(required);
