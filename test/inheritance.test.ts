@@ -83,7 +83,7 @@ function fixture(t: TestContext) {
     answers?: State['answers'],
   ): Promise<ReviewTarget> => {
     const target = loadTarget(directory, directory === home);
-    assert.ok(target.catalog, target.error);
+    assert.ok(target.catalog, target.error ?? 'Cannot load catalog');
     return {
       target,
       state: await configure(target.catalog, {
@@ -195,15 +195,64 @@ test('unselecting an inherited kit in a repository prevents restoration there', 
   assert.deepEqual(loadTarget(repo, false).state!.selected, []);
 });
 
-test('first global installation discovers repositories created before registration existed', async (t) => {
+test('global installation leaves unregistered repositories alone until they are applied', async (t) => {
   const f = fixture(t);
   const repo = f.repo('older-project');
   const selection = await f.select(repo, ['shared']);
   const catalog = selection.target.catalog!;
   applyAll([plan(catalog, selection.state, render(catalog, selection.state))]);
   assert.equal(f.exists(f.home, '.loadout-personal/repositories.json'), false);
+  const before = f.read(repo, 'AGENTS.md');
   await f.install(await f.select(f.home, ['shared']));
+  assert.equal(f.read(repo, 'AGENTS.md'), before);
+  assert.deepEqual(
+    JSON.parse(f.read(f.home, '.loadout-personal/repositories.json'))
+      .repositories,
+    [],
+  );
+  await f.install(await f.select(repo, ['shared']));
   assert.equal(f.exists(repo, 'AGENTS.md'), false);
+  await f.install(await f.select(f.home, []));
+  assert.match(f.read(repo, 'AGENTS.md'), /Shared instructions/);
+});
+
+test('first global installation never enumerates home', async (t) => {
+  const f = fixture(t);
+  const readdir = fs.readdirSync;
+  t.mock.method(fs, 'readdirSync', (...args: Parameters<typeof readdir>) => {
+    assert.notEqual(String(args[0]), f.home, 'must not scan home');
+    return readdir(...args);
+  });
+  const prepared = await f.install(await f.select(f.home, ['shared']));
+  assert.deepEqual(
+    prepared.map(({ target }) => target.root),
+    [f.home],
+  );
+  assert.match(f.read(f.home, '.codex/AGENTS.md'), /Shared instructions/);
+});
+
+test('global installation registers and reconciles an explicitly known older repository', async (t) => {
+  const f = fixture(t);
+  const repo = f.repo('older-project');
+  const selection = await f.select(repo, ['shared']);
+  const catalog = selection.target.catalog!;
+  applyAll([plan(catalog, selection.state, render(catalog, selection.state))]);
+  const prepared = await prepareInstallations(
+    [await f.select(f.home, ['shared'])],
+    { knownRoots: [repo], render: () => ({ offline: true }) },
+  );
+  assert.deepEqual(
+    prepared.map(({ target }) => target.root),
+    [f.home, repo],
+  );
+  assert.equal(f.exists(f.home, '.loadout-personal/repositories.json'), false);
+  applyAll(prepared.map(({ plan }) => plan));
+  assert.equal(f.exists(repo, 'AGENTS.md'), false);
+  assert.deepEqual(
+    JSON.parse(f.read(f.home, '.loadout-personal/repositories.json'))
+      .repositories,
+    [repo],
+  );
   await f.install(await f.select(f.home, []));
   assert.match(f.read(repo, 'AGENTS.md'), /Shared instructions/);
 });

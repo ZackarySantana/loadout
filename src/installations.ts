@@ -29,7 +29,6 @@ const registrySchema = z
     repositories: z.array(
       z.string().refine(path.isAbsolute, 'Use an absolute repository path'),
     ),
-    discovered: z.boolean().default(false),
   })
   .strict();
 type RenderOptions = NonNullable<Parameters<typeof renderWithExternal>[2]>;
@@ -49,55 +48,6 @@ function fileChange(root: string, file: string): Change {
     after: before,
     kind: 'unchanged',
   };
-}
-
-// Bootstrap older installations once. Later applies register roots outside home too.
-function discoverRepositories(home: string): string[] {
-  const roots: string[] = [];
-  const excluded = new Set([
-    '.git',
-    'node_modules',
-    'vendor',
-    'dist',
-    'build',
-    'Library',
-    '.cache',
-    '.npm',
-    '.local',
-    '.cargo',
-    '.rustup',
-    '.venv',
-    'venv',
-    '.agents',
-    '.claude',
-    '.codex',
-    '.loadout',
-    '.loadout-personal',
-  ]);
-  const visit = (root: string) => {
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(root, { withFileTypes: true });
-    } catch (error) {
-      if (
-        ['ENOENT', 'EACCES', 'EPERM'].includes(
-          (error as NodeJS.ErrnoException).code ?? '',
-        )
-      )
-        return;
-      throw error;
-    }
-    if (
-      root !== home &&
-      fs.existsSync(path.join(root, '.loadout-personal/local.json'))
-    )
-      roots.push(root);
-    for (const entry of entries)
-      if (entry.isDirectory() && !excluded.has(entry.name))
-        visit(path.join(root, entry.name));
-  };
-  visit(home);
-  return roots;
 }
 
 async function globalOutputs(
@@ -168,7 +118,8 @@ export async function prepareInstallations(
   const raw = registryChange.before?.content;
   const registry = raw
     ? parse(registrySchema, JSON.parse(raw.toString()), registryFile)
-    : { schemaVersion: 1 as const, repositories: [], discovered: false };
+    : { schemaVersion: 1 as const, repositories: [] };
+  // Reconcile registered and explicitly known projects without scanning home.
   const roots = new Set(registry.repositories);
   for (const root of options.knownRoots ?? [])
     if (
@@ -178,10 +129,6 @@ export async function prepareInstallations(
       roots.add(fs.realpathSync(root));
   for (const { target } of selections)
     if (!target.global) roots.add(fs.realpathSync(target.root));
-  if (globalSelection && !registry.discovered) {
-    for (const root of discoverRepositories(home)) roots.add(root);
-    registry.discovered = true;
-  }
   const expanded = [...selections];
   const prepared = new Map<ReviewTarget, PreparedTarget>();
   const globalOptions = globalSelection
