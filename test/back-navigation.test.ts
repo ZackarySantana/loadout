@@ -17,6 +17,7 @@ import { type Kit, type State } from '../src/schema.js';
 import { type Target } from '../src/targets.js';
 import { type FetchBytes } from '../src/external.js';
 import { loadState } from '../src/storage.js';
+import { continuePicker } from './picker-helpers.js';
 
 const kit: Kit = {
   schemaVersion: 1,
@@ -90,7 +91,7 @@ test('Review changes asks required questions directly; Escape restores the exact
   selectAndContinue(ui);
   await ui.nextRender();
   assert.match(ui.getScreen(), /Repository · example · Include diagrams\?/);
-  assert.doesNotMatch(ui.getScreen(), /Prepare|Selections/);
+  assert.doesNotMatch(ui.getScreen(), /Prepare|Selections|Change selections/);
   ui.input.write('\u001b');
   await ui.nextRender();
   assert.match(ui.getScreen(), /● example/);
@@ -132,7 +133,7 @@ test('completed answers survive returning directly to the picker', async (t) => 
   assert.match(ui.getScreen(), /● example/);
   ui.events.keypress('enter');
   await ui.nextRender();
-  assert.match(ui.getScreen(), /Change selection\?/);
+  assert.match(ui.getScreen(), /Change selections\?/);
   ui.events.keypress('enter');
   await ui.nextRender();
   assert.match(ui.getScreen(), /Include diagrams/);
@@ -151,6 +152,150 @@ test('completed answers survive returning directly to the picker', async (t) => 
     result[0]!.state.answers,
   );
   assert.deepEqual(repository.state, empty);
+});
+
+test('one confirmation controls saved answers for multiple kits and destinations', async (t) => {
+  for (const change of [false, true]) {
+    const configured: Kit = {
+      ...kit,
+      requires: ['helper'],
+      questions: {
+        diagrams: { type: 'boolean', message: 'Include diagrams?' },
+      },
+    };
+    const targets = [target(t, configured), target(t, configured, true)];
+    for (const item of targets) {
+      item.catalog!.kits.set('helper', {
+        ...configured,
+        id: 'helper',
+        directory: item.root,
+        requires: [],
+      });
+      item.state!.answers = {
+        example: { diagrams: true },
+        helper: { diagrams: false },
+      };
+    }
+    const ui = await render(flow, { targets });
+    ui.events.keypress('enter');
+    ui.events.keypress('space');
+    ui.events.keypress('tab');
+    ui.events.keypress('enter');
+    ui.events.keypress('space');
+    ui.events.keypress('up');
+    assert.match(ui.getScreen(), /› \[ Review changes \]/);
+    ui.events.keypress('enter');
+    await ui.nextRender();
+    assert.match(ui.getScreen(), /Change selections\?/);
+    assert.doesNotMatch(ui.getScreen(), /Change selection\?/);
+    for (const item of targets) {
+      assert.ok(ui.getScreen().includes(`${item.label} · example`));
+      assert.ok(ui.getScreen().includes(`${item.label} · helper`));
+    }
+    assert.match(ui.getScreen(), /Include diagrams\?\s+Yes/);
+    assert.match(ui.getScreen(), /Include diagrams\?\s+No/);
+    if (change) ui.events.type('y');
+    ui.events.keypress('enter');
+    await ui.nextRender();
+    if (change) {
+      for (const item of targets) {
+        for (const id of ['helper', 'example']) {
+          assert.ok(ui.getScreen().includes(`${item.label} · ${id}`));
+          assert.match(ui.getScreen(), /Change selection\?/);
+          assert.match(
+            ui.getScreen(),
+            id === 'helper'
+              ? /Include diagrams\?\s+No/
+              : /Include diagrams\?\s+Yes/,
+          );
+          if (id === 'example') ui.events.type('y');
+          ui.events.keypress('enter');
+          await ui.nextRender();
+          if (id === 'example') {
+            assert.ok(
+              ui
+                .getScreen()
+                .includes(`${item.label} · example · Include diagrams?`),
+            );
+            ui.events.keypress('enter');
+            await ui.nextRender();
+          }
+        }
+      }
+    }
+    assert.match(ui.getScreen(), /Review changes/);
+    action(ui, 'Apply changes');
+    const result = await ui.answer;
+    assert.equal(result.length, 2);
+    for (const { state } of result)
+      assert.deepEqual(state.answers, {
+        example: { diagrams: true },
+        helper: { diagrams: false },
+      });
+  }
+});
+
+test('finishing on Repository or Global shows the same saved-answer preview and review', async (t) => {
+  const configured: Kit = {
+    ...kit,
+    questions: {
+      diagrams: { type: 'boolean', message: 'Include diagrams?' },
+    },
+  };
+  const targets = [target(t, configured), target(t, configured, true)];
+  for (const item of targets) {
+    item.state!.selected = ['example'];
+    item.state!.answers = { example: { diagrams: item.global } };
+  }
+  const previews: string[] = [];
+  for (const finish of [0, 1]) {
+    const ui = await render(flow, { targets });
+    ui.events.keypress('tab');
+    if (finish === 0) ui.events.keypress('tab');
+    continuePicker(ui);
+    await ui.nextRender();
+    previews.push(ui.getScreen());
+    assert.match(
+      ui.getScreen(),
+      /Repository · example\s+Include diagrams\?\s+No/,
+    );
+    assert.match(ui.getScreen(), /Global · example\s+Include diagrams\?\s+Yes/);
+    assert.match(ui.getScreen(), /Change selections\?/);
+    ui.events.keypress('enter');
+    await ui.nextRender();
+    assert.match(ui.getScreen(), /Review changes/);
+    assert.match(ui.getScreen(), /Repository/);
+    assert.match(ui.getScreen(), /Global/);
+    await cancel(ui);
+  }
+  assert.equal(previews[0], previews[1]);
+});
+
+test('Escape from either selection confirmation returns to the picker', async (t) => {
+  for (const perKit of [false, true]) {
+    const repository = target(t, {
+      ...kit,
+      questions: {
+        diagrams: { type: 'boolean', message: 'Include diagrams?' },
+      },
+    });
+    repository.state!.answers = { example: { diagrams: true } };
+    const ui = await render(flow, { targets: [repository] });
+    selectAndContinue(ui);
+    await ui.nextRender();
+    assert.match(ui.getScreen(), /Change selections\?/);
+    if (perKit) {
+      ui.events.type('y');
+      ui.events.keypress('enter');
+      await ui.nextRender();
+      assert.match(ui.getScreen(), /Change selection\?/);
+    }
+    ui.events.keypress('escape');
+    await ui.nextRender();
+    assert.match(ui.getScreen(), /● example/);
+    assert.match(ui.getScreen(), /› \[ Review changes \]/);
+    await cancel(ui);
+  }
 });
 
 test('review and files have a Back hierarchy that retains both scopes and browsing positions', async (t) => {

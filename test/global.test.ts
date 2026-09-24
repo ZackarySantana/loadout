@@ -96,7 +96,10 @@ test('initialized locations display their own selections, errors preserve the ac
   screen.events.keypress('tab');
   assert.match(screen.getScreen(), /1 selected/);
   continuePicker(screen);
-  assert.deepEqual((await screen.answer)[0]!.state.selected, ['testing']);
+  assert.deepEqual(
+    (await screen.answer).map(({ state }) => state.selected),
+    [[], ['testing']],
+  );
 
   const failed = await prompt(targetPicker, {
     targets: [

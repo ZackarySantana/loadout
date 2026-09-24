@@ -1,5 +1,5 @@
 import { checkbox, confirm, select } from '@inquirer/prompts';
-import { configure } from './resolve.js';
+import { configure, resolveKits } from './resolve.js';
 import {
   validAnswer,
   type Answer,
@@ -42,11 +42,62 @@ async function backPrompt<T>(
   }
 }
 
+function selectionPreview(target: Target, state: State, kit: string): string {
+  const questions = Object.entries(target.catalog!.kits.get(kit)!.questions)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, question]) => {
+      const saved = state.answers[kit]?.[key];
+      const answer =
+        saved === undefined
+          ? 'Not answered'
+          : typeof saved === 'boolean'
+            ? saved
+              ? 'Yes'
+              : 'No'
+            : saved;
+      return `  ${question.message}  ${answer}${saved !== undefined && !validAnswer(question, saved) ? ' (invalid saved answer)' : ''}`;
+    });
+  return [`${target.label} · ${kit}`, ...questions].join('\n');
+}
+
+export async function confirmSelectionChanges(
+  selections: { target: Target; state: State }[],
+  context?: PromptContext,
+): Promise<boolean> {
+  const hasSaved = selections.some(({ target, state }) =>
+    resolveKits(target.catalog!, state.selected).some((kit) =>
+      Object.entries(target.catalog!.kits.get(kit)!.questions).some(
+        ([key, question]) => validAnswer(question, state.answers[kit]?.[key]),
+      ),
+    ),
+  );
+  if (!hasSaved) return false;
+  const previews = selections.flatMap(({ target, state }) =>
+    resolveKits(target.catalog!, state.selected)
+      .filter(
+        (kit) => Object.keys(target.catalog!.kits.get(kit)!.questions).length,
+      )
+      .map((kit) => selectionPreview(target, state, kit)),
+  );
+  return backPrompt(
+    (context) =>
+      confirm(
+        {
+          message: [...previews, 'Change selections?'].join('\n\n'),
+          default: false,
+        },
+        context,
+      ),
+    context,
+  );
+}
+
 export async function configureSelection(
   target: Target,
   state: State,
   context?: Parameters<typeof confirm>[1],
   onAnswer?: (kit: string, key: string, answer: Answer) => void,
+  changeSelections = true,
 ): Promise<State> {
   const change = new Map<string, boolean>();
   const ask = async (
@@ -56,24 +107,27 @@ export async function configureSelection(
     value: Answer | undefined,
   ): Promise<Answer> => {
     if (!change.has(kit)) {
-      const hasSaved = Object.entries(
+      const questions = Object.entries(
         target.catalog!.kits.get(kit)!.questions,
-      ).some(([name, q]) => validAnswer(q, state.answers[kit]?.[name]));
+      ).sort(([a], [b]) => a.localeCompare(b));
+      const hasSaved = questions.some(([name, q]) =>
+        validAnswer(q, state.answers[kit]?.[name]),
+      );
       change.set(
         kit,
-        hasSaved
+        changeSelections && hasSaved
           ? await backPrompt(
               (context) =>
                 confirm(
                   {
-                    message: `${target.label} · ${kit} · Change selection?`,
+                    message: `${selectionPreview(target, state, kit)}\n\nChange selection?`,
                     default: false,
                   },
                   context,
                 ),
               context,
             )
-          : true,
+          : false,
       );
     }
     const saved = state.answers[kit]?.[key];

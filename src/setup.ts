@@ -6,6 +6,7 @@ import {
 import {
   BackNavigation,
   configureSelection,
+  confirmSelectionChanges,
   confirmAdoption,
   selectUpdates,
   retryReview,
@@ -55,21 +56,6 @@ export async function interactive(
       drafts.set(target, draft);
       return draft;
     });
-    for (const [target, draft] of drafts) {
-      if (selections.some((selection) => selection.target === target)) continue;
-      // The picker omits inactive scopes whose checkboxes match saved state.
-      // They can still have draft answers, but must use the latest checkboxes.
-      draft.state.selected = [
-        ...(session.snapshot?.selections[targets.indexOf(target)] ??
-          draft.state.selected),
-      ];
-      if (
-        draft.update.length ||
-        JSON.stringify(draft.state.answers) !==
-          JSON.stringify(target.state?.answers ?? {})
-      )
-        selections.push(draft);
-    }
     selections.sort(
       (a, b) => targets.indexOf(a.target) - targets.indexOf(b.target),
     );
@@ -93,17 +79,32 @@ export async function interactive(
                 quiet: true,
               },
             );
+          }
+          const configurations = selections.map((selection) => ({
+            selection,
+            state: selection.state,
+            target: {
+              ...selection.target,
+              catalog: catalogForUpdates(
+                selection.target.catalog!,
+                selection.update,
+              ),
+            },
+          }));
+          const changeSelections = await confirmSelectionChanges(
+            configurations,
+            context,
+          );
+          for (const { selection, target, state } of configurations) {
             selection.state = await configureSelection(
-              {
-                ...target,
-                catalog: catalogForUpdates(target.catalog!, selection.update),
-              },
+              target,
               state,
               context,
               (kit, key, answer) => {
                 state.answers[kit] ??= {};
                 state.answers[kit]![key] = answer;
               },
+              changeSelections,
             );
           }
           const prepared = await prepareScreen(

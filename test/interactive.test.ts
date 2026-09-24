@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { render } from '@inquirer/testing';
-import { configureSelection, confirmApply } from '../src/interactive.js';
+import {
+  configureSelection,
+  confirmSelectionChanges,
+  confirmApply,
+} from '../src/interactive.js';
 import { type Kit, type State } from '../src/schema.js';
 import { type Target } from '../src/targets.js';
 
@@ -28,7 +32,7 @@ const saved: State = {
   answers: { example: { diagrams: true } },
 };
 const prompt = (
-  config: { target: Target; state: State },
+  config: { target: Target; state: State; changeSelections?: boolean },
   context?: Parameters<typeof configureSelection>[2],
 ) => {
   // Inquirer ends its output after each question. Keep the test screen open
@@ -37,13 +41,56 @@ const prompt = (
     const output = context.output;
     output.end = (() => output) as typeof output.end;
   }
-  return configureSelection(config.target, config.state, context);
+  return configureSelection(
+    config.target,
+    config.state,
+    context,
+    undefined,
+    config.changeSelections,
+  );
 };
 
-test('saved answers are reused by default without repeating kit questions', async () => {
+test('overall confirmation previews active questions and marks missing and invalid answers', async () => {
+  const configured: Kit = {
+    ...kit,
+    questions: {
+      ...kit.questions,
+      style: { type: 'choice', message: 'Choose style', choices: ['brief'] },
+      extra: { type: 'boolean', message: 'Include extras?' },
+    },
+  };
+  const ui = await render(
+    (selections: Parameters<typeof confirmSelectionChanges>[0], context) =>
+      confirmSelectionChanges(selections, context),
+    [
+      {
+        target: {
+          ...target,
+          catalog: { root: '.', kits: new Map([[kit.id, configured]]) },
+        },
+        state: {
+          ...saved,
+          answers: { example: { diagrams: true, style: 'removed-choice' } },
+        },
+      },
+    ],
+  );
+  assert.match(ui.getScreen(), /Repository · example/);
+  assert.match(ui.getScreen(), /Include diagrams\?\s+Yes/);
+  assert.match(ui.getScreen(), /Include extras\?\s+Not answered/);
+  assert.match(
+    ui.getScreen(),
+    /Choose style\s+removed-choice \(invalid saved answer\)/,
+  );
+  assert.match(ui.getScreen(), /Change selections\?/);
+  ui.events.keypress('enter');
+  assert.equal(await ui.answer, false);
+});
+
+test('kit confirmation previews saved answers and reuses them by default', async () => {
   const ui = await render(prompt, { target, state: saved });
   assert.match(ui.getScreen(), /Change selection\?/);
-  assert.doesNotMatch(ui.getScreen(), /Include diagrams/);
+  assert.match(ui.getScreen(), /Include diagrams\?\s+Yes/);
   ui.events.keypress('enter');
   assert.deepEqual(await ui.answer, saved);
 });
@@ -97,6 +144,13 @@ test('declining changes still collects missing and invalid answers', async () =>
       },
       state,
     });
+    assert.match(ui.getScreen(), /Include diagrams\?\s+Yes/);
+    assert.match(
+      ui.getScreen(),
+      answer
+        ? /Choose style\s+removed-choice \(invalid saved answer\)/
+        : /Choose style\s+Not answered/,
+    );
     ui.events.keypress('enter');
     await ui.nextRender();
     assert.match(ui.getScreen(), /Choose style/);
@@ -105,6 +159,62 @@ test('declining changes still collects missing and invalid answers', async () =>
       diagrams: true,
       style: 'brief',
     });
+  }
+});
+
+test('kit preview shows every question and editing defaults to the saved answers', async () => {
+  const configured: Kit = {
+    ...kit,
+    questions: {
+      ...kit.questions,
+      style: {
+        type: 'choice',
+        message: 'Choose style',
+        choices: ['brief', 'detailed'],
+      },
+    },
+  };
+  const state: State = {
+    ...saved,
+    answers: { example: { diagrams: false, style: 'detailed' } },
+  };
+  const ui = await render(prompt, {
+    target: {
+      ...target,
+      catalog: { root: '.', kits: new Map([[configured.id, configured]]) },
+    },
+    state,
+  });
+  assert.match(ui.getScreen(), /Include diagrams\?\s+No/);
+  assert.match(ui.getScreen(), /Choose style\s+detailed/);
+  assert.match(ui.getScreen(), /Change selection\?/);
+  ui.events.type('y');
+  ui.events.keypress('enter');
+  await ui.nextRender();
+  assert.match(ui.getScreen(), /Repository · example · Include diagrams\?/);
+  ui.events.keypress('enter');
+  await ui.nextRender();
+  assert.match(ui.getScreen(), /Repository · example · Choose style/);
+  ui.events.keypress('enter');
+  assert.deepEqual(await ui.answer, state);
+});
+
+test('skipping selection changes still asks new, missing, and invalid questions', async () => {
+  for (const diagrams of [undefined, 'invalid']) {
+    const state: State = {
+      ...saved,
+      answers: { example: diagrams === undefined ? {} : { diagrams } },
+    };
+    const ui = await render(prompt, {
+      target,
+      state,
+      changeSelections: false,
+    });
+    assert.match(ui.getScreen(), /Repository · example · Include diagrams\?/);
+    assert.doesNotMatch(ui.getScreen(), /Change selection/);
+    ui.events.type('y');
+    ui.events.keypress('enter');
+    assert.equal((await ui.answer).answers.example!.diagrams, true);
   }
 });
 

@@ -5,6 +5,7 @@ import stringWidth from 'string-width';
 import { targetPicker } from '../src/picker.js';
 import { type Kit } from '../src/schema.js';
 import { type Target } from '../src/targets.js';
+import { continuePicker } from './picker-helpers.js';
 
 function targets(): Target[] {
   const kit = (id: string): Kit => ({
@@ -90,6 +91,45 @@ test('switching preserves each provider, editable filter, cursor, and pending se
     locations.map(({ state }) => state!.selected),
     [[], []],
   );
+});
+
+test('review includes unchanged visited scopes regardless of the finishing tab', async () => {
+  const locations = targets();
+  locations[0]!.state!.selected = ['alpha'];
+  locations[1]!.state!.selected = ['beta'];
+  for (const finish of [0, 1]) {
+    const ui = await render(targetPicker, { targets: locations });
+    ui.events.keypress('tab');
+    if (finish === 0) ui.events.keypress('tab');
+    continuePicker(ui);
+    assert.deepEqual(
+      (await ui.answer).map(({ target, state }) => [
+        target.global,
+        state.selected,
+      ]),
+      [
+        [false, ['alpha']],
+        [true, ['beta']],
+      ],
+    );
+  }
+});
+
+test('review leaves unvisited and unavailable scopes out', async () => {
+  for (const unavailable of [false, true]) {
+    const locations = targets();
+    if (unavailable) {
+      locations[1]!.catalog = undefined;
+      locations[1]!.error = 'Unavailable';
+    }
+    const ui = await render(targetPicker, { targets: locations });
+    if (unavailable) ui.events.keypress('tab');
+    continuePicker(ui);
+    assert.deepEqual(
+      (await ui.answer).map(({ target }) => target.global),
+      [false],
+    );
+  }
 });
 
 test('Tab and Shift+Tab switch immediately while arrows still navigate the restored section', async () => {

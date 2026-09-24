@@ -395,12 +395,6 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
               if (!item.catalog || !visited.includes(index)) return [];
               const ids = [...selections[index]!].sort();
               const saved = item.state ?? emptyState();
-              if (
-                index !== targetIndex &&
-                JSON.stringify(ids) ===
-                  JSON.stringify([...saved.selected].sort())
-              )
-                return [];
               return [{ target: item, state: { ...saved, selected: ids } }];
             }),
           );
