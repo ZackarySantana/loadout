@@ -19,6 +19,8 @@ Pick your kits, select **Review changes**, then **Apply changes**. Run `loadout`
 
 Choose **Repository** for the current project or **Global** for your user configuration across repositories.
 
+Global kits avoid duplicate repository files; removing them restores the repository copies you selected.
+
 ## Subscribe to catalogs
 
 ```sh

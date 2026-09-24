@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { agents, type Catalog, type State } from './schema.js';
 import { safePath, walk, portableMode, exists } from './fs.js';
 import { resolveKits } from './resolve.js';
@@ -10,18 +11,27 @@ export type Rendered = {
   skillRoots: Set<string>;
   instructionGroups: { paths: string[]; kits: string[] }[];
   skillKits: Set<string>;
+  outputs?: { key: string; kit: string; paths: string[] }[];
+  inherited?: Set<string>;
+  inheritedPaths?: Set<string>;
   external?: { before?: Buffer; content: Buffer };
 };
-export function render(catalog: Catalog, state: State): Rendered {
+export function render(
+  catalog: Catalog,
+  state: State,
+  inherited: ReadonlySet<string> = new Set(),
+): Rendered {
   const files = new Map<string, FileContent>();
   const skillRoots = new Set<string>();
   const skillKits = new Set<string>();
   const instructionGroups: Rendered['instructionGroups'] = [];
   const instructionKits = new Map<string, Set<string>>();
   const sections = new Map<string, string[]>();
+  const outputs: NonNullable<Rendered['outputs']> = [];
+  const inheritedKits = new Set<string>();
+  const inheritedPaths = new Set<string>();
   for (const id of resolveKits(catalog, state.selected)) {
     const kit = catalog.kits.get(id)!;
-    if (kit.external && !kit.external.kit) skillKits.add(id);
     for (const output of kit.outputs) {
       if (
         output.when &&
@@ -50,6 +60,25 @@ export function render(catalog: Catalog, state: State): Rendered {
           .trim();
         if (section === undefined)
           throw new Error(`${kit.id}: missing ${output.source}`);
+        const key = createHash('sha256')
+          .update(`instructions\0${section}`)
+          .digest('hex');
+        if (!catalog.global && inherited.has(key)) {
+          inheritedKits.add(id);
+          inheritedPaths.add(path.posix.join(output.scope, 'AGENTS.md'));
+          inheritedPaths.add(path.posix.join(output.scope, 'CLAUDE.md'));
+          continue;
+        }
+        outputs.push({
+          key,
+          kit: id,
+          paths: catalog.global
+            ? ['.codex/AGENTS.md', '.claude/CLAUDE.md']
+            : [
+                path.posix.join(output.scope, 'AGENTS.md'),
+                path.posix.join(output.scope, 'CLAUDE.md'),
+              ],
+        });
         const kits = instructionKits.get(output.scope) ?? new Set<string>();
         kits.add(id);
         instructionKits.set(output.scope, kits);
@@ -58,7 +87,57 @@ export function render(catalog: Catalog, state: State): Rendered {
           section,
         ]);
       } else {
+        const content = new Map<string, FileContent>();
+        const sourceFiles = kit.resources
+          ? Object.keys(kit.resources)
+              .filter((file) => file.startsWith(`${output.source}/`))
+              .map((file) => file.slice(output.source.length + 1))
+          : walk(source);
+        for (const file of sourceFiles) {
+          const resource = kit.resources?.[`${output.source}/${file}`];
+          const src = resource ? undefined : safePath(source, file);
+          content.set(file, {
+            content: resource?.content ?? fs.readFileSync(src!),
+            mode: portableMode(
+              (resource?.mode ?? fs.statSync(src!).mode) & 0o111
+                ? 0o755
+                : 0o644,
+            ),
+          });
+        }
+        if (kit.resources?.['LICENSE.upstream']) {
+          if (content.has('LICENSE.upstream'))
+            throw new Error(
+              `Output collision: ${path.basename(source)}/LICENSE.upstream`,
+            );
+          content.set('LICENSE.upstream', kit.resources['LICENSE.upstream']);
+        }
+        const key = createHash('sha256')
+          .update(
+            JSON.stringify([
+              'skill',
+              path.basename(source),
+              [...content]
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([file, value]) => [
+                  file,
+                  value.mode,
+                  value.content.toString('base64'),
+                ]),
+            ]),
+          )
+          .digest('hex');
+        if (!catalog.global && inherited.has(key)) {
+          inheritedKits.add(id);
+          for (const agent of ['.agents', '.claude'])
+            for (const file of content.keys())
+              inheritedPaths.add(
+                `${agent}/skills/${path.basename(source)}/${file}`,
+              );
+          continue;
+        }
         skillKits.add(id);
+        const paths: string[] = [];
         for (const agent of agents) {
           const destination = `${agent === 'codex' ? '.agents' : '.claude'}/skills/${path.basename(source)}`;
           if (skillRoots.has(destination))
@@ -66,34 +145,12 @@ export function render(catalog: Catalog, state: State): Rendered {
               `Output collision: multiple skills target ${destination}`,
             );
           skillRoots.add(destination);
-          const sourceFiles = kit.resources
-            ? Object.keys(kit.resources)
-                .filter((file) => file.startsWith(`${output.source}/`))
-                .map((file) => file.slice(output.source.length + 1))
-            : walk(source);
-          for (const file of sourceFiles) {
-            const resource = kit.resources?.[`${output.source}/${file}`];
-            const src = resource ? undefined : safePath(source, file);
-            files.set(`${destination}/${file}`, {
-              content: resource?.content ?? fs.readFileSync(src!),
-              mode: portableMode(
-                (resource?.mode ?? fs.statSync(src!).mode) & 0o111
-                  ? 0o755
-                  : 0o644,
-              ),
-            });
-          }
-          if (kit.resources?.['LICENSE.upstream']) {
-            if (files.has(`${destination}/LICENSE.upstream`))
-              throw new Error(
-                `Output collision: ${destination}/LICENSE.upstream`,
-              );
-            files.set(
-              `${destination}/LICENSE.upstream`,
-              kit.resources['LICENSE.upstream'],
-            );
+          for (const [file, value] of content) {
+            files.set(`${destination}/${file}`, value);
+            paths.push(`${destination}/${file}`);
           }
         }
+        outputs.push({ key, kit: id, paths });
       }
     }
   }
@@ -127,5 +184,8 @@ export function render(catalog: Catalog, state: State): Rendered {
     skillRoots,
     instructionGroups,
     skillKits,
+    outputs,
+    inherited: inheritedKits,
+    inheritedPaths,
   };
 }

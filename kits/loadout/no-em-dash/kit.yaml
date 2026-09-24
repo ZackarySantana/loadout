@@ -1,0 +1,6 @@
+schemaVersion: 1
+id: no-em-dash
+description: Avoid em dashes in output
+outputs:
+  - type: instructions
+    source: instructions.md

@@ -45,6 +45,25 @@ providers:
                   source: instructions.md
                   scope: .
           license: LICENSE
+      - id: loadout-no-em-dash
+        description: Avoid em dashes in output
+        source:
+          repo: ZackarySantana/loadout
+          integrity: 02df6fb7291e592b73628e959597e7ab42210633a47b6d203bb208fd855c79aa
+          skills: []
+          kit:
+            path: kits/loadout/no-em-dash
+            manifest:
+              schemaVersion: 1
+              id: loadout-no-em-dash
+              description: Avoid em dashes in output
+              requires: []
+              questions: {}
+              outputs:
+                - type: instructions
+                  source: instructions.md
+                  scope: .
+          license: LICENSE
       - id: loadout-write-kit
         description: Write a Loadout kit from a minimal example
         source:

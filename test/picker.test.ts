@@ -396,17 +396,16 @@ test('Space and Enter open and toggle without continuing; only Review changes fi
     void ui.answer.then(() => {
       finished = true;
     });
-    assert.match(ui.getScreen(), /alpha\/skills[^\n]*1 downloaded/);
+    assert.match(ui.getScreen(), /alpha\/skills[^\n]*1 kits/);
+    assert.doesNotMatch(ui.getScreen(), /downloaded|cached|saved/);
     assert.match(ui.getScreen(), /\[ Review changes \]/);
     ui.events.keypress(key);
     assert.match(ui.getScreen(), /○ first/);
+    assert.doesNotMatch(ui.getScreen(), /downloaded|cached|saved/);
     ui.events.keypress(key);
     assert.match(ui.getScreen(), /● first/);
     ui.events.keypress('escape');
-    assert.match(
-      ui.getScreen(),
-      /alpha\/skills[^\n]*1 selected · 1 downloaded/,
-    );
+    assert.match(ui.getScreen(), /alpha\/skills[^\n]*1 selected/);
     ui.events.keypress('down');
     ui.events.keypress(key);
     ui.events.keypress(key);

@@ -7,13 +7,9 @@ import os from 'node:os';
 import { discover } from './catalog.js';
 import { initialize } from './init.js';
 import { interactive } from './setup.js';
-import { apply, hasChanges, plan, type Plan } from './storage.js';
-import {
-  renderWithExternal,
-  catalogForUpdates,
-  hashSource,
-  fetchBytes,
-} from './external.js';
+import { applyAll, hasChanges, loadState, type Plan } from './storage.js';
+import { prepareInstallations } from './installations.js';
+import { catalogForUpdates, hashSource, fetchBytes } from './external.js';
 import { loadTarget, type Target } from './targets.js';
 import {
   configure,
@@ -118,6 +114,8 @@ async function interactiveTargets(): Promise<{
   return { targets, initial };
 }
 function showSkipped(result: Plan, preview = false): void {
+  if (result.inherited?.length)
+    console.log(`Provided by Global: ${result.inherited.join(', ')}.`);
   for (const skipped of result.skippedInstructions ?? [])
     console.log(
       `Skipped instructions from ${skipped.kits.join(', ')} (${skipped.paths.join(', ')}): ${skipped.reason}.`,
@@ -206,12 +204,34 @@ async function generate(
   setAnswers(catalog, state, opts.answer ?? []);
   const configured = await configure(catalog, state);
   showDependencies(catalog, configured);
-  const rendered = await renderWithExternal(previous, configured, {
-    update: opts.update,
-    offline: program.opts<{ offline?: boolean }>().offline,
-    onRetry: (id) => console.log(`Retrying ${id}…`),
-    onFetch: (id, source) => console.log(`Fetching ${id} from ${source.repo}…`),
-  });
+  const prepared = await prepareInstallations(
+    [
+      {
+        target: {
+          root: previous.root,
+          global: !!previous.global,
+          label: previous.global ? 'Global' : 'Repository',
+          catalog: previous,
+          state: loadState(previous),
+        },
+        state: configured,
+        update: opts.update ?? [],
+      },
+    ],
+    {
+      adopt: opts.adopt,
+      knownRoots: previous.global
+        ? [discover(program.opts<{ cwd: string }>().cwd)]
+        : [],
+      render: ({ update }) => ({
+        update,
+        offline: program.opts<{ offline?: boolean }>().offline,
+        onRetry: (id) => console.log(`Retrying ${id}…`),
+        onFetch: (id, source) =>
+          console.log(`Fetching ${id} from ${source.repo}…`),
+      }),
+    },
+  );
   for (const id of resolveKits(catalog, configured.selected)) {
     const kit = catalog.kits.get(id)!;
     if (kit.external) {
@@ -223,16 +243,18 @@ async function generate(
       );
     }
   }
-  const result = plan(catalog, configured, rendered, { adopt: opts.adopt });
-  preview(
-    result,
-    opts.diff || !!opts.update?.length || !!result.adopted?.length,
-  );
+  for (const { target, plan: result } of prepared) {
+    if (prepared.length > 1) console.log(`\n${target.label} · ${target.root}`);
+    preview(
+      result,
+      opts.diff || !!opts.update?.length || !!result.adopted?.length,
+    );
+  }
   if (opts.dryRun) console.log('Dry run: no files or selections saved.');
   else {
-    const count = apply(result);
+    const count = applyAll(prepared.map(({ plan }) => plan));
     if (count) console.log(`\nLoadout applied (${count} files changed).`);
-    showSkipped(result);
+    for (const { plan } of prepared) showSkipped(plan);
   }
 }
 async function setup(): Promise<void> {

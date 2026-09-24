@@ -72,7 +72,6 @@ type Row = {
   action?: 'back' | 'review';
   count?: number;
   selectedCount?: number;
-  downloadedCount?: number;
 };
 const providerFor = (kit: Kit): string | undefined =>
   kit.catalog
@@ -269,7 +268,6 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
               count: matching.length,
               description,
               selectedCount: count,
-              downloadedCount: kits.filter((kit) => !!kit.pinned).length,
             },
           ];
         });
@@ -573,9 +571,6 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
         row.selectedCount
           ? `${row.selectedCount} ${width >= 76 ? 'selected' : 'sel'}`
           : '',
-        row.downloadedCount
-          ? `${row.downloadedCount} ${width >= 76 ? 'downloaded' : 'dl'}`
-          : '',
       ]
         .filter(Boolean)
         .join(' · ');
@@ -594,11 +589,9 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
               ? 'update'
               : required
                 ? 'required'
-                : row.kit.pinned && !explicit
-                  ? 'saved'
-                  : row.kit.unavailable
-                    ? 'unsubscribed'
-                    : '';
+                : row.kit.unavailable
+                  ? 'unsubscribed'
+                  : '';
       const marker = !row.kit
         ? accent('▸')
         : explicit
@@ -620,9 +613,11 @@ const renderPicker = createPrompt<TargetSelection[], TargetPickerConfig>(
       );
       if (section === 'Installed' && row.kit) {
         const timestamp = target.installedAt?.[row.id];
-        const installed = timestamp
-          ? `Installed ${installationTime(timestamp)}`
-          : 'Installed';
+        const installed = target.inherited?.includes(row.id)
+          ? 'Provided by Global'
+          : timestamp
+            ? `Installed ${installationTime(timestamp)}`
+            : 'Installed';
         lines.push(`      ${muted(fit(installed, width - 6))}`);
       }
     }

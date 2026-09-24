@@ -12,17 +12,13 @@ import {
   type PromptContext,
 } from './interactive.js';
 import {
-  renderWithExternal,
   catalogForUpdates,
   type FetchBytes,
   type SnapshotCache,
 } from './external.js';
-import { applyAll, plan } from './storage.js';
-import {
-  reviewScreen,
-  type PreparedTarget,
-  type ReviewTarget,
-} from './review.js';
+import { applyAll } from './storage.js';
+import { prepareInstallations } from './installations.js';
+import { reviewScreen, type ReviewTarget } from './review.js';
 import { prepareScreen } from './prepare.js';
 import { type Target } from './targets.js';
 import { suspendEscapeCancellation } from './terminal.js';
@@ -114,15 +110,16 @@ export async function interactive(
             {
               selections,
               run: async (progress, retry, signal) => {
-                const prepared: PreparedTarget[] = [];
-                for (const [scope, selection] of selections.entries()) {
-                  const { target, state, update } = selection;
-                  const catalog = catalogForUpdates(target.catalog!, update);
-                  progress(scope, 'Preparing kits…');
-                  const rendered = await renderWithExternal(
-                    target.catalog!,
-                    state,
-                    {
+                return prepareInstallations(selections, {
+                  adopt: true,
+                  home: targets.find((target) => target.global)?.root,
+                  signal,
+                  knownRoots: targets
+                    .filter((target) => !target.global)
+                    .map((target) => target.root),
+                  render: ({ update }, scope) => {
+                    progress(scope, 'Preparing kits…');
+                    return {
                       offline: options.offline,
                       fetch: options.fetch,
                       update,
@@ -132,19 +129,10 @@ export async function interactive(
                       onRetry: (id) => progress(scope, `Retrying ${id}…`),
                       onReady: (id) => progress(scope, `${id} · Ready`),
                       retry: (id, error) => retry(scope, id, error),
-                    },
-                  );
-                  signal.throwIfAborted();
-                  progress(scope, 'Checking file changes…');
-                  prepared.push({
-                    ...selection,
-                    plan: plan(catalog, state, rendered, {
-                      adopt: true,
-                    }),
-                  });
-                  progress(scope, 'Ready');
-                }
-                return prepared;
+                    };
+                  },
+                  ready: (scope) => progress(scope, 'Ready'),
+                });
               },
             },
             context,

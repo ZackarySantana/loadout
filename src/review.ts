@@ -141,6 +141,11 @@ export function reviewRows(
     }
     if (!kits.length) rows.push({ text: '  No kits selected', scope });
     if (plan) {
+      if (plan.inherited?.length)
+        rows.push({
+          text: `  Provided by Global: ${plan.inherited.join(', ')}`,
+          scope,
+        });
       const changes = outputChanges(plan);
       const counts = (['create', 'update', 'delete'] as const).flatMap(
         (kind) => {

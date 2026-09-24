@@ -9,6 +9,7 @@ export type Target = {
   catalog?: Catalog;
   state?: State;
   installedAt?: Record<string, string>;
+  inherited?: string[];
   error?: string;
 };
 
@@ -20,11 +21,13 @@ export function loadTarget(root: string, global: boolean): Target {
   };
   try {
     const catalog = loadCatalog(root, global);
+    const generated = loadGenerated(root);
     return {
       ...target,
       catalog,
       state: loadState(catalog),
-      installedAt: loadGenerated(root).installedAt,
+      installedAt: generated.installedAt,
+      inherited: generated.inherited,
     };
   } catch (error) {
     return { ...target, error: (error as Error).message };

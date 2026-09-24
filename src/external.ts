@@ -4,7 +4,6 @@ import path from 'node:path';
 import { parse as yaml } from 'yaml';
 import { z } from 'zod';
 import {
-  agents,
   externalSourceSchema,
   idSchema,
   relativePath,
@@ -17,7 +16,7 @@ import {
   type State,
   type ExternalSource,
 } from './schema.js';
-import { json, readOptional, portableMode } from './fs.js';
+import { json, readOptional } from './fs.js';
 import { resolveKits } from './resolve.js';
 import { render, type Rendered } from './render.js';
 import { retryDownload } from './retry.js';
@@ -452,6 +451,8 @@ export async function renderWithExternal(
     signal?: AbortSignal;
     cache?: SnapshotCache;
     onReady?: (id: string) => void;
+    inherited?: ReadonlySet<string>;
+    snapshots?: Snapshot[];
   } = {},
 ): Promise<Rendered> {
   options.signal?.throwIfAborted();
@@ -487,6 +488,7 @@ export async function renderWithExternal(
     ) {
       const cached =
         options.cache?.get(sourceKey(source)) ??
+        options.snapshots?.find((item) => sameSource(item.source, source)) ??
         (source.kit ? readSharedSnapshot(source) : undefined);
       if (!cached && options.offline)
         throw new Error(
@@ -546,35 +548,24 @@ export async function renderWithExternal(
         ...snapshot.source.kit.manifest,
         resources: snapshotResources(snapshot),
       });
+    } else {
+      catalog.kits.set(id, {
+        ...kit,
+        outputs: skillNames(snapshot.source).map((name) => ({
+          type: 'skill' as const,
+          source: name,
+        })),
+        resources: Object.fromEntries(
+          Object.entries(snapshot.files).map(([file, stored]) => [
+            file,
+            { content: Buffer.from(stored.data, 'base64'), mode: stored.mode },
+          ]),
+        ),
+      });
     }
     options.onReady?.(id);
   }
-  const result = render(catalog, state);
-  for (const id of enabled) {
-    const kit = catalog.kits.get(id)!;
-    if (!kit.external || kit.external.kit) continue;
-    const snapshot = store.kits[id]!;
-    for (const agent of agents) {
-      const prefix = `${agent === 'codex' ? '.agents' : '.claude'}/skills`;
-      for (const name of skillNames(snapshot.source)) {
-        const destination = `${prefix}/${name}`;
-        if (result.skillRoots.has(destination))
-          throw new Error(
-            `Output collision: multiple kits target ${destination}`,
-          );
-        result.skillRoots.add(destination);
-      }
-      for (const [relative, file] of Object.entries(snapshot.files)) {
-        const destination = `${prefix}/${relative}`;
-        if (result.files.has(destination))
-          throw new Error(`Output collision: ${destination}`);
-        result.files.set(destination, {
-          content: Buffer.from(file.data, 'base64'),
-          mode: portableMode(file.mode),
-        });
-      }
-    }
-  }
+  const result = render(catalog, state, options.inherited);
   if (raw || Object.keys(store.kits).length)
     result.external = {
       before: raw,

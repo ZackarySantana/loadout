@@ -281,6 +281,19 @@ export const generatedSchema = z
   .object({
     schemaVersion: z.literal(1),
     installedAt: z.record(idSchema, z.iso.datetime()),
+    outputs: z
+      .array(
+        z
+          .object({
+            key: z.string(),
+            kit: idSchema,
+            paths: z.array(z.string()),
+          })
+          .strict(),
+      )
+      .optional(),
+    inherited: z.array(idSchema).optional(),
+    suspendedAdoptions: z.array(z.string()).optional(),
     files: z.record(
       z.string(),
       z

@@ -75,7 +75,7 @@ export function prepareAdoption(
   rendered: Rendered,
   owned: Record<string, { hash: string; mode: number }>,
   global: boolean,
-  allow: boolean,
+  allow: boolean | ReadonlySet<string>,
 ): {
   files: Map<string, FileContent>;
   originals: Map<string, FileContent>;
@@ -123,6 +123,8 @@ export function prepareAdoption(
       const expected = [...rendered.files.keys()]
         .filter((file) => file.startsWith(`${skill}/`))
         .sort();
+      if (allow !== true && !expected.every((file) => allow.has(file)))
+        continue;
       if (
         JSON.stringify(actual) !== JSON.stringify(expected) ||
         actual.some((file) => {
@@ -138,6 +140,7 @@ export function prepareAdoption(
         );
     }
     for (const file of rendered.files.keys()) {
+      if (allow !== true && !allow.has(file)) continue;
       if (Object.hasOwn(owned, file)) continue;
       const original = read(root, file);
       if (original) {

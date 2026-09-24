@@ -191,9 +191,7 @@ export function loadCatalog(
         ...externalKit(
           {
             id,
-            description:
-              snapshot.registration?.description ??
-              `${id} (saved installation)`,
+            description: snapshot.registration?.description ?? id,
             source: snapshot.source,
           },
           root,

@@ -48,6 +48,7 @@ test('global CLI init starts empty and the cached remote authoring kit installs 
         ['loadout-codex-cli', 'loadout-agent-clis'],
         ['loadout-dont-commit', 'loadout'],
         ['loadout-greenfield', 'loadout'],
+        ['loadout-no-em-dash', 'loadout'],
         ['loadout-opencode-cli', 'loadout-agent-clis'],
         ['loadout-write-kit', 'loadout'],
       ],

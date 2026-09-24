@@ -34,6 +34,9 @@ export type Plan = {
   root: string;
   changes: Change[];
   installing?: string[];
+  inherited?: string[];
+  related?: Plan[];
+  metadataOnly?: boolean;
   adopted?: string[];
   skippedInstructions?: { paths: string[]; kits: string[]; reason: string }[];
   kitsWithoutOutputs?: string[];
@@ -110,6 +113,7 @@ export function planExcludes(
 }
 export function hasChanges(plan: Plan): boolean {
   return (
+    !!plan.related?.some(hasChanges) ||
     plan.changes.some((change) => change.kind !== 'unchanged') ||
     !!(plan.exclude && plan.exclude.change.kind !== 'unchanged')
   );
@@ -143,6 +147,7 @@ export function plan(
   const root = catalog.root;
   const generated = loadGenerated(root);
   const owned = generated.files;
+  const restoreAdoptions = new Set(generated.suspendedAdoptions ?? []);
   const enabled = resolveKits(catalog, state.selected).sort();
   const installing = enabled.filter(
     (id) => !Object.hasOwn(generated.installedAt, id),
@@ -162,7 +167,9 @@ export function plan(
       : group.paths.find(
           (file) =>
             tracked.has(file) ||
-            (!options.adopt && exists(safePath(root, file))),
+            (!options.adopt &&
+              !restoreAdoptions.has(file) &&
+              exists(safePath(root, file))),
         );
     if (!conflict) {
       for (const id of group.kits) retainedKits.add(id);
@@ -185,7 +192,7 @@ export function plan(
     rendered,
     owned,
     !!catalog.global,
-    !!options.adopt,
+    options.adopt ? true : restoreAdoptions,
   );
   rendered = { ...rendered, files: adoption.files };
   const paths = [
@@ -252,7 +259,20 @@ export function plan(
     ['.loadout-personal/local.json', json(state)],
     [
       '.loadout-personal/generated.json',
-      json({ schemaVersion: 1, installedAt, files }),
+      json({
+        schemaVersion: 1,
+        installedAt,
+        files,
+        outputs: rendered.outputs?.filter((output) =>
+          output.paths.every((file) => Object.hasOwn(files, file)),
+        ),
+        inherited: [...(rendered.inherited ?? [])].sort(),
+        suspendedAdoptions: [
+          ...new Set([...restoreAdoptions, ...adoption.released]),
+        ]
+          .filter((file) => rendered.inheritedPaths?.has(file))
+          .sort(),
+      }),
     ],
   ]);
   if (rendered.external) {
@@ -285,6 +305,7 @@ export function plan(
     root,
     changes,
     installing,
+    inherited: [...(rendered.inherited ?? [])].sort(),
     adopted: adoption.adopted,
     skippedInstructions,
     kitsWithoutOutputs,
@@ -342,6 +363,9 @@ export function apply(plan: Plan): number {
 }
 
 export function applyAll(plans: Plan[]): number {
+  const expand = (items: Plan[]): Plan[] =>
+    items.flatMap((item) => [item, ...expand(item.related ?? [])]);
+  plans = expand(plans);
   if (new Set(plans.map((plan) => plan.root)).size !== plans.length)
     throw new Error('Cannot apply multiple plans for the same location.');
   // Several catalogs/worktrees can share one excludes file. Merge their blocks
@@ -420,6 +444,7 @@ export function applyAll(plans: Plan[]): number {
     }
     // Recheck every location before writing to any of them.
     for (const plan of plans) {
+      if (plan.metadataOnly) continue;
       const current = ignoreTarget(plan.root);
       if (JSON.stringify(current) !== JSON.stringify(plan.exclude?.target))
         throw new Error(
