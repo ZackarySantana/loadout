@@ -1,0 +1,12 @@
+[tools]
+node = "26.12.0"
+bun = "1.4.3"
+
+[tasks.dev]
+run = "npm run dev"
+
+[tasks.check]
+run = "npm run check"
+
+[tasks.build]
+run = "npm run build"

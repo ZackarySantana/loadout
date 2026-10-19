@@ -1,0 +1,85 @@
+id: project-context
+name: Project context and deployment
+description: Capture project context, deployment checks, and an optional deployment note.
+questions:
+  - id: project-name
+    label: What is this project called?
+    type: input
+    required: true
+    default: My project
+  - id: deployment-enabled
+    label: Include deployment guidance?
+    type: boolean
+    default: true
+  - id: deployment-target
+    label: Where is the project deployed?
+    type: select
+    when: { question: deployment-enabled, equals: true }
+    default: staging
+    choices:
+      - { value: staging, label: Staging }
+      - { value: production, label: Production }
+  - id: checks
+    label: Which deployment checks are required?
+    type: multi-select
+    when: { question: deployment-enabled, equals: true }
+    default: [tests, rollback]
+    choices:
+      - { value: tests, label: Run tests }
+      - { value: rollback, label: Prepare rollback }
+      - { value: monitoring, label: Verify monitoring }
+  - id: write-deployment-note
+    label: Also create docs/deployment-context.md?
+    type: boolean
+    when: { question: deployment-enabled, equals: true }
+    default: false
+outputs:
+  - type: instructions
+    targets: [AGENTS.md, CLAUDE.md]
+    content: |
+      # Project context
+
+      You are working on {{project-name}}. Read the repository's documentation and existing conventions before proposing changes. Keep changes focused on the requested task.
+  - type: instructions
+    targets: [AGENTS.md, CLAUDE.md]
+    when: { question: deployment-enabled, equals: true }
+    content: |
+      # Deployment context
+
+      The deployment target for {{project-name}} is {{deployment-target}}. Required checks: {{checks}}.
+      Deployment guidance is planning context, not permission to deploy. Ask for explicit approval before changing a live environment.
+  - type: instructions
+    targets: [AGENTS.md, CLAUDE.md]
+    when: { question: checks, includes: rollback }
+    content: |
+      Before a deployment, document the rollback trigger, recovery steps, and who can approve rollback. Do not assume destructive data changes can be reversed.
+  - type: skill
+    name: project-deployment
+    when: { question: deployment-enabled, equals: true }
+    files:
+      SKILL.md: |
+        ---
+        name: project-deployment
+        description: Plan and review a deployment for {{project-name}} when deployment help is requested.
+        ---
+
+        Target: {{deployment-target}}. Required checks: {{checks}}.
+        Use [the checklist](references/checklist.md) to prepare a deployment plan. Report missing evidence and obtain explicit approval before any live changes.
+      references/checklist.md: |
+        # Deployment checklist for {{project-name}}
+
+        - Confirm the intended {{deployment-target}} environment and release contents.
+        - Gather evidence for the selected checks: {{checks}}.
+        - Record unresolved risks and the approval decision.
+        - After an approved deployment, verify health and summarize the result.
+  - type: file
+    path: docs/deployment-context.md
+    when: { question: write-deployment-note, equals: true }
+    content: |
+      # {{project-name}} deployment context
+
+      Target: {{deployment-target}}
+      Required checks: {{checks}}
+
+      Add repository-specific release commands, owners, and recovery steps here.
+      This note does not authorize deployment or contain credentials.

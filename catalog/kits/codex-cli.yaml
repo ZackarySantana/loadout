@@ -1,0 +1,30 @@
+id: codex-cli
+name: Codex CLI
+description: Run non-interactive Codex CLI conversations.
+questions:
+  - id: placement
+    label: Add Codex CLI guidance as instructions or a skill?
+    type: select
+    default: skill
+    choices:
+      - { value: instructions, label: Instructions }
+      - { value: skill, label: Skill }
+outputs:
+  - type: instructions
+    targets: [AGENTS.md, CLAUDE.md]
+    when: { question: placement, equals: instructions }
+    content: |
+      When asked to use Codex CLI, start with `codex exec --json "PROMPT"` using the configured default model, and capture `thread_id` from the output.
+      For follow-ups, run `codex exec resume --json SESSION_ID "FOLLOW-UP"` in the same working directory. Use an explicit `--model MODEL` only when requested, and keep it consistent across the conversation.
+  - type: skill
+    name: loadout-codex-cli
+    when: { question: placement, equals: skill }
+    files:
+      SKILL.md: |
+        ---
+        name: loadout-codex-cli
+        description: Run non-interactive Codex CLI prompts and follow-up conversations when asked to use Codex CLI.
+        ---
+
+        Start with `codex exec --json "PROMPT"` using the configured default model, and capture `thread_id` from the output.
+        For follow-ups, run `codex exec resume --json SESSION_ID "FOLLOW-UP"` in the same working directory. Use an explicit `--model MODEL` only when requested, and keep it consistent across the conversation.

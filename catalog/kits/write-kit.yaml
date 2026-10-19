@@ -1,0 +1,58 @@
+id: write-kit
+name: Write a kit
+description: Author declarative Loadout kits and catalog entries.
+outputs:
+  - type: skill
+    name: loadout-write-kit
+    files:
+      SKILL.md: |
+        ---
+        name: loadout-write-kit
+        description: Create or edit declarative Loadout kit YAML and catalog JSON when asked to author a kit.
+        ---
+
+        State each requirement once as a direct instruction, including its exceptions. Preserve its exact trigger and scope. Do not add unrequested rules or steps.
+
+        Store each kit as one YAML file. All instruction text, skill files, and optional file contents are inline strings. Kits do not execute code or load output source files. Use the current repository's src/domain/kit.ts as the exact schema when available.
+
+        Adapt this minimal example:
+
+        ```yaml
+        id: review
+        name: Review changes
+        description: Review changes and optionally focus on tests.
+        questions:
+          - id: tests
+            label: Focus on test coverage?
+            type: boolean
+            default: true
+        outputs:
+          - type: instructions
+            targets: [AGENTS.md, CLAUDE.md]
+            content: Review changes for actionable defects before suggesting cosmetic edits.
+          - type: skill
+            name: review
+            when: { question: tests, equals: true }
+            files:
+              SKILL.md: |
+                ---
+                name: review
+                description: Review test coverage when asked to review changes.
+                ---
+
+                Read the diff and relevant tests. Report untested behavior and actionable defects with file locations and suggested fixes.
+        ```
+
+        - Kit fields are id, name, description, questions, and outputs. Require id, name, and at least one output. Use unique lowercase letters, digits, and hyphens for IDs and skill names, starting with a letter or digit. Unknown fields are rejected.
+        - Questions are an ordered array of objects with id, label, and type. Types are input, boolean, select, and multi-select. Only input accepts required, which defaults to true. Input defaults are strings; boolean defaults are booleans; select defaults are choice values; multi-select defaults are arrays of choice values.
+        - Select and multi-select require nonempty choices arrays of objects with value and label. Choice values are unique strings. Defaults must match choices. Boolean defaults to false and multi-select to an empty array; select without a default uses its first choice.
+        - Questions and outputs may have when with question and exactly one of equals or includes. Use equals for a string or boolean answer and includes for membership in a multi-select answer. Conditional questions refer only to earlier questions. Outputs may refer to any declared question.
+        - Interpolate an answer in content by surrounding its question ID with two opening and two closing curly braces. Arrays become comma-separated text. Interpolation applies to instruction content, skill file contents, and file content only, never paths or metadata. Guard content that refers to conditional answers with a matching condition so hidden answers are not referenced.
+        - Instructions have type: instructions, targets containing AGENTS.md and/or CLAUDE.md, and content. Repository instructions go to those root files; global instructions go to ~/.codex/AGENTS.md and ~/.claude/CLAUDE.md.
+        - Skills have type: skill, name, and files mapping relative paths to inline strings. Include SKILL.md with name and description frontmatter. Link supporting Markdown from SKILL.md. Skills materialize in both .agents/skills/<name>/ and .claude/skills/<name>/ under the selected scope root.
+        - Optional files have type: file, a fixed relative path, and inline content; add when to make them conditional. Paths must not be absolute or contain backslashes, empty segments, dot segments, or parent traversal. Use static paths without answer substitutions.
+        - Do not add shell hooks, source scripts, or executable payloads. Selection and scope are application state, not kit fields.
+
+        To publish, add an entry to a catalog JSON object with id, name, description, and kits. Each kits entry has id, name, description, and source pointing to the YAML file relative to the catalog. References must stay within the catalog directory and, for HTTPS catalogs, the same origin. Keep each entry's id, name, and description aligned with its kit. Catalog kit IDs must be unique.
+
+        Validate against the strict schemas, exercise every conditional branch with valid answers, and review the planned files before applying. Use catalog/kits/project-context.yaml and docs/kits.md as fuller examples when available.

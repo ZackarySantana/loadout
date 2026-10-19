@@ -1,0 +1,40 @@
+import { z } from "zod"
+import { kitSchema } from "../domain/kit"
+
+const answerSchema = z.record(
+  z.string(),
+  z.union([z.string(), z.boolean(), z.array(z.string())]),
+)
+const configuredSchema = z
+  .object({ key: z.string(), kit: kitSchema, answers: answerSchema })
+  .strict()
+const selectionSchema = z.record(z.string(), configuredSchema)
+const managedSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("instructions"),
+      blocks: z.record(z.string(), z.string()),
+      originallyAbsent: z.boolean().optional(),
+      layout: z
+        .record(
+          z.string(),
+          z.object({ prefix: z.string(), suffix: z.string() }).strict(),
+        )
+        .optional(),
+    })
+    .strict(),
+  z.object({ type: z.literal("file"), content: z.string() }).strict(),
+])
+export const stateSchema = z
+  .object({
+    catalogs: z.array(z.string()),
+    global: selectionSchema,
+    repositories: z.record(z.string(), selectionSchema),
+    managed: z.record(z.string(), managedSchema),
+  })
+  .strict()
+export type State = z.infer<typeof stateSchema>
+export type Managed = z.infer<typeof managedSchema>
+export function emptyState(): State {
+  return { catalogs: [], global: {}, repositories: {}, managed: {} }
+}

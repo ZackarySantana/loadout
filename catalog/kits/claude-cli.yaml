@@ -1,0 +1,30 @@
+id: claude-cli
+name: Claude CLI
+description: Run non-interactive Claude CLI conversations.
+questions:
+  - id: placement
+    label: Add Claude CLI guidance as instructions or a skill?
+    type: select
+    default: skill
+    choices:
+      - { value: instructions, label: Instructions }
+      - { value: skill, label: Skill }
+outputs:
+  - type: instructions
+    targets: [AGENTS.md, CLAUDE.md]
+    when: { question: placement, equals: instructions }
+    content: |
+      When asked to use Claude CLI, start with `claude -p --output-format json "PROMPT"` using the configured default model, and capture `session_id` from the response.
+      For follow-ups, run `claude -p --resume SESSION_ID --output-format json "FOLLOW-UP"` in the same working directory. Use an explicit `--model MODEL` only when requested, and keep it consistent across the conversation.
+  - type: skill
+    name: loadout-claude-cli
+    when: { question: placement, equals: skill }
+    files:
+      SKILL.md: |
+        ---
+        name: loadout-claude-cli
+        description: Run non-interactive Claude CLI prompts and follow-up conversations when asked to use Claude CLI.
+        ---
+
+        Start with `claude -p --output-format json "PROMPT"` using the configured default model, and capture `session_id` from the response.
+        For follow-ups, run `claude -p --resume SESSION_ID --output-format json "FOLLOW-UP"` in the same working directory. Use an explicit `--model MODEL` only when requested, and keep it consistent across the conversation.

@@ -1,0 +1,55 @@
+{
+  "id": "loadout",
+  "name": "Loadout",
+  "description": "Bundled first-party instructions, skills, and project starters.",
+  "kits": [
+    {
+      "id": "greenfield",
+      "name": "Greenfield",
+      "description": "Develop an undeployed project without legacy compatibility code.",
+      "source": "kits/greenfield.yaml"
+    },
+    {
+      "id": "no-em-dash",
+      "name": "No em dashes",
+      "description": "Avoid em dashes in output.",
+      "source": "kits/no-em-dash.yaml"
+    },
+    {
+      "id": "dont-commit",
+      "name": "Leave Git to the user",
+      "description": "Leave commits and Git operations to the user.",
+      "source": "kits/dont-commit.yaml"
+    },
+    {
+      "id": "codex-cli",
+      "name": "Codex CLI",
+      "description": "Run non-interactive Codex CLI conversations.",
+      "source": "kits/codex-cli.yaml"
+    },
+    {
+      "id": "claude-cli",
+      "name": "Claude CLI",
+      "description": "Run non-interactive Claude CLI conversations.",
+      "source": "kits/claude-cli.yaml"
+    },
+    {
+      "id": "opencode-cli",
+      "name": "OpenCode CLI",
+      "description": "Run non-interactive OpenCode CLI conversations.",
+      "source": "kits/opencode-cli.yaml"
+    },
+    {
+      "id": "write-kit",
+      "name": "Write a kit",
+      "description": "Author declarative Loadout kits and catalog entries.",
+      "source": "kits/write-kit.yaml"
+    },
+    {
+      "id": "project-context",
+      "name": "Project context and deployment",
+      "description": "Capture project context, deployment checks, and an optional deployment note.",
+      "source": "kits/project-context.yaml"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+id: opencode-cli
+name: OpenCode CLI
+description: Run non-interactive OpenCode CLI conversations.
+questions:
+  - id: placement
+    label: Add OpenCode CLI guidance as instructions or a skill?
+    type: select
+    default: skill
+    choices:
+      - { value: instructions, label: Instructions }
+      - { value: skill, label: Skill }
+outputs:
+  - type: instructions
+    targets: [AGENTS.md, CLAUDE.md]
+    when: { question: placement, equals: instructions }
+    content: |
+      When asked to use OpenCode CLI, start with `opencode run --format json "PROMPT"` using the configured default model, and capture `sessionID` from the output.
+      For follow-ups, run `opencode run --session SESSION_ID --format json "FOLLOW-UP"` in the same working directory.
+  - type: skill
+    name: loadout-opencode-cli
+    when: { question: placement, equals: skill }
+    files:
+      SKILL.md: |
+        ---
+        name: loadout-opencode-cli
+        description: Run non-interactive OpenCode CLI prompts and follow-up conversations when asked to use OpenCode CLI.
+        ---
+
+        Start with `opencode run --format json "PROMPT"` using the configured default model, and capture `sessionID` from the output.
+        For follow-ups, run `opencode run --session SESSION_ID --format json "FOLLOW-UP"` in the same working directory.
