@@ -30,6 +30,7 @@ export const conditionSchema = z
 const baseQuestion = {
   id,
   label: z.string().min(1),
+  description: z.string().optional(),
   when: conditionSchema.optional(),
 }
 const choices = z

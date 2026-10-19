@@ -23,7 +23,7 @@ Top-level fields are `id`, `name`, `description`, `questions`, and `outputs`. Re
 
 ## Questions
 
-Questions are an ordered array, not a mapping. Every question has `id`, nonempty `label`, and `type`, with optional `default` and `when`.
+Questions are an ordered array, not a mapping. Every question has `id`, nonempty `label`, and `type`, with optional `description`, `default`, and `when`. All four types accept `description`, a short help string shown in gray italics after the controls. Use it to explain a non-obvious choice or consequence, not repeat the label. It is metadata only: it is not interpolated or included in generated output content.
 
 | Type           | Answer / default                                       | Additional fields                                   |
 | -------------- | ------------------------------------------------------ | --------------------------------------------------- |
@@ -42,6 +42,7 @@ questions:
     default: true
   - id: environment
     label: Which environment?
+    description: Names the environment in the guidance; no deployment commands run.
     type: select
     when: { question: deployment, equals: true }
     default: staging
@@ -50,6 +51,7 @@ questions:
       - { value: production, label: Production }
   - id: checks
     label: Which checks?
+    description: Choose any checks to include in the guidance; no checks run here.
     type: multi-select
     default: [tests]
     choices:

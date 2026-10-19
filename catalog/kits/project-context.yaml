@@ -9,10 +9,12 @@ questions:
     default: My project
   - id: deployment-enabled
     label: Include deployment guidance?
+    description: Adds planning instructions and a deployment skill, not permission for live changes.
     type: boolean
     default: true
   - id: deployment-target
     label: Where is the project deployed?
+    description: Sets the environment named in the guidance; no deployment commands run.
     type: select
     when: { question: deployment-enabled, equals: true }
     default: staging
@@ -21,6 +23,7 @@ questions:
       - { value: production, label: Production }
   - id: checks
     label: Which deployment checks are required?
+    description: Choose any checks to include in the guidance; no checks run here.
     type: multi-select
     when: { question: deployment-enabled, equals: true }
     default: [tests, rollback]
@@ -30,6 +33,7 @@ questions:
       - { value: monitoring, label: Verify monitoring }
   - id: write-deployment-note
     label: Also create docs/deployment-context.md?
+    description: Creates a note with the selected environment and checks only after you apply.
     type: boolean
     when: { question: deployment-enabled, equals: true }
     default: false

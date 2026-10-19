@@ -20,7 +20,7 @@ export function CatalogPreview(props: { catalog: Catalog }) {
       </text>
       <text fg={color.muted} wrapMode="word" flexShrink={0}>
         {props.catalog.permanent
-          ? "Built into Loadout. Always available."
+          ? "Built into Loadout."
           : safeText(props.catalog.source)}
       </text>
       <text fg={color.sage} flexShrink={0}>
@@ -64,9 +64,6 @@ export function CatalogPreview(props: { catalog: Catalog }) {
           </box>
         )}
       </For>
-      <text fg={color.muted} wrapMode="word" flexShrink={0}>
-        Space to browse this catalog. PgUp / PgDn scroll the preview.
-      </text>
     </box>
   )
 }

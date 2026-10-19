@@ -25,7 +25,8 @@ Usage: loadout [--repo <project>]
        loadout catalog add <catalog.json path or HTTPS URL>
        loadout catalog remove <registered source>
 
-Tab switches pages. Up/Down navigate questions; Left/Right navigate options.
+Tab switches pages. Up/Down or j/k navigate; Left/Right or h/l navigate options.
+Text questions start editing on focus; Vim keys then type normally.
 Space selects. Esc goes back. Press q twice to exit.
 Kit changes are written only after review and explicit confirmation.
 Catalog registration updates Loadout's registry immediately.`)

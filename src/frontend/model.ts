@@ -28,13 +28,10 @@ export interface Row {
     | "scope"
     | "choice"
     | "input"
-    | "save"
-    | "cancel"
+    | "actions"
     | "register"
     | "source"
     | "change"
-    | "apply"
-    | "confirm"
   indent?: boolean
   item?: LoadedKit
   scope?: Scope
@@ -72,7 +69,6 @@ export class ScreenModel {
   drafts = new Map<string, Selection>()
   form?: Form
   plan?: Plan
-  confirming = false
   busy = false
   message =
     "Space opens a catalog. Nothing is written until you review and apply."
@@ -173,7 +169,7 @@ export class ScreenModel {
           rows.push({
             id: `question:${question.id}`,
             kind: "input",
-            label: `${question.label}: ${String(answer ?? "") || "(enter a value)"}`,
+            label: question.label,
             question,
             indent: true,
             item: form.item,
@@ -210,22 +206,18 @@ export class ScreenModel {
           })
         }
       }
-    rows.push(
-      {
-        id: "save",
-        kind: "save",
-        label: "✓ Stage selection",
-        indent: true,
-        item: form.item,
-      },
-      {
-        id: "cancel",
-        kind: "cancel",
-        label: "Cancel editing",
-        indent: true,
-        item: form.item,
-      },
-    )
+    rows.push({
+      id: "actions",
+      kind: "actions",
+      label: "",
+      choices: [
+        { value: "accept", label: "Accept", selected: false },
+        { value: "cancel", label: "Cancel", selected: false },
+      ],
+      focusedOptionIndex: this.optionFocus.get("actions") ?? 0,
+      indent: true,
+      item: form.item,
+    })
     return rows
   }
 
@@ -270,26 +262,28 @@ export class ScreenModel {
       ]
     const rows: Row[] = [
       {
-        id: "apply",
-        kind: "apply",
-        label: `Apply ${this.plan.changes.length} file changes · ${this.drafts.size} staged selections`,
+        id: "review-actions",
+        kind: "actions",
+        label: `${this.plan.changes.length} file changes · ${this.drafts.size} staged selections`,
+        choices: [
+          {
+            value: "apply",
+            label: "Apply changes",
+            selected: false,
+            description:
+              "Apply changes writes all listed files and saves installation intent. Space is the final confirmation.",
+          },
+          {
+            value: "edit",
+            label: "Keep editing",
+            selected: false,
+            description:
+              "Return to staged kits without writing. Reviewing does not write any files.",
+          },
+        ],
+        focusedOptionIndex: this.optionFocus.get("review-actions") ?? 1,
       },
     ]
-    if (this.confirming)
-      rows.push(
-        {
-          id: "cancel-apply",
-          kind: "cancel",
-          label: "Go back without applying",
-          indent: true,
-        },
-        {
-          id: "confirm",
-          kind: "confirm",
-          label: "Yes, apply these changes",
-          indent: true,
-        },
-      )
     rows.push(
       ...this.plan.changes.map((change, changeIndex): Row => ({
         id: `change:${changeIndex}`,
@@ -311,13 +305,30 @@ export class ScreenModel {
     return this.rows()[this.cursor]
   }
   move(delta: number): void {
-    if (this.busy || this.editing) return
+    if (this.busy || this.editing?.kind === "catalog") return
+    this.editing = undefined
     const rows = this.rows()
-    let next = this.cursor
-    do {
-      next += delta
-    } while (next >= 0 && next < rows.length && rows[next]?.kind === "heading")
-    if (next >= 0 && next < rows.length) this.cursor = next
+    // An open kit becomes its own navigation loop, not part of the outer list.
+    const focusable = rows.flatMap((row, index) =>
+      row.kind !== "heading" &&
+      (!this.form ||
+        (row.item?.key === this.form.item.key && row.kind !== "kit"))
+        ? [index]
+        : [],
+    )
+    if (!focusable.length) return
+    const current = focusable.indexOf(this.cursor)
+    const next =
+      current < 0
+        ? delta < 0
+          ? focusable.length - 1
+          : 0
+        : (((current + delta) % focusable.length) + focusable.length) %
+          focusable.length
+    this.cursor = focusable[next]!
+    const focused = rows[this.cursor]
+    if (focused?.kind === "input" && focused.question)
+      this.editing = { kind: "question", id: focused.question.id }
     this.changed()
   }
   moveOption(delta: number): void {
@@ -337,13 +348,12 @@ export class ScreenModel {
     if (this.busy) return
     if (this.form || this.registering) {
       this.editing = undefined
-      this.message = "Stage or cancel the inline form before changing tabs."
+      this.message = "Accept or cancel the inline form before changing tabs."
       this.changed()
       return
     }
     this.page = (this.page + (backward ? 2 : 1)) % pages.length
     this.cursor = 0
-    this.confirming = false
     if (this.page === 2) await this.review()
     else
       await this.run(async () => {
@@ -351,6 +361,7 @@ export class ScreenModel {
       })
   }
   async review(): Promise<void> {
+    this.optionFocus.delete("review-actions")
     if (!this.drafts.size) {
       this.plan = undefined
       this.message = "No staged changes. Choose a kit to get started."
@@ -360,25 +371,19 @@ export class ScreenModel {
     await this.run(async () => {
       this.plan = await this.backend.plan([...this.drafts.values()])
       this.message =
-        "Review every changed file. Space on Apply asks for confirmation."
+        "Reviewing does not write. Choose Apply changes, then Space writes all listed files and saves intent."
     })
   }
   back(): void {
     if (this.busy) return
+    if (this.form) {
+      this.acceptForm()
+      return
+    }
     if (this.editing) this.editing = undefined
-    else if (this.form) {
-      const key = this.form.item.key
-      this.form = undefined
-      this.cursor = Math.max(
-        0,
-        this.rows().findIndex((r) => r.id === `kit:${key}`),
-      )
-    } else if (this.registering) {
+    else if (this.registering) {
       this.registering = false
       this.cursor = this.catalogs.length
-    } else if (this.confirming) {
-      this.confirming = false
-      this.cursor = 0
     } else if (this.page === 0 && this.catalog) {
       const id = this.catalog.id
       this.catalog = undefined
@@ -387,6 +392,39 @@ export class ScreenModel {
         this.catalogs.findIndex((c) => c.id === id),
       )
     }
+    this.changed()
+  }
+  acceptForm(): void {
+    if (this.busy || !this.form) return
+    try {
+      const { item, scope } = this.form
+      const answers =
+        scope === "none" ? {} : validateAnswers(item.kit, this.form.answers)
+      this.editing = undefined
+      this.drafts.set(item.key, { item, scope, answers })
+      this.form = undefined
+      this.plan = undefined
+      this.cursor = Math.max(
+        0,
+        this.rows().findIndex((row) => row.id === `kit:${item.key}`),
+      )
+      this.message = `Staged ${item.kit.name}. Tab to Review when ready. No files written yet.`
+    } catch (error) {
+      this.message = error instanceof Error ? error.message : String(error)
+    }
+    this.changed()
+  }
+  cancelForm(): void {
+    if (this.busy || !this.form) return
+    const key = this.form.item.key
+    this.form = undefined
+    this.editing = undefined
+    this.cursor = Math.max(
+      0,
+      this.rows().findIndex((row) => row.id === `kit:${key}`),
+    )
+    this.message =
+      "Kit edit discarded. Previously staged selections are unchanged."
     this.changed()
   }
   edit(value: string): void {
@@ -421,7 +459,7 @@ export class ScreenModel {
       this.message = "Space configures a kit. Esc returns to catalogs."
     } else if (row.kind === "kit" && row.item) {
       if (this.form) {
-        this.message = "Stage or cancel the current kit first."
+        this.message = "Accept or cancel the current kit first."
         this.changed()
         return
       }
@@ -434,7 +472,7 @@ export class ScreenModel {
       this.optionFocus.clear()
       this.cursor = this.rows().findIndex((row) => row.id === "scope")
       this.message =
-        "↑↓ questions · ←→ options · Space selects/toggles · Stage when ready · Esc cancels"
+        "↑↓/jk questions · ←→/hl options · Space selects/toggles · Esc accepts · Cancel discards"
     } else if (row.kind === "scope" && this.form) {
       this.optionFocus.set(row.id, row.focusedOptionIndex ?? 0)
       this.form.scope = row.choices![row.focusedOptionIndex ?? 0]!
@@ -452,21 +490,10 @@ export class ScreenModel {
     } else if (row.kind === "input")
       this.editing = { kind: "question", id: row.question!.id }
     else if (row.kind === "source") this.editing = { kind: "catalog" }
-    else if (row.kind === "save" && this.form) {
-      try {
-        const { item, scope } = this.form
-        const answers =
-          scope === "none" ? {} : validateAnswers(item.kit, this.form.answers)
-        this.drafts.set(item.key, { item, scope, answers })
-        this.form = undefined
-        this.plan = undefined
-        this.cursor = this.rows().findIndex((r) => r.id === `kit:${item.key}`)
-        this.message = `Staged ${item.kit.name}. Tab to Review when ready. No files written yet.`
-      } catch (error) {
-        this.message = error instanceof Error ? error.message : String(error)
-      }
-    } else if (row.kind === "cancel") {
-      this.back()
+    else if (row.kind === "actions" && this.form) {
+      if (row.choices![row.focusedOptionIndex ?? 0]!.value === "cancel") {
+        this.cancelForm()
+      } else this.acceptForm()
       return
     } else if (row.kind === "register") {
       this.registering = true
@@ -474,21 +501,30 @@ export class ScreenModel {
       this.cursor += 1
       this.message =
         "Enter a local catalog.json path or HTTPS URL, then press Enter."
-    } else if (row.kind === "apply") {
-      this.confirming = true
-      this.cursor = 1
-      this.message =
-        "Apply writes the reviewed files, including changes in other known repositories."
-    } else if (row.kind === "confirm" && this.plan) {
-      await this.run(async () => {
-        await this.backend.apply(this.plan!)
-        this.drafts.clear()
+    } else if (row.id === "review-actions" && this.plan) {
+      if (row.choices![row.focusedOptionIndex ?? 1]!.value === "edit") {
+        this.page = 1
         this.plan = undefined
-        this.confirming = false
-        this.cursor = 0
+        this.cursor = Math.max(
+          0,
+          this.rows().findIndex(
+            (row) =>
+              row.kind === "kit" && row.item && this.drafts.has(row.item.key),
+          ),
+        )
         this.message =
-          "Applied successfully. Your installation intent is saved."
-      })
+          "Keep editing your staged kits. No files written. Tab to Review for a fresh plan."
+      } else {
+        const plan = this.plan
+        await this.run(async () => {
+          await this.backend.apply(plan)
+          this.drafts.clear()
+          this.plan = undefined
+          this.cursor = 0
+          this.message =
+            "Applied successfully. Your installation intent is saved."
+        })
+      }
     }
     this.cursor = Math.max(0, Math.min(this.cursor, this.rows().length - 1))
     this.changed()
@@ -501,7 +537,6 @@ export class ScreenModel {
     } catch (error) {
       this.message = error instanceof Error ? error.message : String(error)
       this.plan = undefined
-      this.confirming = false
       this.cursor = 0
     } finally {
       this.busy = false

@@ -26,15 +26,18 @@ Dependencies are local to the project. OpenTUI’s Solid integration runs on Bun
 ## Choose, review, apply
 
 - **Catalogs** starts with the permanent Loadout catalog. Highlight a catalog to preview its kits in separate cards with descriptions and contribution badges; **Space** opens it.
-- Highlight a kit to preview its contributions in separate Markdown cards. Answers update the preview live; excluded contributions remain visible in gray. **Space** expands configuration directly beneath the entry.
-- Use **↑ / ↓** between question rows, **← / →** to focus horizontal options, and **Space** to select or toggle. Options wrap on narrow screens; focus highlighting is separate from the selected radio/check markers. For a text answer, press **Space**, type, then **Enter**. Stage the selection when finished.
+- Kit entries are spaced apart, with muted italic descriptions beneath their names. Highlight one to preview its contributions as Markdown sections with titled separators. Instructions share one combined section, with disabled fragments shown in gray. Answers update in place as you type. **Space** expands configuration directly beneath the entry.
+- Use **↑ / ↓** or **j / k** between rows, **← / →** or **h / l** to focus horizontal options, and **Space** to select or toggle. Options wrap on narrow screens; focus highlighting is separate from the selected radio/check markers. Landing on a text answer starts typing automatically; Vim keys then enter text instead of navigating. **↑ / ↓** still move between questions. **Enter** finishes only the input; **Esc** accepts/stages the whole kit, including while typing. Required-answer errors keep the form open. Choose **Accept** to stage or **Cancel** to discard the edit; these actions share one horizontal row.
+- An open kit keeps navigation inside its form. Accept or cancel it to return to the kit list; other kits cannot receive focus while you are configuring it.
+- Text answers stay visible on their own line below the question, aligned with its text. Optional question descriptions appear as muted italic help below the control.
+- **↑ / ↓** wrap at list boundaries. Inside an open kit, they wrap between its first and last form controls without leaving the kit.
 - **Tab** / **Shift+Tab** cycle Catalogs, Installed, and Review. Finish or cancel an open form first.
-- **Review** lists actual file changes. Highlight a file to inspect its diff. Choose Apply, then explicitly confirm. The initial confirmation selection is Cancel.
-- **Esc** goes back or cancels editing; **PgUp / PgDn** scroll the informational column. Press **q** twice to exit, even with no changes: the first opens confirmation, the second exits. **Esc** stays; **Space** does not confirm. **Ctrl+C** opens the same prompt. While typing an answer, **q** is literal text.
+- **Review** lists actual file changes, staged scope/answers, and safety details in sections. Highlight a file for its colored diff. The visible **Apply changes / Keep editing** row defaults to **Keep editing**. Explicitly focus **Apply changes** with **← / →** or **h / l**, then press **Space** to write all listed files and save installation intent. This is the final confirmation, with no second menu. Applying still saves intent and answers when there are zero file changes. **Keep editing** returns to Installed with drafts intact and a fresh plan on the next Review; reviewing never writes files.
+- **Esc** accepts an open kit; only its explicit **Cancel** action discards the edit. Outside a kit, **Esc** goes back or stops catalog input; **PgUp / PgDn** scroll the informational column. Press **q** twice to exit, even with no changes: the first opens confirmation, the second exits. **Esc** stays; **Space** does not confirm. **Ctrl+C** opens the same prompt. While typing an answer, **q** is literal text.
 
 ### Installation scope
 
-Scope colors match across both panes: **Repository** is blue, **Global** gold, and **Both** lavender. Instructions use sage accents, skills lavender, and other files blue. Excluded contributions are gray; labels and selection markers remain visible alongside colors.
+Scope colors are consistent wherever shown: **Repository** is blue, **Global** gold, and **Both** lavender. Instructions use sage accents, skills lavender, and other files blue. Excluded contributions are gray; labels and selection markers remain visible alongside colors.
 
 **Repository** keeps a kit in this project. **Global** keeps it in your user configuration. **Both** retains both intentions but materializes only the global copy.
 

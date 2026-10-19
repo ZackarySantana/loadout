@@ -168,7 +168,6 @@ test("built CLI navigates bundled kits and updates a live answer in a real PTY o
     await waitFor("select the project-name row", () =>
       text().includes("› What is this project called?"),
     )
-    await send(" ")
     await waitFor("focus the answer editor", () =>
       text().includes("Type an answer"),
     )
@@ -177,10 +176,26 @@ test("built CLI navigates bundled kits and updates a live answer in a real PTY o
     await waitFor("render the changed answer live", () =>
       text().includes("My project runtime smoke"),
     )
-    // Both the inline row and the contribution preview must react before Enter.
-    expect(
-      text().match(/My project runtime smoke/g)?.length,
-    ).toBeGreaterThanOrEqual(2)
+    // The answer now lives only in its own input line. Inspect the right pane
+    // separately so normal paragraph wrapping cannot hide a stale preview.
+    const previewText = () =>
+      text()
+        .split("\n")
+        .map((line) =>
+          Array.from(line)
+            .slice(112, 158)
+            .join("")
+            .replace(/[│╭╰╮╯█▀▄░▓]/g, " ")
+            .trim(),
+        )
+        .join(" ")
+        .replace(/\s+/g, " ")
+    await waitFor("update the live contribution before Enter", () =>
+      previewText().includes("You are working on My project runtime smoke."),
+    )
+    expect(previewText()).toContain(
+      "You are working on My project runtime smoke.",
+    )
     await send("\r")
     output = ""
     await send("\u0003")
