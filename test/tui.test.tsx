@@ -100,6 +100,13 @@ async function fixture(
         ...(richPreview
           ? [
               {
+                id: "environment",
+                type: "input",
+                label: "Environment",
+                default: "staging",
+                when: { question: "extra", equals: true },
+              },
+              {
                 id: "unrelated",
                 type: "boolean",
                 label: "Unrelated preference",
@@ -151,7 +158,8 @@ async function fixture(
                 name: "team-guide",
                 files: {
                   "SKILL.md": skillDocument,
-                  "references/checklist.md": "Checklist for {{source}}.\n",
+                  "references/checklist.md":
+                    "Checklist for {{source}}.\n\n- Confirm {{environment}}.\n- Verify {{source}}.\n- Static release check.\n  - Nested static check.\n- **Approve** release.\n- [Release guide](https://example.test)\n- Run `audit` before merge.\n",
                 },
                 when: { question: "extra", equals: true },
               },
@@ -913,9 +921,6 @@ describe("rendered keyboard workflows", () => {
     expect(ui.model.rows().some((row) => row.id === "question:followup")).toBe(
       false,
     )
-    expect(ui.model.rows().some((row) => row.id === "question:followup")).toBe(
-      false,
-    )
     // The preview must also evaluate the cascade, not stale hidden note values.
     ui.setup.mockInput.pressKey("\u001b[6~")
     await ui.setup.flush()
@@ -1212,7 +1217,7 @@ describe("rendered keyboard workflows", () => {
     const kitPath = join(dirname(ui.source), "kit.yaml")
     const originalKitFile = await readFile(kitPath, "utf8")
     await ui.openKit()
-    ui.setup.resize(150, 80)
+    ui.setup.resize(150, 110)
     await ui.setup.flush()
     const card = (label: string) => {
       const box = descendants(ui.setup.renderer.root).find(
@@ -1224,7 +1229,7 @@ describe("rendered keyboard workflows", () => {
       expect(box.titleAlignment).toBe("center")
       return { box }
     }
-    const spansIn = (box: BoxRenderable) =>
+    const spansIn = (box: Renderable) =>
       ui.setup
         .captureSpans()
         .lines.slice(Math.max(0, box.y), box.y + box.height)
@@ -1316,7 +1321,7 @@ describe("rendered keyboard workflows", () => {
     expect(ui.frame()).toContain("Checklist for {{source}}.")
 
     for (const width of [110, 64]) {
-      ui.setup.resize(width, 120)
+      ui.setup.resize(width, 160)
       await ui.setup.flush()
       const frame = ui
         .frame()
@@ -1352,7 +1357,7 @@ describe("rendered keyboard workflows", () => {
         expect(visible).toContain(sequence)
       }
     }
-    ui.setup.resize(150, 80)
+    ui.setup.resize(150, 110)
     await ui.setup.flush()
 
     const documents = () => ({
@@ -1366,6 +1371,11 @@ describe("rendered keyboard workflows", () => {
         (node) =>
           node instanceof MarkdownRenderable &&
           node.content.startsWith("## Optional context"),
+      )!,
+      supporting: descendants(card("Skill · team-guide").box).find(
+        (node) =>
+          node instanceof MarkdownRenderable &&
+          node.content.startsWith("Checklist for "),
       )!,
     })
     const metadata = () =>
@@ -1393,6 +1403,7 @@ describe("rendered keyboard workflows", () => {
     expect(stable.instructions).toBeInstanceOf(MarkdownRenderable)
     expect(stable.skill).toBeInstanceOf(MarkdownRenderable)
     expect(stable.optional).toBeInstanceOf(MarkdownRenderable)
+    expect(stable.supporting).toBeInstanceOf(MarkdownRenderable)
     const paragraphs = {
       instructions: stable.instructions
         .getChildren()
@@ -1401,6 +1412,9 @@ describe("rendered keyboard workflows", () => {
         .getChildren()
         .filter((node) => node instanceof CodeRenderable),
       optional: stable.optional
+        .getChildren()
+        .filter((node) => node instanceof CodeRenderable),
+      supporting: stable.supporting
         .getChildren()
         .filter((node) => node instanceof CodeRenderable),
     }
@@ -1417,7 +1431,12 @@ describe("rendered keyboard workflows", () => {
         `description: Guide for ${ui.input("question:source").value}.`,
       )
       const current = documents()
-      for (const key of ["instructions", "skill", "optional"] as const) {
+      for (const key of [
+        "instructions",
+        "skill",
+        "optional",
+        "supporting",
+      ] as const) {
         if (current[key] !== stable[key])
           throw new Error(`${key} Markdown document was replaced`)
         const blocks = current[key]
@@ -1544,6 +1563,69 @@ describe("rendered keyboard workflows", () => {
     const checkExcluded = (excluded: boolean) => {
       expectRetained()
       const gray = RGBA.fromHex("#858b87")
+      const supportingSpans = spansIn(documents().supporting).filter((span) =>
+        span.text.trim(),
+      )
+      expect(supportingSpans.length).toBeGreaterThan(0)
+      const environment = excluded ? "{{environment}}" : "staging"
+      expect((documents().supporting as MarkdownRenderable).content).toContain(
+        `Confirm ${environment}.`,
+      )
+      expect(ui.frame()).toContain(`Confirm ${environment}.`)
+      expect(
+        ui.model.rows().some((row) => row.id === "question:environment"),
+      ).toBe(!excluded)
+      if (excluded) {
+        const wrongColors = supportingSpans
+          .filter((span) => !span.fg.equals(gray))
+          .map((span) => ({ text: span.text, fg: span.fg.toInts() }))
+        expect(wrongColors).toEqual([])
+      } else {
+        for (const text of [
+          "Checklist for Beta.",
+          "Confirm staging.",
+          "Verify Beta.",
+          "Static release check.",
+          "Nested static check.",
+          " release.",
+          "Run ",
+          " before merge.",
+        ]) {
+          const spans = supportingSpans.filter((span) =>
+            span.text.includes(text),
+          )
+          expect(spans.length).toBeGreaterThan(0)
+          expect(
+            spans
+              .filter((span) => !span.fg.equals(RGBA.fromHex("#e1eadc")))
+              .map((span) => ({ text: span.text, fg: span.fg.toInts() })),
+          ).toEqual([])
+        }
+        for (const [text, attributes] of [
+          ["Approve", TextAttributes.BOLD],
+          ["Release guide", TextAttributes.UNDERLINE],
+          ["audit", 0],
+        ] as const) {
+          const spans = supportingSpans.filter((span) =>
+            span.text.includes(text),
+          )
+          expect(spans.length).toBeGreaterThan(0)
+          expect(
+            spans.every(
+              (span) =>
+                span.fg.equals(RGBA.fromHex("#bbd4a4")) &&
+                (span.attributes & attributes) === attributes,
+            ),
+          ).toBe(true)
+        }
+        const markers = supportingSpans.filter((span) =>
+          /^[\s•◦▪*+\-]+$/.test(span.text),
+        )
+        expect(markers.length).toBeGreaterThan(0)
+        expect(
+          markers.every((span) => span.fg.equals(RGBA.fromHex("#bbd4a4"))),
+        ).toBe(true)
+      }
       const instructionSection = card("Instructions").box
       const fragment = (document: Renderable) => {
         let node = document
@@ -1699,7 +1781,46 @@ describe("rendered keyboard workflows", () => {
       }
     }
     checkExcluded(true)
-    await ui.choose("question:extra", true)
+    const toggleExtra = async (enabled: boolean) => {
+      const recording = new TestRecorder(ui.setup.renderer)
+      recording.rec()
+      try {
+        await ui.choose("question:extra", enabled)
+      } finally {
+        recording.stop()
+      }
+      expect(recording.recordedFrames.length).toBeGreaterThan(0)
+      const details = descendants(ui.setup.renderer.root).find(
+        (node) => node instanceof BoxRenderable && node.title === "Details",
+      )!
+      for (const { frame } of recording.recordedFrames) {
+        const preview = frame
+          .split("\n")
+          .map((line) =>
+            Array.from(line)
+              .slice(details.x + 1, details.x + details.width - 1)
+              .join(""),
+          )
+          .join("\n")
+        for (const text of [
+          "Owner: Beta",
+          "Checklist for Beta.",
+          "Verify Beta.",
+          "Static release check.",
+          "Nested static check.",
+          "Approve release.",
+          "Release guide",
+          "Run audit before merge.",
+        ])
+          expect(preview).toContain(text)
+        expect(
+          preview.includes("Confirm staging.") ||
+            preview.includes("Confirm {{environment}}."),
+        ).toBe(true)
+      }
+      expectRetained()
+    }
+    await toggleExtra(true)
     checkExcluded(false)
     // Keep the same preview identity while navigating/toggling this kit.
     // A shorter included card may clamp the old offset, but must not reset it.
@@ -1722,12 +1843,16 @@ describe("rendered keyboard workflows", () => {
       ),
     )
     expect(preview.scrollTop).toBeGreaterThan(0)
-    ui.setup.resize(150, 80)
+    ui.setup.resize(150, 110)
     await ui.setup.flush()
     await ui.press("\u001b[5~")
     expect(ui.frame()).toContain("Owner: Beta")
     checkExcluded(true)
-    await ui.choose("question:extra", true)
+    await toggleExtra(true)
+    checkExcluded(false)
+    await toggleExtra(false)
+    checkExcluded(true)
+    await toggleExtra(true)
     checkExcluded(false)
     expect(ui.frame()).toContain("Checklist for Beta.")
     expect(ui.model.drafts.size).toBe(0)

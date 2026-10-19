@@ -196,6 +196,22 @@ export function KitPreview(props: KitPreviewProps) {
     token,
     context,
   ) => {
+    if (token.type === "list") {
+      const list = context.defaultRender()
+      if (!list) return undefined
+      // Native list reconciliation skips unchanged rows even on style refresh,
+      // leaving their old inline colors behind. A custom wrapper opts just this
+      // block out of that reuse. Native streaming still paints every row at once;
+      // unchanged list text/style, documents, and other blocks stay untouched.
+      const block = new BoxRenderable(renderer, {
+        width: "100%",
+        minWidth: 0,
+        flexDirection: "column",
+        flexShrink: 0,
+      })
+      block.add(list)
+      return block
+    }
     if (token.type === "heading") {
       // Paint one complete heading snapshot synchronously. Turning off conceal
       // for the document would also reveal emphasis/link syntax in its body.
