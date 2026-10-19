@@ -14,6 +14,7 @@ import { CatalogPreview } from "./CatalogPreview"
 import { GuidePreview } from "./GuidePreview"
 import { Brand } from "./Brand"
 import { ReviewPreview } from "./ReviewPreview"
+import { DriftPreview, SourceNotice, sourceLabels } from "./DriftPreview"
 import { theme as color, scopeColor } from "./theme"
 import type { Scope } from "../domain/kit"
 const safeText = (text: string) =>
@@ -24,6 +25,8 @@ const rowDescription = (row: Row) =>
     : row.question?.description
 
 function details(model: ScreenModel, row?: Row): { title: string } {
+  if (row?.kind === "health" || row?.kind === "drift-file")
+    return { title: "Source and output status" }
   if (row?.catalog)
     return {
       title: row.catalog.name,
@@ -74,19 +77,46 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
     }
   })
   const catalogSelection = createMemo(() => rows()[active()]?.catalog)
+  const driftSelection = createMemo(() => {
+    revision()
+    const row = rows()[active()]
+    return row?.kind === "health" || row?.kind === "drift-file"
+      ? { report: model.drift, errors: model.errors, file: row.fileDrift }
+      : undefined
+  })
+  const sourceSelection = createMemo(() => {
+    revision()
+    const row = rows()[active()]
+    if (!row?.item) return undefined
+    const issue = model.sourceDrift(row.item.key)
+    const staged = model.updateStaged(row.item.key)
+    const form = model.form?.item.key === row.item.key ? model.form : undefined
+    return issue && (issue.status !== "current" || staged)
+      ? {
+          issue,
+          staged,
+          previewingLatest: form?.fromCatalog ?? row.fromCatalog,
+        }
+      : undefined
+  })
   const reviewSelection = createMemo(() => {
     revision()
     return {
       plan: model.plan,
       selections: [...model.drafts.values()],
       changeIndex: rows()[active()]?.changeIndex,
+      drift: model.drift,
+      errors: model.errors,
     }
   })
   const previewIdentity = createMemo(() => {
     const row = rows()[active()]
     if (row?.item) return `kit:${row.item.key}`
     if (row?.catalog) return `catalog:${row.catalog.id}`
-    if (row?.kind === "change") return `change:${row.changeIndex}`
+    if (row?.kind === "change")
+      return `change:${model.plan?.changes[row.changeIndex ?? -1]?.path ?? row.changeIndex}`
+    if (row?.fileDrift) return `drift-file:${row.fileDrift.path}`
+    if (row?.kind === "health") return "health"
     return `page:${model.page}`
   })
   const editing = createMemo(() => {
@@ -151,6 +181,8 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
     setExitPrompt(true)
   }
   const rowColor = (row: Row, focused: boolean): string => {
+    if (row.kind === "health" || row.kind === "drift-file") return color.warning
+    if (row.kind === "update") return color.file
     if (row.kind === "heading") return color.muted
     if (row.kind === "register" || row.kind === "source") return color.file
     if (row.kind === "actions") return color.sage
@@ -193,10 +225,7 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
       return
     }
     if (editing()) {
-      if (
-        editing()?.kind === "question" &&
-        (key.name === "up" || key.name === "down")
-      ) {
+      if (key.name === "up" || key.name === "down") {
         key.preventDefault()
         model.move(key.name === "up" ? -1 : 1)
       }
@@ -205,6 +234,7 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
     const motion = !key.ctrl && !key.meta && !key.shift ? key.name : undefined
     key.preventDefault()
     if (key.name === "q") exit()
+    else if (key.name === "r") void model.refreshStatus()
     else if (key.name === "up" || motion === "k") model.move(-1)
     else if (key.name === "down" || motion === "j") model.move(1)
     else if (
@@ -322,7 +352,7 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
                       ? index > 0 && rows()[index - 1]?.kind !== "actions"
                         ? 1
                         : 0
-                      : row().indent && row().item
+                      : row().indent && (row().item || model.registering)
                         ? 1
                         : 0
                   }
@@ -353,6 +383,16 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
                             </Show>
                             <Show when={row().staged}>
                               <span style={{ fg: color.warning }}> *</span>
+                            </Show>
+                            <Show
+                              when={
+                                row().sourceDrift &&
+                                row().sourceDrift!.status !== "current"
+                              }
+                            >
+                              <span
+                                style={{ fg: color.warning }}
+                              >{` · ${row().updateStaged ? "Update staged" : sourceLabels[row().sourceDrift!.status]}`}</span>
                             </Show>
                           </span>
                         )}
@@ -500,34 +540,70 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
               when={kitSelection()}
               fallback={
                 <Show
-                  when={catalogSelection()}
+                  when={driftSelection()}
                   fallback={
                     <Show
-                      when={currentPage() !== 2}
+                      when={catalogSelection()}
                       fallback={
-                        <ReviewPreview
-                          plan={reviewSelection().plan}
-                          selections={reviewSelection().selections}
-                          changeIndex={reviewSelection().changeIndex}
-                          repository={model.backend.repository}
-                          home={model.backend.home}
-                        />
+                        <Show
+                          when={currentPage() !== 2}
+                          fallback={
+                            <ReviewPreview
+                              plan={reviewSelection().plan}
+                              selections={reviewSelection().selections}
+                              changeIndex={reviewSelection().changeIndex}
+                              repository={model.backend.repository}
+                              home={model.backend.home}
+                              drift={reviewSelection().drift}
+                              errors={reviewSelection().errors}
+                            />
+                          }
+                        >
+                          <GuidePreview />
+                        </Show>
                       }
                     >
-                      <GuidePreview />
+                      {(catalog) => (
+                        <CatalogPreview
+                          catalog={catalog()}
+                          repository={model.backend.repository}
+                        />
+                      )}
                     </Show>
                   }
                 >
-                  {(catalog) => <CatalogPreview catalog={catalog()} />}
+                  {(selection) => (
+                    <DriftPreview
+                      report={selection().report}
+                      errors={selection().errors}
+                      file={selection().file}
+                    />
+                  )}
                 </Show>
               }
             >
               {(selection) => (
-                <KitPreview
-                  item={selection().item}
-                  answers={selection().answers}
-                  scope={selection().scope}
-                />
+                <box
+                  width="100%"
+                  minWidth={0}
+                  flexDirection="column"
+                  flexShrink={0}
+                >
+                  <Show when={sourceSelection()}>
+                    {(source) => (
+                      <SourceNotice
+                        issue={source().issue}
+                        staged={source().staged}
+                        previewingLatest={source().previewingLatest}
+                      />
+                    )}
+                  </Show>
+                  <KitPreview
+                    item={selection().item}
+                    answers={selection().answers}
+                    scope={selection().scope}
+                  />
+                </box>
               )}
             </Show>
           </scrollbox>
@@ -545,10 +621,10 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
         {editing()?.kind === "question"
           ? "Type an answer · ↑↓ questions · Enter finish input · Esc accept kit"
           : editing()?.kind === "catalog"
-            ? "Type a catalog path or URL · Enter register · Esc stop editing"
+            ? "Type a catalog path or URL · ↑↓ availability · Enter subscribe · Esc stop editing"
             : formOpen()
               ? "↑↓/jk questions · ←→/hl options · Space select/toggle · Esc accept kit · Cancel discards"
-              : "↑↓/jk rows · ←→/hl options · Space select · Tab pages · Esc back · PgUp/PgDn details · q q quit"}
+              : "↑↓/jk rows · ←→/hl options · Space select · Tab pages · r refresh · Esc back · PgUp/PgDn details · q q quit"}
       </text>
     </box>
   )

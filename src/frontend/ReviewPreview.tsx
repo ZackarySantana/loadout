@@ -1,6 +1,7 @@
 import { createMemo, For, Show, type JSX } from "solid-js"
 import { diffLines } from "diff"
-import type { Plan, Selection } from "../backend/service"
+import type { DriftReport, Plan, Selection } from "../backend/service"
+import { sourceLabels } from "./DriftPreview"
 import { scopeColor, theme } from "./theme"
 
 const safeText = (text: string) =>
@@ -12,6 +13,8 @@ export interface ReviewPreviewProps {
   repository: string
   home: string
   changeIndex?: number
+  drift?: DriftReport
+  errors?: string[]
 }
 
 function Section(props: {
@@ -227,6 +230,48 @@ export function ReviewPreview(props: ReviewPreviewProps) {
             </Section>
           </>
         )}
+      </Show>
+      <Show
+        when={
+          props.drift?.kits.some((kit) => kit.status !== "current") ||
+          props.drift?.files.some((file) => file.status !== "current") ||
+          props.errors?.length
+        }
+      >
+        <Section title="Source and output status" accent={theme.warning}>
+          <For
+            each={props.drift?.kits.filter((kit) => kit.status !== "current")}
+          >
+            {(kit) => (
+              <text fg={theme.warning} wrapMode="word" flexShrink={0}>
+                {safeText(kit.key)}: {sourceLabels[kit.status]}
+              </text>
+            )}
+          </For>
+          <For
+            each={props.drift?.files.filter(
+              (file) => file.status !== "current",
+            )}
+          >
+            {(file) => (
+              <text fg={theme.warning} wrapMode="word" flexShrink={0}>
+                {file.status}: {safeText(file.path)}
+              </text>
+            )}
+          </For>
+          <For each={props.errors}>
+            {(error) => (
+              <text fg={theme.muted} wrapMode="word" flexShrink={0}>
+                {safeText(error)}
+              </text>
+            )}
+          </For>
+          <text fg={theme.muted} wrapMode="word" flexShrink={0}>
+            Drift is compared to the last applied snapshot. Staged catalog
+            updates take effect only on Apply; missing sources never remove
+            saved kits automatically.
+          </text>
+        </Section>
       </Show>
       <Section title="How to apply" accent={theme.warning}>
         <Show

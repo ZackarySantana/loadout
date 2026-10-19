@@ -1,0 +1,34 @@
+id: team-review
+name: Team review
+description: A shared review skill with configurable focus areas.
+questions:
+  - id: focus
+    label: Which review areas should the skill emphasize?
+    type: multi-select
+    default: [tests]
+    choices:
+      - { value: tests, label: Tests }
+      - { value: security, label: Security }
+      - { value: documentation, label: Documentation }
+outputs:
+  - type: skill
+    name: team-review
+    files:
+      SKILL.md: |
+        ---
+        name: team-review
+        description: Review project changes using the team's checklist when asked to review code.
+        ---
+
+        # Review changes
+
+        Emphasize these areas: {{focus}}.
+        Read the diff and relevant project documentation. Report actionable defects with file locations and suggested fixes.
+        Use [the shared checklist](references/checklist.md) and distinguish confirmed issues from open questions.
+      references/checklist.md: |
+        # Shared review checklist
+
+        - Confirm the intended behavior and affected callers.
+        - Check whether tests protect the behavior being changed.
+        - Review error handling and security boundaries.
+        - Note documentation that needs to change with the behavior.

@@ -201,7 +201,7 @@ async function fixture(
     }),
   )
   const service = await LoadoutService.open({ home, repository })
-  if (register) await service.register(source)
+  if (register) await service.register(source, "global")
   const model = new ScreenModel(service)
   await model.initialize()
   let exits = 0
@@ -567,7 +567,23 @@ describe("rendered keyboard workflows", () => {
     ).toBe(true)
     await ui.go("change:1")
     expect(ui.frame()).toContain("Review before merging")
-    await ui.go("review-actions")
+    await ui.focusOption("review-actions", "apply")
+    const planBeforeRefresh = ui.model.plan
+    await ui.press("r")
+    expect(ui.model.plan).toBeDefined()
+    expect(ui.model.plan === planBeforeRefresh).toBe(false)
+    expect(
+      ui.model.selected()?.choices?.[ui.model.selected()!.focusedOptionIndex!]
+        ?.value,
+    ).toBe("edit")
+    expect(ui.frame()).toContain("Keep editing")
+    expect(applyCalls).not.toHaveBeenCalled()
+    expect(await readFile(agents, "utf8")).toBe(
+      "Keep my existing instructions.\n",
+    )
+    expect(await Bun.file(join(ui.repository, "notes.txt")).exists()).toBe(
+      false,
+    )
     await ui.press(" ")
     expect(ui.model.page).toBe(1)
     expect(ui.model.drafts.size).toBe(1)
@@ -679,6 +695,10 @@ describe("rendered keyboard workflows", () => {
     ).toBe(true)
     expect(ui.frame()).toContain("write files.")
     await ui.select("register")
+    expect(ui.model.selected()?.id).toBe("catalog-scope")
+    expect(ui.model.selected()?.choices?.[0]?.selected).toBe(true)
+    await ui.choose("catalog-scope", "global")
+    await ui.go("source")
     expect(ui.frame()).toContain("Catalog JSON path or HTTPS URL")
     expect(ui.input("source").focused).toBe(true)
     await ui.setup.mockInput.typeText(ui.source)
@@ -686,10 +706,10 @@ describe("rendered keyboard workflows", () => {
     expect(ui.model.source).toBe(ui.source)
     await ui.press("RETURN")
     await ui.setup.waitFor(() =>
-      ui.model.message.startsWith("Catalog registered"),
+      ui.model.message.startsWith("Catalog subscribed for global."),
     )
     expect(ui.frame()).toContain("Local team catalog")
-    expect(ui.frame()).toContain("Catalog registered")
+    expect(ui.frame()).toContain("Catalog subscribed for global.")
     await ui.press(" ")
     expect(ui.frame()).toContain("Catalogs / Local team catalog")
     expect(ui.frame()).toContain("Team context")
@@ -700,6 +720,11 @@ describe("rendered keyboard workflows", () => {
     expect(
       (await reopened.catalogs()).catalogs.map((catalog) => catalog.id),
     ).toEqual(["loadout", "fixture"])
+    expect(
+      (await reopened.catalogs()).catalogs.find(
+        (catalog) => catalog.id === "fixture",
+      )?.subscriptionScope,
+    ).toBe("global")
     expect(await Bun.file(join(ui.repository, "AGENTS.md")).exists()).toBe(
       false,
     )
@@ -1209,6 +1234,269 @@ describe("rendered keyboard workflows", () => {
     expect(ui.service.installed()).toEqual([])
     expect(await Bun.file(join(ui.repository, "AGENTS.md")).exists()).toBe(
       false,
+    )
+  })
+
+  test("discovers a team catalog, explicitly updates saved kits, reports output drift, and removes an unavailable kit offline", async () => {
+    const ui = await fixture(false)
+    ui.setup.resize(150, 80)
+    await ui.setup.flush()
+    const directory = join(ui.repository, ".loadout")
+    await mkdir(directory)
+    const kitPath = join(directory, "context.yaml")
+    const catalogPath = join(directory, "catalog.json")
+    const agents = join(ui.repository, "AGENTS.md")
+    const output = join(ui.repository, "context.txt")
+    const state = join(ui.home, ".loadout/state.json")
+    const definition = (updated: boolean) => ({
+      id: "context",
+      name: "Project team",
+      description: "Shared project conventions.",
+      questions: [
+        { id: "project", type: "input", label: "Project name" },
+        {
+          id: "mode",
+          type: "select",
+          label: "Workflow",
+          default: updated ? "modern" : "legacy",
+          choices: [
+            {
+              value: updated ? "modern" : "legacy",
+              label: updated ? "Modern workflow" : "Legacy workflow",
+            },
+          ],
+        },
+        ...(updated
+          ? [{ id: "owner", type: "input", label: "Team owner" }]
+          : []),
+      ],
+      outputs: [
+        {
+          type: "instructions",
+          targets: ["AGENTS.md"],
+          content: updated
+            ? "Updated {{project}} / {{mode}} / {{owner}}\n"
+            : "Original {{project}} / {{mode}}\n",
+        },
+        {
+          type: "file",
+          path: "context.txt",
+          content: updated
+            ? "Updated {{project}} / {{mode}} / {{owner}}\n"
+            : "Original {{project}} / {{mode}}\n",
+        },
+      ],
+    })
+    await writeFile(kitPath, stringify(definition(false)))
+    await writeFile(
+      catalogPath,
+      JSON.stringify({
+        id: "team-repo",
+        name: "Project catalog",
+        kits: [{ id: "context", name: "Project team", source: "context.yaml" }],
+      }),
+    )
+    await writeFile(agents, "Keep project notes.\n")
+    await ui.press("r")
+    expect(ui.frame()).toContain("Project catalog")
+    await ui.select("catalog:team-repo")
+    await ui.select("kit:team-repo/context")
+    await ui.answer("project", "Phoenix team")
+    await ui.choose("question:mode", "legacy")
+    await ui.press("ESCAPE")
+    expect(await Bun.file(output).exists()).toBe(false)
+    const reviewAndApply = async () => {
+      while (ui.model.page !== 2) await ui.press("TAB")
+      expect(ui.frame()).toContain("Apply changes")
+      expect(ui.model.plan?.changes.length).toBeGreaterThan(0)
+      await ui.choose("review-actions", "apply")
+      expect(ui.frame()).toContain("Applied successfully")
+    }
+    await reviewAndApply()
+    const reopened = await LoadoutService.open({
+      home: ui.home,
+      repository: ui.repository,
+    })
+    expect(
+      reopened.installed().find((item) => item.key === "team-repo/context")
+        ?.origin,
+    ).toMatchObject({
+      source: catalogPath,
+      scope: "repository",
+      repository: ui.repository,
+    })
+    const originalOutput = await readFile(output, "utf8")
+    expect(originalOutput).toBe("Original Phoenix team / legacy\n")
+    const originalAgents = await readFile(agents, "utf8")
+    await writeFile(kitPath, stringify(definition(true)))
+    await ui.press("TAB")
+    await ui.press("TAB")
+    expect(ui.model.page).toBe(1)
+    await ui.press("r")
+    await ui.go("kit:team-repo/context")
+    expect(ui.frame()).toContain("Source changed")
+    expect(ui.frame()).toContain("saved definition")
+    expect(await readFile(output, "utf8")).toBe(originalOutput)
+    expect(await readFile(agents, "utf8")).toBe(originalAgents)
+    await ui.press(" ")
+    expect(ui.input("question:project").value).toBe("Phoenix team")
+    expect(ui.model.form?.answers.mode).toBe("legacy")
+    expect(
+      ui.model.form?.item.kit.questions.map((question) => question.id),
+    ).toEqual(["project", "mode"])
+    expect(ui.frame()).toContain("Use catalog update")
+    await ui.select("update:team-repo/context")
+    expect(ui.frame()).toContain("Previewing catalog update")
+    expect(ui.input("question:project").value).toBe("Phoenix team")
+    expect(ui.model.form?.answers.mode).toBe("modern")
+    expect(ui.model.form?.scope).toBe("repository")
+    expect(ui.input("question:owner").value).toBe("")
+    await ui.press("ESCAPE")
+    expect(ui.frame()).toContain("Team owner: enter a value")
+    expect(ui.model.form).toBeDefined()
+    expect(await readFile(output, "utf8")).toBe(originalOutput)
+    await ui.answer("owner", "Ada team")
+    await ui.press("ESCAPE")
+    expect(ui.frame()).toContain("Update staged")
+    expect(ui.frame()).toContain("Catalog update staged")
+    expect(await readFile(output, "utf8")).toBe(originalOutput)
+    await ui.press("TAB")
+    expect(ui.frame()).toContain("2 file changes")
+    await ui.go("change:1")
+    expect(ui.frame()).toContain("Updated Phoenix team")
+    await reviewAndApply()
+    const updatedOutput = await readFile(output, "utf8")
+    expect(updatedOutput).toBe("Updated Phoenix team / modern / Ada team\n")
+    expect(
+      ui.model.drift.kits.find((kit) => kit.key === "team-repo/context")
+        ?.status,
+    ).toBe("current")
+    await ui.press("TAB")
+    await ui.press("TAB")
+    const savedState = await readFile(state, "utf8")
+    await writeFile(output, `${updatedOutput}Manual edit.\n`)
+    await ui.press("r")
+    const fileIssue = ui.model
+      .rows()
+      .find((row) => row.fileDrift?.path === output)
+    expect(fileIssue).toBeDefined()
+    await ui.go(fileIssue!.id)
+    expect(ui.frame()).toContain("Managed output drift")
+    expect(ui.frame()).toContain("modified")
+    expect(ui.frame()).toContain("does not repair or overwrite")
+    expect(await readFile(output, "utf8")).toBe(
+      `${updatedOutput}Manual edit.\n`,
+    )
+    expect(await readFile(state, "utf8")).toBe(savedState)
+    await writeFile(output, updatedOutput)
+    await ui.press("r")
+    expect(
+      ui.model.drift.files.every((file) => file.status === "current"),
+    ).toBe(true)
+    await rm(kitPath)
+    await ui.press("r")
+    await ui.go("kit:team-repo/context")
+    expect(ui.frame()).toContain("Kit source unavailable")
+    expect(
+      descendants(ui.setup.renderer.root).some(
+        (node) =>
+          node instanceof TextRenderable &&
+          node.plainText.includes("saved kit is kept"),
+      ),
+    ).toBe(true)
+    expect(await readFile(output, "utf8")).toBe(updatedOutput)
+    await ui.press(" ")
+    expect(ui.input("question:project").value).toBe("Phoenix team")
+    expect(ui.input("question:owner").value).toBe("Ada team")
+    await ui.choose("scope", "none")
+    await ui.press("ESCAPE")
+    await reviewAndApply()
+    expect(await Bun.file(output).exists()).toBe(false)
+    expect(await readFile(agents, "utf8")).toBe("Keep project notes.\n")
+    expect(ui.service.configuration("team-repo/context").scope).toBe("none")
+  }, 15000)
+
+  test("keeps an Installed edit usable when another session uninstalls its kit during a catalog-update refresh", async () => {
+    const ui = await fixture()
+    await ui.openKit()
+    await ui.answer("source", "Saved team")
+    await ui.press("ESCAPE")
+    await ui.press("TAB")
+    await ui.press("TAB")
+    await ui.choose("review-actions", "apply")
+    expect(ui.frame()).toContain("Applied successfully")
+    const agents = join(ui.repository, "AGENTS.md")
+    expect(await readFile(agents, "utf8")).toContain("Team: Saved team")
+    const installed = ui.service
+      .installed()
+      .find((item) => item.key === "fixture/team")!
+    await writeFile(
+      join(dirname(ui.source), "kit.yaml"),
+      stringify({
+        ...installed.kit,
+        description: "Updated catalog definition for this same source.",
+        questions: [
+          ...installed.kit.questions,
+          {
+            id: "owner",
+            type: "input",
+            label: "Catalog owner",
+            default: "Source default",
+          },
+        ],
+      }),
+    )
+    await ui.press("TAB")
+    await ui.press("TAB")
+    await ui.go("kit:fixture/team")
+    expect(ui.frame()).toContain("Source changed")
+    await ui.press(" ")
+    await ui.select("question:source")
+    await ui.setup.mockInput.typeText(" local edit")
+    await ui.press("RETURN")
+    expect(ui.input("question:source").value).toBe("Saved team local edit")
+    expect(ui.frame()).toContain("Use catalog update")
+
+    const other = await LoadoutService.open({
+      home: ui.home,
+      repository: ui.repository,
+    })
+    const item = other
+      .installed()
+      .find((saved) => saved.key === "fixture/team")!
+    await other.apply(await other.plan([{ item, scope: "none", answers: {} }]))
+    expect(await Bun.file(agents).exists()).toBe(false)
+    const stateAfterRemoval = await readFile(
+      join(ui.home, ".loadout/state.json"),
+      "utf8",
+    )
+    await ui.select("update:fixture/team")
+    // Refresh may load the matching available update or explain that only the
+    // saved definition is usable, but it must never strand the in-progress form.
+    expect(ui.model.form).toBeDefined()
+    expect(ui.model.form?.item.key).toBe("fixture/team")
+    expect(ui.model.form?.item.origin?.source).toBe(ui.source)
+    expect(ui.model.form?.scope).toBe("repository")
+    expect(ui.model.form?.answers.source).toBe("Saved team local edit")
+    expect(ui.input("question:source").value).toBe("Saved team local edit")
+    for (const id of ["scope", "question:source", "actions"]) {
+      expect(ui.setup.renderer.root.findDescendantById(id)).toBeDefined()
+    }
+    await ui.go("scope")
+    await ui.press("ARROW_UP")
+    expect(ui.model.selected()?.id).toBe("actions")
+    expect(ui.frame()).toContain("Accept")
+    expect(ui.frame()).toContain("Cancel")
+    await ui.choose("actions", "cancel")
+    expect(ui.model.form).toBeUndefined()
+    expect(ui.model.drafts.size).toBe(0)
+    expect(ui.service.installed()).toEqual([])
+    await ui.press("TAB")
+    expect(ui.model.page).toBe(2)
+    expect(ui.frame()).toContain("No staged changes")
+    expect(await Bun.file(agents).exists()).toBe(false)
+    expect(await readFile(join(ui.home, ".loadout/state.json"), "utf8")).toBe(
+      stateAfterRemoval,
     )
   })
 

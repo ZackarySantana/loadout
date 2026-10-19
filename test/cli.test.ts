@@ -1,8 +1,32 @@
 import { expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { stripVTControlCharacters } from "node:util"
+import { stringify } from "yaml"
+import { LoadoutService } from "../src/backend/service"
+
+let built: Promise<string> | undefined
+function bundle() {
+  return (built ??= (async () => {
+    const checkout = fileURLToPath(new URL("..", import.meta.url))
+    const build = Bun.spawn(["bun", "scripts/build.ts"], {
+      cwd: checkout,
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const [status, stdout, stderr] = await Promise.all([
+      build.exited,
+      new Response(build.stdout).text(),
+      new Response(build.stderr).text(),
+    ])
+    if (status !== 0)
+      throw new Error(`CLI build failed (${status}):\n${stdout}${stderr}`)
+    const path = join(checkout, "dist/cli.js")
+    expect(await Bun.file(path).exists()).toBe(true)
+    return path
+  })())
+}
 
 // The native renderer emits cursor-addressed *diffs*, not whole text frames.
 // Track the small VT subset needed to inspect the actual PTY screen, rather
@@ -87,20 +111,7 @@ function terminalScreen(cols: number, rows: number) {
 }
 
 test("built CLI navigates bundled kits and updates a live answer in a real PTY outside the checkout", async () => {
-  const checkout = fileURLToPath(new URL("..", import.meta.url))
-  const build = Bun.spawn(["bun", "scripts/build.ts"], {
-    cwd: checkout,
-    stdout: "pipe",
-    stderr: "pipe",
-  })
-  const [buildStatus, stdout, stderr] = await Promise.all([
-    build.exited,
-    new Response(build.stdout).text(),
-    new Response(build.stderr).text(),
-  ])
-  if (buildStatus !== 0)
-    throw new Error(`CLI build failed (${buildStatus}):\n${stdout}${stderr}`)
-  expect(await Bun.file(join(checkout, "dist/cli.js")).exists()).toBe(true)
+  const cli = await bundle()
 
   const root = await mkdtemp("/tmp/opencode/loadout-cli-")
   const home = join(root, "home")
@@ -118,7 +129,7 @@ test("built CLI navigates bundled kits and updates a live answer in a real PTY o
       screen.write(chunk)
     },
   })
-  const child = Bun.spawn(["bun", join(checkout, "dist/cli.js")], {
+  const child = Bun.spawn(["bun", cli], {
     cwd: repository,
     env: { ...process.env, HOME: home, TERM: "xterm-256color" },
     terminal,
@@ -219,3 +230,118 @@ test("built CLI navigates bundled kits and updates a live answer in a real PTY o
     await rm(root, { recursive: true, force: true })
   }
 }, 30000)
+
+test("CLI catalog scope follows the repository and status reports source/output drift without writing", async () => {
+  const cli = await bundle()
+  const root = await mkdtemp("/tmp/opencode/loadout-cli-status-")
+  try {
+    const home = join(root, "home"),
+      repository = join(root, "repo-a"),
+      other = join(root, "repo-b")
+    const team = join(repository, "team")
+    await Promise.all(
+      [home, team, other].map((path) => mkdir(path, { recursive: true })),
+    )
+    const source = join(team, "catalog.json"),
+      kitPath = join(team, "context.yaml")
+    const globalSource = join(root, "global.json")
+    const kit = (content: string) => ({
+      id: "context",
+      name: "CLI team context",
+      outputs: [{ type: "file", path: "context.txt", content }],
+    })
+    await writeFile(kitPath, stringify(kit("Baseline team context.\n")))
+    await writeFile(
+      source,
+      JSON.stringify({
+        id: "cli-team",
+        name: "Local CLI team",
+        kits: [
+          { id: "context", name: "CLI team context", source: "context.yaml" },
+        ],
+      }),
+    )
+    await writeFile(
+      globalSource,
+      JSON.stringify({
+        id: "global-team",
+        name: "Global CLI catalog",
+        kits: [],
+      }),
+    )
+    const run = async (args: string[], cwd = repository) => {
+      const proc = Bun.spawn(["bun", cli, ...args], {
+        cwd,
+        env: { ...process.env, HOME: home },
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [code, stdout, stderr] = await Promise.all([
+        proc.exited,
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ])
+      return { code, text: stdout + stderr }
+    }
+    const subscribed = await run(["catalog", "add", source])
+    expect(subscribed.code).toBe(0)
+    expect(subscribed.text).toContain("for repository")
+    const references = join(repository, ".loadout/catalogs.json")
+    expect(JSON.parse(await readFile(references, "utf8"))).toEqual({
+      catalogs: ["team/catalog.json"],
+    })
+    expect((await run(["catalog", "list"])).text).toContain(
+      "Local CLI team (repository)",
+    )
+    const otherCatalogs = await run(["catalog", "list"], other)
+    expect(otherCatalogs.code).toBe(0)
+    expect(otherCatalogs.text).not.toContain("Local CLI team")
+    expect(
+      (await run(["catalog", "add", globalSource, "--scope", "global"])).code,
+    ).toBe(0)
+    expect((await run(["catalog", "list"], other)).text).toContain(
+      "Global CLI catalog (global)",
+    )
+    expect(await Bun.file(join(repository, "context.txt")).exists()).toBe(false)
+    const service = await LoadoutService.open({ home, repository })
+    const item = (await service.catalogs()).catalogs.find(
+      (catalog) => catalog.id === "cli-team",
+    )!.kits[0]!
+    await service.apply(
+      await service.plan([{ item, scope: "repository", answers: {} }]),
+    )
+    const output = join(repository, "context.txt"),
+      state = join(home, ".loadout/state.json")
+    const stateBefore = await readFile(state, "utf8"),
+      refsBefore = await readFile(references, "utf8")
+    const healthy = await run(["status"])
+    expect(healthy.code).toBe(0)
+    expect(healthy.text).toContain("No drift detected.")
+    expect(healthy.text).toContain("1 installed kits; 1 managed files checked.")
+    await writeFile(kitPath, stringify(kit("New upstream context.\n")))
+    await writeFile(output, "Locally edited context.\n")
+    const changed = await run(["status"])
+    expect(changed.code).toBe(1)
+    expect(changed.text).toContain(
+      "Kit cli-team/context [repository] · changed",
+    )
+    expect(changed.text).toContain(`File ${output} · modified`)
+    expect(await readFile(output, "utf8")).toBe("Locally edited context.\n")
+    expect(await readFile(state, "utf8")).toBe(stateBefore)
+    await rm(output)
+    await rm(kitPath)
+    const missing = await run(["status"])
+    expect(missing.code).toBe(1)
+    expect(missing.text).toContain("kit-unavailable")
+    expect(missing.text).toContain(`File ${output} · missing`)
+    expect(await Bun.file(output).exists()).toBe(false)
+    expect(await readFile(state, "utf8")).toBe(stateBefore)
+    expect(await readFile(references, "utf8")).toBe(refsBefore)
+    const reopened = await LoadoutService.open({ home, repository })
+    expect(reopened.installed()[0]?.kit.outputs[0]).toMatchObject({
+      content: "Baseline team context.\n",
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}, 15000)

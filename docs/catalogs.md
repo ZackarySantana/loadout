@@ -26,6 +26,56 @@ Relative sources resolve against the catalog's location, not the shell's working
 
 Each kit is self-contained. Its output text is inline YAML, not another set of source references. See [kit authoring](kits.md) for questions, conditions, interpolation, and outputs. Catalog registration and kit scope are application state; neither belongs in the catalog JSON or kit YAML.
 
+## Share a catalog through a repository
+
+Commit a catalog and its kit files alongside the team's code:
+
+```text
+.loadout/
+  catalog.json
+  kits/
+    team-review.yaml
+```
+
+Loadout discovers `.loadout/catalog.json` in the selected project. Team members see the catalog without registering it for their entire user account. Discovery only makes kits available; each member independently selects and configures the kits they want. Choosing Repository installs a kit in that member's checkout.
+
+The [team catalog example](../examples/team-catalog/) is a complete, copyable example. Use an organization-specific catalog ID, such as `acme-team`, and keep it stable: catalog and kit IDs identify the same logical kit across checkouts.
+
+For catalogs elsewhere in the checkout, commit a `.loadout/catalogs.json` subscription file:
+
+```json
+{
+  "catalogs": [
+    "tools/agent-context/catalog.json",
+    "https://example.com/team/catalog.json"
+  ]
+}
+```
+
+This file contains only `catalogs`, an array of source strings. Local references resolve relative to the **repository root**, remain inside that checkout, and are stored as relative paths so teammates can clone into different directories. HTTPS references are also supported. Kit references inside each catalog still resolve relative to that catalog, as described above.
+
+Register another project subscription with:
+
+```sh
+loadout catalog add tools/agent-context/catalog.json --scope repository
+```
+
+Repository is the default subscription scope. Use `--scope global` for a catalog you want available in all your projects. Catalog subscription scope controls **availability**, not installation: subscribing does not install any kit, and each kit still has its own Repository / Global / Both choice.
+
+Repository subscription changes edit `.loadout/catalogs.json`, which is intended to be shared through Git. Review that file before committing it. Do not commit credentials in source URLs; keep private user-specific references in global subscriptions instead.
+
+Loadout refuses to replace the subscription file if it detects an editor or Git changing it during registration. Retry after reconciling the file. An interrupted registration can leave `.loadout/catalogs.json.lock`; verify that no Loadout writer is running before removing that specific lock. The lock and temporary replacement files are local working files, not catalog data to commit.
+
+## Missing sources and drift
+
+Subscriptions read live catalog and kit files, not imported copies. Installed kits retain their saved definition and answers so that a missing catalog, removed kit, invalid YAML, or temporary network failure does not uninstall or silently change existing files. One unavailable kit does not hide healthy kits from the same catalog.
+
+Loadout reports changes between an installed snapshot and its current catalog definition. Updating is explicit: choose the catalog update, review compatible saved answers and any new questions, then use Review and Apply changes. Until then, the saved installation stays in effect. Source disappearance is a warning, not permission to delete installed files.
+
+`loadout status` also reports modified, missing, unreadable, or unsafe managed output paths. Changes to user text **outside** managed instruction blocks are preserved and do not count as managed-content drift. Status inspection does not repair or overwrite files; output conflicts still block apply. Resolve those edits deliberately before retrying.
+
+Drift compares current content to saved snapshots. It does not introduce catalog versions, revision histories, or automatic upgrades.
+
 ## Bundled content and attribution
 
 The first-party `greenfield`, `no-em-dash`, `dont-commit`, `codex-cli`, `claude-cli`, `opencode-cli`, and `write-kit` kits are adapted from Loadout v1's `kits/loadout/` and `kits/loadout-agent-clis/` directories, copyright 2026 Loadout contributors, under the [MIT license](../LICENSE). The license is copied unchanged from v1.

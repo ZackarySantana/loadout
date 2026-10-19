@@ -10,6 +10,9 @@ import {
   type Scope,
 } from "../domain/kit"
 import type { LoadoutService, Plan, Selection } from "../backend/service"
+import type { DriftReport, FileDrift, KitDrift } from "../backend/service"
+import { canonical } from "../domain/content"
+import { answersForUpdate } from "./answers"
 
 export const pages = ["Catalogs", "Installed", "Review"] as const
 export interface RowChoice {
@@ -32,6 +35,9 @@ export interface Row {
     | "register"
     | "source"
     | "change"
+    | "health"
+    | "drift-file"
+    | "update"
   indent?: boolean
   item?: LoadedKit
   scope?: Scope
@@ -41,11 +47,16 @@ export interface Row {
   choices?: RowChoice[]
   focusedOptionIndex?: number
   changeIndex?: number
+  fromCatalog?: boolean
+  sourceDrift?: KitDrift
+  updateStaged?: boolean
+  fileDrift?: FileDrift
 }
 interface Form {
   item: LoadedKit
   scope: Scope
   answers: Answers
+  fromCatalog?: boolean
 }
 export type Backend = Pick<
   LoadoutService,
@@ -58,6 +69,7 @@ export type Backend = Pick<
   | "apply"
   | "register"
   | "refresh"
+  | "status"
 >
 
 export class ScreenModel {
@@ -66,6 +78,7 @@ export class ScreenModel {
   catalog?: Catalog
   catalogs: Catalog[] = []
   errors: string[] = []
+  drift: DriftReport = { kits: [], files: [] }
   drafts = new Map<string, Selection>()
   form?: Form
   plan?: Plan
@@ -75,6 +88,7 @@ export class ScreenModel {
   editing?: { kind: "catalog" } | { kind: "question"; id: string }
   registering = false
   source = ""
+  registrationScope: "repository" | "global" = "repository"
   private optionFocus = new Map<string, number>()
   private listeners = new Set<() => void>()
 
@@ -89,12 +103,98 @@ export class ScreenModel {
     for (const listener of this.listeners) listener()
   }
   async initialize(): Promise<void> {
-    await this.backend.refresh()
-    const { catalogs, errors } = await this.backend.catalogs()
+    await this.loadStatus()
+    this.message = this.issueCount()
+      ? "Catalog or output drift found. Installed shows details; saved kits are kept."
+      : "Choose a catalog. Repository catalogs are discovered from this project."
+    this.changed()
+  }
+  private async loadStatus(): Promise<void> {
+    const { catalogs, errors, drift } = await this.backend.status()
     this.catalogs = catalogs
     this.errors = errors
-    if (errors.length) this.message = `Catalog warning: ${errors.join("; ")}`
-    this.changed()
+    this.drift = drift
+    if (this.catalog)
+      this.catalog = catalogs.find(
+        (catalog) =>
+          catalog.id === this.catalog!.id &&
+          catalog.source === this.catalog!.source,
+      )
+  }
+  issueCount(): number {
+    return (
+      this.errors.length +
+      this.drift.kits.filter((kit) => kit.status !== "current").length +
+      this.drift.files.filter((file) => file.status !== "current").length
+    )
+  }
+  sourceDrift(key: string): KitDrift | undefined {
+    return this.drift.kits.find((kit) => kit.key === key)
+  }
+  updateStaged(key: string): boolean {
+    const draft = this.drafts.get(key)
+    const saved = this.backend.installed().find((item) => item.key === key)
+    return (
+      !!draft &&
+      draft.scope !== "none" &&
+      !!saved &&
+      (canonical(draft.item.kit) !== canonical(saved.kit) ||
+        canonical(draft.item.origin) !== canonical(saved.origin))
+    )
+  }
+  canUpdate(item: LoadedKit): boolean {
+    const latest = this.updateSource(item)
+    return (
+      !!latest &&
+      canonical(item.kit) !== canonical(latest.kit) &&
+      (!item.origin || item.origin.source === latest.origin?.source)
+    )
+  }
+  private updateSource(item: LoadedKit): LoadedKit | undefined {
+    const drift = this.sourceDrift(item.key)
+    // An installed snapshot's drift report is authoritative, including missing sources.
+    if (drift) return drift.latest
+    const origin = item.origin
+    if (
+      !origin ||
+      (origin.scope === "repository" &&
+        origin.repository !== this.backend.repository)
+    )
+      return undefined
+    // A concurrent uninstall removes the drift entry, not necessarily the source.
+    // Never resolve a same-ID kit from a different catalog or repository instead.
+    const latest = this.catalogs
+      .find(
+        (catalog) =>
+          catalog.source === origin.source &&
+          catalog.id === (origin.catalogId ?? item.key.split("/")[0]),
+      )
+      ?.kits.find((candidate) => candidate.key === item.key)
+    return latest ? { ...latest, origin } : undefined
+  }
+  async refreshStatus(): Promise<void> {
+    if (this.busy) return
+    if (this.form || this.registering) {
+      this.message = "Accept or cancel the open form before refreshing sources."
+      this.changed()
+      return
+    }
+    const selected = this.selected()?.id
+    await this.run(async () => {
+      await this.loadStatus()
+      this.plan = undefined
+      if (this.page === 2 && this.drafts.size) {
+        this.optionFocus.delete("review-actions")
+        this.plan = await this.backend.plan([...this.drafts.values()])
+      }
+      this.cursor = Math.max(
+        0,
+        this.rows().findIndex((row) => row.id === selected),
+      )
+      this.message = this.issueCount()
+        ? "Source or output drift found. Installed shows details. No files changed."
+        : "Catalogs and managed files checked. No drift detected."
+    })
   }
 
   configuration(item: LoadedKit): { scope: Scope; answers?: Answers } {
@@ -103,9 +203,13 @@ export class ScreenModel {
       ? { scope: draft.scope, answers: draft.answers }
       : this.backend.configuration(item.key)
   }
-  private kitRows(items: LoadedKit[]): Row[] {
+  private kitRows(items: LoadedKit[], fromCatalog = false): Row[] {
     const rows: Row[] = []
-    for (const item of items) {
+    const inventory = new Map(items.map((item) => [item.key, item]))
+    // Keep the working copy visible even if status removes/replaces its source
+    // or installation. Only Accept or explicit Cancel ends the form's lifetime.
+    if (this.form) inventory.set(this.form.item.key, this.form.item)
+    for (const item of inventory.values()) {
       const config = this.configuration(item)
       rows.push({
         id: `kit:${item.key}`,
@@ -114,6 +218,12 @@ export class ScreenModel {
         item,
         scope: config.scope,
         staged: this.drafts.has(item.key),
+        fromCatalog:
+          this.form?.item.key === item.key
+            ? this.form.fromCatalog
+            : fromCatalog,
+        sourceDrift: this.sourceDrift(item.key),
+        updateStaged: this.updateStaged(item.key),
       })
       if (this.form?.item.key === item.key)
         rows.push(...this.formRows(this.form))
@@ -161,6 +271,14 @@ export class ScreenModel {
         item: form.item,
       },
     ]
+    if (form.scope !== "none" && this.canUpdate(form.item))
+      rows.push({
+        id: `update:${form.item.key}`,
+        kind: "update",
+        label: "Use catalog update",
+        indent: true,
+        item: form.item,
+      })
     if (form.scope !== "none")
       for (const question of form.item.kit.questions) {
         if (!matches(question.when, visible)) continue
@@ -223,25 +341,75 @@ export class ScreenModel {
 
   rows(): Row[] {
     if (this.page === 0) {
-      if (this.catalog) return this.kitRows(this.catalog.kits)
+      if (this.catalog) {
+        const rows: Row[] = [
+          ...this.kitRows(this.catalog.kits, true),
+          ...(this.catalog.unavailableKits ?? []).map((kit): Row => ({
+            id: `unavailable:${kit.key}`,
+            kind: "heading",
+            label: `! ${kit.name}: ${kit.reason}`,
+            catalog: this.catalog,
+          })),
+        ]
+        if (!rows.length)
+          rows.push({
+            id: "empty-catalog",
+            kind: "heading",
+            label:
+              "This catalog has no available kits. Saved installations remain in Installed.",
+            catalog: this.catalog,
+          })
+        return rows
+      }
+      if (this.form) return this.kitRows([], this.form.fromCatalog)
       const rows: Row[] = this.catalogs.map((catalog) => ({
         id: `catalog:${catalog.id}`,
         kind: "catalog",
-        label: `${catalog.permanent ? "◆" : "◇"} ${catalog.name}  ·  ${catalog.kits.length} kits${catalog.permanent ? "  ·  built-in" : ""}`,
+        label: `${catalog.permanent ? "◆" : "◇"} ${catalog.name}  ·  ${catalog.kits.length} kits${catalog.permanent ? "  ·  built-in" : `  ·  ${catalog.subscriptionScope === "both" ? "repository + global" : (catalog.subscriptionScope ?? "global")}`}`,
         catalog,
       }))
+      if (this.issueCount())
+        rows.push({
+          id: "health",
+          kind: "health",
+          label: `! Source and output status · ${this.issueCount()} issues`,
+        })
       rows.push({
         id: "register",
         kind: "register",
         label: "+ Register a catalog",
       })
-      if (this.registering)
+      if (this.registering) {
+        rows.push({
+          id: "catalog-scope",
+          kind: "scope",
+          label: "Catalog available in",
+          indent: true,
+          choices: [
+            {
+              value: "repository",
+              label: "Repository",
+              selected: this.registrationScope === "repository",
+              description:
+                "Share a live source reference through this project's .loadout/catalogs.json. No kits are installed.",
+            },
+            {
+              value: "global",
+              label: "Global",
+              selected: this.registrationScope === "global",
+              description:
+                "Make this source available in all your projects. No kits are installed.",
+            },
+          ],
+          focusedOptionIndex: this.optionFocus.get("catalog-scope") ?? 0,
+        })
         rows.push({
           id: "source",
           kind: "source",
           label: "Catalog JSON path or HTTPS URL",
           indent: true,
         })
+      }
       return rows
     }
     if (this.page === 1) {
@@ -250,7 +418,26 @@ export class ScreenModel {
       )
       for (const draft of this.drafts.values())
         items.set(draft.item.key, draft.item)
-      return this.kitRows([...items.values()])
+      const issues: Row[] = this.issueCount()
+        ? [
+            {
+              id: "health",
+              kind: "health",
+              label: `! Source and output status · ${this.issueCount()} issues`,
+            },
+          ]
+        : []
+      issues.push(
+        ...this.drift.files
+          .filter((file) => file.status !== "current")
+          .map((file, index): Row => ({
+            id: `drift-file:${index}`,
+            kind: "drift-file",
+            label: `! ${file.status} · ${this.displayPath(file.path)}`,
+            fileDrift: file,
+          })),
+      )
+      return [...issues, ...this.kitRows([...items.values()])]
     }
     if (!this.plan)
       return [
@@ -305,14 +492,15 @@ export class ScreenModel {
     return this.rows()[this.cursor]
   }
   move(delta: number): void {
-    if (this.busy || this.editing?.kind === "catalog") return
+    if (this.busy) return
     this.editing = undefined
     const rows = this.rows()
     // An open kit becomes its own navigation loop, not part of the outer list.
     const focusable = rows.flatMap((row, index) =>
       row.kind !== "heading" &&
       (!this.form ||
-        (row.item?.key === this.form.item.key && row.kind !== "kit"))
+        (row.item?.key === this.form.item.key && row.kind !== "kit")) &&
+      (!this.registering || row.id === "catalog-scope" || row.kind === "source")
         ? [index]
         : [],
     )
@@ -329,6 +517,7 @@ export class ScreenModel {
     const focused = rows[this.cursor]
     if (focused?.kind === "input" && focused.question)
       this.editing = { kind: "question", id: focused.question.id }
+    else if (focused?.kind === "source") this.editing = { kind: "catalog" }
     this.changed()
   }
   moveOption(delta: number): void {
@@ -352,12 +541,12 @@ export class ScreenModel {
       this.changed()
       return
     }
-    this.page = (this.page + (backward ? 2 : 1)) % pages.length
+    this.page = (this.page + (backward ? pages.length - 1 : 1)) % pages.length
     this.cursor = 0
     if (this.page === 2) await this.review()
     else
       await this.run(async () => {
-        await this.backend.refresh()
+        await this.loadStatus()
       })
   }
   async review(): Promise<void> {
@@ -369,6 +558,7 @@ export class ScreenModel {
       return
     }
     await this.run(async () => {
+      await this.loadStatus()
       this.plan = await this.backend.plan([...this.drafts.values()])
       this.message =
         "Reviewing does not write. Choose Apply changes, then Space writes all listed files and saves intent."
@@ -436,13 +626,21 @@ export class ScreenModel {
   async finishInput(): Promise<void> {
     if (this.editing?.kind === "catalog") {
       await this.run(async () => {
-        await this.backend.register(this.source.trim())
+        const catalog = await this.backend.register(
+          this.source.trim(),
+          this.registrationScope,
+        )
         this.registering = false
         this.editing = undefined
         this.source = ""
         await this.initialize()
-        this.cursor = this.catalogs.length - 1
-        this.message = "Catalog registered. Space to browse its kits."
+        this.cursor = Math.max(
+          0,
+          this.catalogs.findIndex(
+            (item) => item.id === catalog.id && item.source === catalog.source,
+          ),
+        )
+        this.message = `Catalog subscribed for ${this.registrationScope}. No kit files were installed.`
       })
     } else {
       this.editing = undefined
@@ -467,12 +665,17 @@ export class ScreenModel {
       this.form = {
         item: row.item,
         scope: config.scope === "none" ? "repository" : config.scope,
-        answers: { ...defaults(row.item.kit), ...config.answers },
+        answers: answersForUpdate(row.item.kit, config.answers ?? {}).answers,
+        fromCatalog: row.fromCatalog,
       }
       this.optionFocus.clear()
       this.cursor = this.rows().findIndex((row) => row.id === "scope")
       this.message =
         "↑↓/jk questions · ←→/hl options · Space selects/toggles · Esc accepts · Cancel discards"
+    } else if (row.id === "catalog-scope") {
+      this.optionFocus.set(row.id, row.focusedOptionIndex ?? 0)
+      this.registrationScope = row.choices![row.focusedOptionIndex ?? 0]!
+        .value as "repository" | "global"
     } else if (row.kind === "scope" && this.form) {
       this.optionFocus.set(row.id, row.focusedOptionIndex ?? 0)
       this.form.scope = row.choices![row.focusedOptionIndex ?? 0]!
@@ -490,17 +693,50 @@ export class ScreenModel {
     } else if (row.kind === "input")
       this.editing = { kind: "question", id: row.question!.id }
     else if (row.kind === "source") this.editing = { kind: "catalog" }
-    else if (row.kind === "actions" && this.form) {
+    else if (row.kind === "update" && this.form) {
+      const key = this.form.item.key
+      await this.run(async () => {
+        await this.loadStatus()
+        const removed = !this.backend
+          .installed()
+          .some((item) => item.key === key)
+        const latest = this.updateSource(this.form!.item)
+        if (!latest)
+          throw new Error(
+            removed
+              ? "This kit was uninstalled in another session, and its original source cannot be resolved here. Your current answers are kept; accept the saved kit or choose Cancel."
+              : "The source is unavailable. The saved kit is still usable; no update was staged.",
+          )
+        const reconciled = answersForUpdate(latest.kit, this.form!.answers)
+        this.form!.item = latest
+        this.form!.answers = reconciled.answers
+        this.form!.fromCatalog = true
+        this.optionFocus.clear()
+        this.cursor = this.rows().findIndex((item) => item.id === "scope")
+        this.message =
+          (removed
+            ? "This kit was uninstalled in another session. Nothing is reinstalled until Accept, Review, and Apply changes. "
+            : "") +
+          (reconciled.reset.length || reconciled.removed
+            ? "Catalog update loaded. Review new or reset answers, then accept and review changes."
+            : "Catalog update loaded with compatible saved answers. Accept, then Review to apply.")
+      })
+    } else if (row.kind === "actions" && this.form) {
       if (row.choices![row.focusedOptionIndex ?? 0]!.value === "cancel") {
         this.cancelForm()
       } else this.acceptForm()
       return
     } else if (row.kind === "register") {
       this.registering = true
-      this.editing = { kind: "catalog" }
+      this.editing = undefined
+      this.registrationScope = "repository"
+      this.optionFocus.delete("catalog-scope")
       this.cursor += 1
       this.message =
-        "Enter a local catalog.json path or HTTPS URL, then press Enter."
+        "Choose catalog availability, then enter its path or HTTPS URL. Enter subscribes; no kit is installed."
+    } else if (row.kind === "health") {
+      this.page = 1
+      this.cursor = 0
     } else if (row.id === "review-actions" && this.plan) {
       if (row.choices![row.focusedOptionIndex ?? 1]!.value === "edit") {
         this.page = 1
@@ -521,6 +757,7 @@ export class ScreenModel {
           this.drafts.clear()
           this.plan = undefined
           this.cursor = 0
+          await this.loadStatus()
           this.message =
             "Applied successfully. Your installation intent is saved."
         })
@@ -537,7 +774,17 @@ export class ScreenModel {
     } catch (error) {
       this.message = error instanceof Error ? error.message : String(error)
       this.plan = undefined
-      this.cursor = 0
+      this.cursor = this.form
+        ? Math.max(
+            0,
+            this.rows().findIndex((row) => row.id === "scope"),
+          )
+        : this.registering
+          ? Math.max(
+              0,
+              this.rows().findIndex((row) => row.kind === "source"),
+            )
+          : 0
     } finally {
       this.busy = false
       this.changed()

@@ -1,0 +1,13 @@
+{
+  "id": "acme-team",
+  "name": "Acme team",
+  "description": "Shared review guidance maintained alongside the project.",
+  "kits": [
+    {
+      "id": "team-review",
+      "name": "Team review",
+      "description": "A shared review skill with configurable focus areas.",
+      "source": "kits/team-review.yaml"
+    }
+  ]
+}

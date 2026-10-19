@@ -8,12 +8,21 @@ import { LoadoutService } from "./backend/service"
 import { ScreenModel } from "./frontend/model"
 import { App } from "./frontend/App"
 
+const plain = (value: string) =>
+  value.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
+function catalogScope(value: string | undefined): "repository" | "global" {
+  if (value === undefined || value === "repository") return "repository"
+  if (value === "global") return "global"
+  throw new Error("Catalog scope must be repository or global")
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
     allowPositionals: true,
     options: {
       repo: { type: "string" },
+      scope: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   })
@@ -22,20 +31,45 @@ async function main() {
 
 Usage: loadout [--repo <project>]
        loadout catalog list
-       loadout catalog add <catalog.json path or HTTPS URL>
-       loadout catalog remove <registered source>
+       loadout catalog add <catalog.json path or HTTPS URL> [--scope repository|global]
+       loadout catalog remove <registered source> [--scope repository|global]
+       loadout status
 
 Tab switches pages. Up/Down or j/k navigate; Left/Right or h/l navigate options.
 Text questions start editing on focus; Vim keys then type normally.
-Space selects. Esc goes back. Press q twice to exit.
+Space selects. Esc accepts an open kit; otherwise it goes back. Press q twice to exit.
 Kit changes are written only after review and explicit confirmation.
-Catalog registration updates Loadout's registry immediately.`)
+Repository catalog subscriptions are shared through .loadout/catalogs.json.
+.loadout/catalog.json is discovered automatically. Catalog registration installs no kits.
+Status is read-only; a nonzero exit code means drift or catalog issues were found.`)
     return
   }
   const service = await LoadoutService.open({
     home: homedir(),
     repository: resolve(values.repo ?? process.cwd()),
   })
+  if (positionals[0] === "status" && positionals.length === 1) {
+    if (values.scope)
+      throw new Error("--scope applies only to catalog add/remove")
+    const { drift, errors } = await service.status()
+    const kits = drift.kits.filter((kit) => kit.status !== "current")
+    const files = drift.files.filter((file) => file.status !== "current")
+    if (!kits.length && !files.length && !errors.length)
+      console.log("No drift detected.")
+    for (const kit of kits)
+      console.log(
+        plain(`Kit ${kit.key} [${kit.scope}] · ${kit.status}\n  ${kit.reason}`),
+      )
+    for (const file of files)
+      console.log(plain(`File ${file.path} · ${file.status}\n  ${file.reason}`))
+    for (const error of errors)
+      console.error(plain(`Catalog warning: ${error}`))
+    console.log(
+      `${drift.kits.length} installed kits; ${drift.files.length} managed files checked.`,
+    )
+    if (kits.length || files.length || errors.length) process.exitCode = 1
+    return
+  }
   if (positionals.length) {
     if (positionals[0] !== "catalog")
       throw new Error("Unknown command. Use --help for usage.")
@@ -44,28 +78,41 @@ Catalog registration updates Loadout's registry immediately.`)
       positionals[2] &&
       positionals.length === 3
     ) {
-      const catalog = await service.register(positionals[2])
-      console.log(`Registered ${catalog.name} (${catalog.kits.length} kits)`)
+      const scope = catalogScope(values.scope)
+      const catalog = await service.register(positionals[2], scope)
+      console.log(
+        plain(
+          `Subscribed to ${catalog.name} for ${scope} (${catalog.kits.length} available kits)`,
+        ),
+      )
+      for (const issue of catalog.issues ?? [])
+        console.error(plain(`Catalog warning: ${issue}`))
     } else if (
       positionals[1] === "remove" &&
       positionals[2] &&
       positionals.length === 3
     ) {
-      await service.unregister(positionals[2])
+      await service.unregister(positionals[2], catalogScope(values.scope))
       console.log("Catalog unregistered. Installed kit snapshots are retained.")
     } else if (positionals[1] === "list" && positionals.length === 2) {
+      if (values.scope)
+        throw new Error("--scope applies only to catalog add/remove")
       const { catalogs, errors } = await service.catalogs()
       for (const catalog of catalogs)
         console.log(
-          `${catalog.name}${catalog.permanent ? " (built-in)" : ""}\n  ${catalog.source}`,
+          plain(
+            `${catalog.name} (${catalog.permanent ? "built-in" : catalog.subscriptionScope === "both" ? "repository + global" : (catalog.subscriptionScope ?? "global")})\n  ${catalog.source}`,
+          ),
         )
-      for (const error of errors) console.error(error)
+      for (const error of errors) console.error(plain(error))
     } else
       throw new Error(
         "Use: loadout catalog list | add <source> | remove <source>",
       )
     return
   }
+  if (values.scope)
+    throw new Error("--scope applies only to catalog add/remove")
   if (!process.stdin.isTTY || !process.stdout.isTTY)
     throw new Error(
       "The TUI requires an interactive terminal. Use --help for CLI commands.",
