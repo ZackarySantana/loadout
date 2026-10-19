@@ -9,20 +9,13 @@ import {
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import type { ScrollBoxRenderable } from "@opentui/core"
 import { diffLines } from "diff"
-import { activeAnswers, interpolate, matches } from "../domain/kit"
 import { pages, ScreenModel, type Row } from "./model"
-
-const color = {
-  background: "#101a16",
-  panel: "#17241e",
-  text: "#e1eadc",
-  muted: "#a1b49f",
-  sage: "#bbd4a4",
-  border: "#526c55",
-  selected: "#344d38",
-  warning: "#e0cb8e",
-}
-const safeText = (text: string) => text.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")
+import { KitPreview } from "./KitPreview"
+import { CatalogPreview } from "./CatalogPreview"
+import { theme as color, scopeColor } from "./theme"
+import type { Scope } from "../domain/kit"
+const safeText = (text: string) =>
+  text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
 
 function details(
   model: ScreenModel,
@@ -31,44 +24,9 @@ function details(
   if (row?.catalog)
     return {
       title: row.catalog.name,
-      body: `${row.catalog.description}\n\n${row.catalog.permanent ? "Built into Loadout. Always available." : row.catalog.source}\n\nKITS\n\n${row.catalog.kits.map(({ kit }) => `${kit.name}\n${kit.description}`).join("\n\n")}\n\nSpace to browse this catalog.`,
+      body: "",
     }
-  if (row?.item) {
-    const { kit, key } = row.item
-    const rawAnswers =
-      model.form?.item.key === key
-        ? model.form.answers
-        : model.configuration(row.item).answers
-    const answers = rawAnswers ? activeAnswers(kit, rawAnswers) : undefined
-    const contributions = kit.outputs.map((output) => {
-      const enabled = answers ? matches(output.when, answers) : true
-      const content =
-        output.type === "skill"
-          ? Object.entries(output.files)
-              .map(([name, text]) => `${name}\n${text}`)
-              .join("\n\n")
-          : output.content
-      let preview = content
-      if (answers) {
-        try {
-          preview = interpolate(content, answers)
-        } catch {
-          /* Show placeholders until required answers exist. */
-        }
-      }
-      const destination =
-        output.type === "instructions"
-          ? output.targets.join(" + ")
-          : output.type === "skill"
-            ? `Skill: ${output.name}`
-            : output.path
-      return `${destination}${!enabled ? " (not included)" : output.when ? " (conditional)" : ""}\n${preview}`
-    })
-    return {
-      title: kit.name,
-      body: `${kit.description}\n\n${key}\nScope: ${model.form?.item.key === key ? model.form.scope : model.configuration(row.item).scope}\n\nCONTRIBUTIONS\n\n${contributions.join("\n\n────────────────\n\n")}\n\nBoth retains project intent while using only the global copy. Removing global restores all known project copies.`,
-    }
-  }
+  if (row?.item) return { title: row.item.kit.name, body: "" }
   if (row?.kind === "change" && model.plan && row.changeIndex !== undefined) {
     const change = model.plan.changes[row.changeIndex]!
     return {
@@ -120,6 +78,26 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
     revision()
     return details(model, rows()[active()])
   })
+  const kitSelection = createMemo(() => {
+    revision()
+    const item = rows()[active()]?.item
+    if (!item) return undefined
+    const config = model.configuration(item)
+    const form = model.form?.item.key === item.key ? model.form : undefined
+    return {
+      item,
+      answers: form?.answers ?? config.answers,
+      scope: form?.scope ?? config.scope,
+    }
+  })
+  const catalogSelection = createMemo(() => rows()[active()]?.catalog)
+  const previewIdentity = createMemo(() => {
+    const row = rows()[active()]
+    if (row?.item) return `kit:${row.item.key}`
+    if (row?.catalog) return `catalog:${row.catalog.id}`
+    if (row?.kind === "change") return `change:${row.changeIndex}`
+    return `page:${model.page}`
+  })
   const editing = createMemo(() => {
     revision()
     return model.editing
@@ -152,25 +130,45 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
   const status = createMemo(() => {
     revision()
     return exitPrompt()
-      ? "Discard unapplied selections and exit?  Space exit · Esc stay"
+      ? "Exit Loadout? Unapplied selections will be discarded.  q exit · Esc stay"
       : `${model.busy ? "Working… " : ""}${safeText(model.message)}`
   })
   let list: ScrollBoxRenderable | undefined
   let info: ScrollBoxRenderable | undefined
   createEffect(() => {
-    const id = rows()[active()]?.id
+    const row = rows()[active()]
+    const id = row?.choices
+      ? `${row.id}:option:${row.focusedOptionIndex ?? 0}`
+      : row?.id
+    dimensions()
     if (id)
       queueMicrotask(() => {
         if (list && !list.isDestroyed) list.scrollChildIntoView(id)
       })
   })
   createEffect(() => {
-    preview()
+    // Keep the current contribution visible while its answers update live.
+    // Reset only when navigating to a different kit, catalog, or changed file.
+    previewIdentity()
     info?.scrollTo(0)
   })
   const exit = () => {
-    if (model.drafts.size || model.form) setExitPrompt(true)
-    else props.onExit()
+    setExitPrompt(true)
+  }
+  const rowColor = (row: Row, focused: boolean): string => {
+    if (row.kind === "heading") return color.muted
+    if (row.kind === "register" || row.kind === "source") return color.file
+    if (row.kind === "save" || row.kind === "apply" || row.kind === "confirm")
+      return color.sage
+    if (row.kind === "change" && row.changeIndex !== undefined) {
+      const change = model.plan?.changes[row.changeIndex]
+      return change?.after === null
+        ? color.removed
+        : change?.before === null
+          ? color.sage
+          : color.file
+    }
+    return focused ? color.sage : color.text
   }
 
   useKeyboard((key) => {
@@ -181,7 +179,7 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
     }
     if (exitPrompt()) {
       key.preventDefault()
-      if (key.name === "space" || key.sequence === " ") props.onExit()
+      if (key.name === "q" && !key.ctrl && !key.meta) props.onExit()
       else if (key.name === "escape") setExitPrompt(false)
       return
     }
@@ -211,7 +209,10 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
       key.name === "return"
     )
       void model.activate()
-    else if (key.name === "left") model.back()
+    else if (key.name === "left") {
+      if (model.selected()?.choices) model.moveOption(-1)
+      else if (!model.form) model.back()
+    } else if (key.name === "right") model.moveOption(1)
     else if (key.name === "pageup")
       info?.scrollBy(-Math.max(1, dimensions().height - 8))
     else if (key.name === "pagedown")
@@ -248,7 +249,7 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
           )}
         </Index>
         <Show when={draftCount() || dimensions().width >= 90}>
-          <text fg={color.muted}>
+          <text fg={draftCount() ? color.warning : color.muted}>
             {draftCount()
               ? `${draftCount()} staged`
               : "agent context, composed"}
@@ -293,14 +294,79 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
                   <text
                     wrapMode="word"
                     flexShrink={0}
-                    fg={
-                      row().kind === "heading"
-                        ? color.muted
-                        : index === active()
-                          ? color.sage
-                          : color.text
-                    }
-                  >{`${index === active() ? "›" : " "} ${safeText(row().label)}`}</text>
+                    fg={rowColor(row(), index === active())}
+                  >
+                    <Show
+                      when={row().kind === "kit" && row().item}
+                      fallback={`${index === active() ? "›" : " "} ${safeText(row().label)}`}
+                    >
+                      {(item) => (
+                        <span>
+                          {`${index === active() ? "›" : " "} ${row().scope === "none" ? "○" : "●"} ${safeText(item().kit.name)}  `}
+                          <Show when={row().scope !== "none"}>
+                            <span
+                              style={{ fg: scopeColor(row().scope ?? "none") }}
+                            >{`[${row().scope}]`}</span>
+                          </Show>
+                          <Show when={row().staged}>
+                            <span style={{ fg: color.warning }}> *</span>
+                          </Show>
+                        </span>
+                      )}
+                    </Show>
+                  </text>
+                  <Show when={row().choices}>
+                    <box
+                      flexDirection="row"
+                      flexWrap="wrap"
+                      paddingLeft={2}
+                      gap={1}
+                    >
+                      <Index each={row().choices}>
+                        {(choice, optionIndex) => (
+                          <text
+                            id={`${row().id}:option:${optionIndex}`}
+                            flexShrink={0}
+                            maxWidth="100%"
+                            wrapMode="word"
+                            bg={
+                              index === active() &&
+                              optionIndex === row().focusedOptionIndex
+                                ? color.optionFocus
+                                : index === active()
+                                  ? color.selected
+                                  : color.panel
+                            }
+                            fg={
+                              row().kind === "scope"
+                                ? scopeColor(choice().value as Scope)
+                                : choice().selected
+                                  ? color.sage
+                                  : color.text
+                            }
+                          >
+                            {` ${
+                              row().question?.type === "multi-select"
+                                ? choice().selected
+                                  ? "☑"
+                                  : "☐"
+                                : choice().selected
+                                  ? "◉"
+                                  : "○"
+                            } ${safeText(choice().label)} `}
+                          </text>
+                        )}
+                      </Index>
+                    </box>
+                    <Show when={row().kind === "scope"}>
+                      <text fg={color.muted} wrapMode="word" paddingLeft={2}>
+                        {
+                          row().choices?.[row().focusedOptionIndex ?? 0]
+                            ?.description
+                        }
+                      </text>
+                    </Show>
+                  </Show>
                   <Show when={isEditing(row())}>
                     <input
                       focused
@@ -336,9 +402,11 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
           flexDirection="column"
           paddingX={1}
         >
-          <text fg={color.sage} flexShrink={0}>
-            {safeText(preview().title)}
-          </text>
+          <Show when={!kitSelection()}>
+            <text fg={color.sage} flexShrink={0}>
+              {safeText(preview().title)}
+            </text>
+          </Show>
           <scrollbox
             ref={info}
             flexGrow={1}
@@ -346,9 +414,29 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
             scrollX={false}
             contentOptions={{ flexDirection: "column" }}
           >
-            <text fg={color.text} wrapMode="word">
-              {safeText(preview().body)}
-            </text>
+            <Show
+              when={kitSelection()}
+              fallback={
+                <Show
+                  when={catalogSelection()}
+                  fallback={
+                    <text fg={color.text} wrapMode="word">
+                      {safeText(preview().body)}
+                    </text>
+                  }
+                >
+                  {(catalog) => <CatalogPreview catalog={catalog()} />}
+                </Show>
+              }
+            >
+              {(selection) => (
+                <KitPreview
+                  item={selection().item}
+                  answers={selection().answers}
+                  scope={selection().scope}
+                />
+              )}
+            </Show>
           </scrollbox>
         </box>
       </box>
@@ -363,7 +451,7 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
       <text wrapMode="word" flexShrink={0} fg={color.sage}>
         {editing()
           ? "Type an answer · Enter finish · Esc stop editing · Tab pages"
-          : "↑↓ navigate · Space select · Tab pages · Esc back · PgUp/PgDn details · q quit"}
+          : "↑↓ rows · ←→ options · Space select/toggle · Tab pages · Esc back · PgUp/PgDn details · q q quit"}
       </text>
     </box>
   )

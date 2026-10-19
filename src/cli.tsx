@@ -25,7 +25,8 @@ Usage: loadout [--repo <project>]
        loadout catalog add <catalog.json path or HTTPS URL>
        loadout catalog remove <registered source>
 
-Tab switches pages. Arrows navigate. Space selects. Esc goes back.
+Tab switches pages. Up/Down navigate questions; Left/Right navigate options.
+Space selects. Esc goes back. Press q twice to exit.
 Kit changes are written only after review and explicit confirmation.
 Catalog registration updates Loadout's registry immediately.`)
     return

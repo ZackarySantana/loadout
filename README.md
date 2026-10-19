@@ -25,14 +25,16 @@ Dependencies are local to the project. OpenTUI’s Solid integration runs on Bun
 
 ## Choose, review, apply
 
-- **Catalogs** starts with the permanent Loadout catalog. Highlight a catalog to preview its kits; **Space** opens it.
+- **Catalogs** starts with the permanent Loadout catalog. Highlight a catalog to preview its kits in separate cards with descriptions and contribution badges; **Space** opens it.
 - Highlight a kit to preview its contributions in separate Markdown cards. Answers update the preview live; excluded contributions remain visible in gray. **Space** expands configuration directly beneath the entry.
-- Use **↑ / ↓** and **Space** for choices. For a text answer, press **Space**, type, then **Enter**. Stage the selection when finished.
+- Use **↑ / ↓** between question rows, **← / →** to focus horizontal options, and **Space** to select or toggle. Options wrap on narrow screens; focus highlighting is separate from the selected radio/check markers. For a text answer, press **Space**, type, then **Enter**. Stage the selection when finished.
 - **Tab** / **Shift+Tab** cycle Catalogs, Installed, and Review. Finish or cancel an open form first.
 - **Review** lists actual file changes. Highlight a file to inspect its diff. Choose Apply, then explicitly confirm. The initial confirmation selection is Cancel.
-- **Esc** goes back or cancels editing; **PgUp / PgDn** scroll the informational column. **q** exits and asks before discarding unapplied selections.
+- **Esc** goes back or cancels editing; **PgUp / PgDn** scroll the informational column. Press **q** twice to exit, even with no changes: the first opens confirmation, the second exits. **Esc** stays; **Space** does not confirm. **Ctrl+C** opens the same prompt. While typing an answer, **q** is literal text.
 
 ### Installation scope
+
+Scope colors match across both panes: **Repository** is blue, **Global** gold, and **Both** lavender. Instructions use sage accents, skills lavender, and other files blue. Excluded contributions are gray; labels and selection markers remain visible alongside colors.
 
 **Repository** keeps a kit in this project. **Global** keeps it in your user configuration. **Both** retains both intentions but materializes only the global copy.
 

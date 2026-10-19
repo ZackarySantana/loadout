@@ -12,6 +12,12 @@ import {
 import type { LoadoutService, Plan, Selection } from "../backend/service"
 
 export const pages = ["Catalogs", "Installed", "Review"] as const
+export interface RowChoice {
+  value: string | boolean
+  label: string
+  selected: boolean
+  description?: string
+}
 export interface Row {
   id: string
   label: string
@@ -31,10 +37,12 @@ export interface Row {
     | "confirm"
   indent?: boolean
   item?: LoadedKit
+  scope?: Scope
+  staged?: boolean
   catalog?: Catalog
   question?: Question
-  value?: string | boolean
-  scope?: Scope
+  choices?: RowChoice[]
+  focusedOptionIndex?: number
   changeIndex?: number
 }
 interface Form {
@@ -71,6 +79,7 @@ export class ScreenModel {
   editing?: { kind: "catalog" } | { kind: "question"; id: string }
   registering = false
   source = ""
+  private optionFocus = new Map<string, number>()
   private listeners = new Set<() => void>()
 
   constructor(readonly backend: Backend) {}
@@ -107,6 +116,8 @@ export class ScreenModel {
         kind: "kit",
         label: `${config.scope === "none" ? "○" : "●"} ${item.kit.name}  ${config.scope === "none" ? "" : `[${config.scope}]`}${this.drafts.has(item.key) ? " *" : ""}`,
         item,
+        scope: config.scope,
+        staged: this.drafts.has(item.key),
       })
       if (this.form?.item.key === item.key)
         rows.push(...this.formRows(this.form))
@@ -115,29 +126,45 @@ export class ScreenModel {
   }
   private formRows(form: Form): Row[] {
     const visible = activeAnswers(form.item.kit, form.answers)
+    const scopeChoices: RowChoice[] = [
+      {
+        value: "repository",
+        label: "Repository",
+        description:
+          "This project only. Removes global intent; restores retained repository copies.",
+      },
+      {
+        value: "global",
+        label: "Global",
+        description:
+          "All projects. No fallback retained for this project; other projects keep their intent.",
+      },
+      {
+        value: "both",
+        label: "Both",
+        description:
+          "Global now; retain this project's intent for automatic repository fallback.",
+      },
+      {
+        value: "none",
+        label: "Not installed",
+        description:
+          "Clear global and this project's intent; restore other projects' retained copies.",
+      },
+    ].map((choice) => ({ ...choice, selected: choice.value === form.scope }))
     const rows: Row[] = [
       {
-        id: "scope-label",
-        kind: "heading",
-        label: "Install where?",
-        indent: true,
-      },
-    ]
-    for (const [scope, label] of [
-      ["repository", "Repository · this project"],
-      ["global", "Global · all projects"],
-      ["both", "Both · global, with repository fallback"],
-      ["none", "Not installed · clear global and this project's intent"],
-    ] as const) {
-      rows.push({
-        id: `scope:${scope}`,
+        id: "scope",
         kind: "scope",
-        label: `${form.scope === scope ? "◉" : "○"} ${label}`,
-        scope,
+        label: "Install where?",
+        choices: scopeChoices,
+        focusedOptionIndex:
+          this.optionFocus.get("scope") ??
+          scopeChoices.findIndex((choice) => choice.selected),
         indent: true,
         item: form.item,
-      })
-    }
+      },
+    ]
     if (form.scope !== "none")
       for (const question of form.item.kit.questions) {
         if (!matches(question.when, visible)) continue
@@ -152,12 +179,6 @@ export class ScreenModel {
             item: form.item,
           })
         } else {
-          rows.push({
-            id: `label:${question.id}`,
-            kind: "heading",
-            label: `${question.label}${question.type === "multi-select" ? " (choose any)" : ""}`,
-            indent: true,
-          })
           const choices =
             question.type === "boolean"
               ? [
@@ -165,20 +186,28 @@ export class ScreenModel {
                   { value: false, label: "No" },
                 ]
               : question.choices
-          for (const choice of choices) {
-            const selected = Array.isArray(answer)
+          const options = choices.map((choice): RowChoice => ({
+            ...choice,
+            selected: Array.isArray(answer)
               ? answer.includes(String(choice.value))
-              : answer === choice.value
-            rows.push({
-              id: `choice:${question.id}:${choice.value}`,
-              kind: "choice",
-              label: `${selected ? "●" : "○"} ${choice.label}`,
-              question,
-              value: choice.value,
-              indent: true,
-              item: form.item,
-            })
-          }
+              : answer === choice.value,
+          }))
+          const id = `question:${question.id}`
+          rows.push({
+            id,
+            kind: "choice",
+            label: `${question.label}${question.type === "multi-select" ? " (choose any)" : ""}`,
+            question,
+            choices: options,
+            focusedOptionIndex:
+              this.optionFocus.get(id) ??
+              Math.max(
+                0,
+                options.findIndex((choice) => choice.selected),
+              ),
+            indent: true,
+            item: form.item,
+          })
         }
       }
     rows.push(
@@ -291,6 +320,19 @@ export class ScreenModel {
     if (next >= 0 && next < rows.length) this.cursor = next
     this.changed()
   }
+  moveOption(delta: number): void {
+    if (this.busy || this.editing) return
+    const row = this.selected()
+    if (!row?.choices?.length) return
+    this.optionFocus.set(
+      row.id,
+      Math.max(
+        0,
+        Math.min(row.choices.length - 1, (row.focusedOptionIndex ?? 0) + delta),
+      ),
+    )
+    this.changed()
+  }
   async cycle(backward = false): Promise<void> {
     if (this.busy) return
     if (this.form || this.registering) {
@@ -389,18 +431,24 @@ export class ScreenModel {
         scope: config.scope === "none" ? "repository" : config.scope,
         answers: { ...defaults(row.item.kit), ...config.answers },
       }
-      this.cursor += 2
+      this.optionFocus.clear()
+      this.cursor = this.rows().findIndex((row) => row.id === "scope")
       this.message =
-        "↑↓ navigate · Space chooses · Stage selection when ready · Esc cancels"
-    } else if (row.kind === "scope" && this.form) this.form.scope = row.scope!
-    else if (row.kind === "choice" && row.question && this.form) {
+        "↑↓ questions · ←→ options · Space selects/toggles · Stage when ready · Esc cancels"
+    } else if (row.kind === "scope" && this.form) {
+      this.optionFocus.set(row.id, row.focusedOptionIndex ?? 0)
+      this.form.scope = row.choices![row.focusedOptionIndex ?? 0]!
+        .value as Scope
+    } else if (row.kind === "choice" && row.question && this.form) {
+      this.optionFocus.set(row.id, row.focusedOptionIndex ?? 0)
       const id = row.question.id
+      const value = row.choices![row.focusedOptionIndex ?? 0]!.value
       if (row.question.type === "multi-select") {
-        const values = this.form.answers[id] as string[]
-        this.form.answers[id] = values.includes(String(row.value))
-          ? values.filter((v) => v !== row.value)
-          : [...values, String(row.value)]
-      } else this.form.answers[id] = row.value!
+        const values = (this.form.answers[id] ?? []) as string[]
+        this.form.answers[id] = values.includes(String(value))
+          ? values.filter((v) => v !== value)
+          : [...values, String(value)]
+      } else this.form.answers[id] = value
     } else if (row.kind === "input")
       this.editing = { kind: "question", id: row.question!.id }
     else if (row.kind === "source") this.editing = { kind: "catalog" }
