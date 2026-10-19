@@ -7,7 +7,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises"
-import { dirname, join, relative, isAbsolute } from "node:path"
+import { dirname, join, relative, isAbsolute, resolve } from "node:path"
 import { hostname } from "node:os"
 import { randomUUID } from "node:crypto"
 import { z } from "zod"
@@ -18,10 +18,26 @@ import {
   type LoadedKit,
   type Scope,
   kitSchema,
+  catalogOriginSchema,
   validateAnswers,
 } from "../domain/kit"
-import { loadCatalog, loadCatalogs, normalizeSource } from "./catalogs"
-import { assertSafePath, readOptional, reconcile } from "./files"
+import {
+  builtin,
+  loadCatalog,
+  loadSubscriptions,
+  normalizeSource,
+  readRepositoryManifestSnapshot,
+  repositorySource,
+  type CatalogListing,
+} from "./catalogs"
+import { canonical, inspectDrift, sourceKit, type DriftReport } from "./drift"
+export type { DriftReport, KitDrift, KitDriftStatus, FileDrift } from "./drift"
+import {
+  assertSafePath,
+  readOptional,
+  readOptionalBytes,
+  reconcile,
+} from "./files"
 import { renderState } from "./render"
 import { emptyState, stateSchema, type State } from "./state"
 
@@ -43,6 +59,8 @@ interface PlanData {
   before: string | null
   state: State
   changes: Change[]
+  sources: LoadedKit[]
+  files: { path: string; before: string | null }[]
 }
 const journalSchema = z.object({
   before: z.string().nullable(),
@@ -70,9 +88,24 @@ async function atomicWrite(
   path: string,
   content: string | null,
   restoreMode?: number,
+  expectedBefore?: Buffer | null,
 ): Promise<void> {
   await assertSafePath(path)
+  const checkBefore = async () => {
+    await assertSafePath(path)
+    if (expectedBefore === undefined) return
+    const current = await readOptionalBytes(path)
+    if (
+      expectedBefore === null
+        ? current !== null
+        : current === null || !expectedBefore.equals(current)
+    )
+      throw new Error(
+        `Configuration changed while editing; concurrent edits were preserved. Retry the operation: ${path}`,
+      )
+  }
   if (content === null) {
+    await checkBefore()
     try {
       await unlink(path)
     } catch (error) {
@@ -86,6 +119,8 @@ async function atomicWrite(
   try {
     await writeFile(temp, content, { flag: "wx", mode: 0o600 })
     await chmod(temp, mode)
+    // Best-effort stale-write protection, not an OS-level compare-and-swap.
+    await checkBefore()
     await rename(temp, path)
   } finally {
     await unlink(temp).catch(() => {})
@@ -139,7 +174,29 @@ export class LoadoutService {
   }
 
   async catalogs(): Promise<{ catalogs: Catalog[]; errors: string[] }> {
-    return loadCatalogs(this.state.catalogs)
+    const { catalogs, errors } = await loadSubscriptions(
+      this.state.catalogs,
+      this.repository,
+    )
+    return { catalogs, errors }
+  }
+
+  async status(): Promise<{
+    catalogs: Catalog[]
+    errors: string[]
+    drift: DriftReport
+  }> {
+    await this.refresh()
+    const listing = await loadSubscriptions(
+      this.state.catalogs,
+      this.repository,
+    )
+    const drift = await inspectDrift(this.state, this.repository, listing)
+    return structuredClone({
+      catalogs: listing.catalogs,
+      errors: listing.errors,
+      drift,
+    })
   }
 
   installed(): LoadedKit[] {
@@ -148,7 +205,11 @@ export class LoadoutService {
       ...this.state.global,
     }
     return structuredClone(
-      Object.values(kits).map(({ key, kit }) => ({ key, kit })),
+      Object.values(kits).map(({ key, kit, origin }) => ({
+        key,
+        kit,
+        ...(origin ? { origin } : {}),
+      })),
     )
   }
 
@@ -168,38 +229,183 @@ export class LoadoutService {
     }
   }
 
-  async register(source: string): Promise<Catalog> {
-    const normalized = await normalizeSource(source, this.repository)
-    const catalog = await loadCatalog(normalized)
+  async register(
+    source: string,
+    scope: "repository" | "global" = "repository",
+  ): Promise<Catalog> {
+    z.enum(["repository", "global"]).parse(scope)
+    const normalized =
+      scope === "repository"
+        ? await repositorySource(source, this.repository)
+        : await normalizeSource(source, this.repository)
+    const catalog = await loadCatalog(normalized, false, {
+      source: normalized,
+      scope,
+      repository: scope === "repository" ? this.repository : undefined,
+    })
     await this.locked(async () => {
       await this.reload()
       const existing = await this.catalogs()
-      if (existing.catalogs.some((c) => c.id === catalog.id))
-        throw new Error(`Catalog already registered: ${catalog.id}`)
-      this.state.catalogs.push(normalized)
-      await atomicWrite(
-        this.statePath,
-        JSON.stringify(this.state, null, 2) + "\n",
+      if (
+        existing.catalogs.some(
+          (c) => c.id === catalog.id && c.source !== normalized,
+        )
       )
+        throw new Error(
+          `Conflicting catalog ID from different sources: ${catalog.id}`,
+        )
+      if (scope === "repository") {
+        if (
+          normalized === join(this.repository, ".loadout/catalog.json") ||
+          existing.catalogs.some((c) => c.source === normalized && c.automatic)
+        )
+          throw new Error(
+            "This catalog is discovered automatically; no registration is needed",
+          )
+        await this.editRepositoryManifest(async (sources) => {
+          for (const reference of sources) {
+            if (
+              (await repositorySource(reference, this.repository, false)) ===
+              normalized
+            )
+              throw new Error(
+                `Catalog already registered in repository: ${catalog.id}`,
+              )
+          }
+          sources.push(
+            normalized.startsWith("https://")
+              ? normalized
+              : relative(this.repository, normalized),
+          )
+          return sources
+        })
+      } else {
+        if (this.state.catalogs.includes(normalized))
+          throw new Error(`Catalog already registered globally: ${catalog.id}`)
+        this.state.catalogs.push(normalized)
+        await atomicWrite(
+          this.statePath,
+          JSON.stringify(this.state, null, 2) + "\n",
+        )
+      }
       await this.reload()
     })
-    return catalog
+    return (
+      (await this.catalogs()).catalogs.find((c) => c.source === normalized) ??
+      catalog
+    )
   }
 
-  async unregister(source: string): Promise<void> {
+  async unregister(
+    source: string,
+    scope: "repository" | "global" = "repository",
+  ): Promise<void> {
+    z.enum(["repository", "global"]).parse(scope)
+    // Lexical resolution deliberately works even after the catalog was deleted.
+    const lexical = source.startsWith("https://")
+      ? new URL(source).href
+      : resolve(this.repository, source)
     await this.locked(async () => {
       await this.reload()
-      if (!this.state.catalogs.includes(source))
-        throw new Error(
-          "Only registered catalogs can be unregistered; Loadout is permanent",
+      if (lexical === builtin)
+        throw new Error("The built-in Loadout catalog is permanent")
+      if (scope === "repository") {
+        let normalized = lexical
+        try {
+          normalized = await repositorySource(source, this.repository, false)
+        } catch {
+          /* Missing or unsafe subscriptions can be removed lexically. */
+        }
+        let conventional = join(this.repository, ".loadout/catalog.json")
+        try {
+          conventional = await repositorySource(conventional, this.repository)
+        } catch {
+          /* The lexical conventional path is still reserved when missing. */
+        }
+        if (
+          lexical === join(this.repository, ".loadout/catalog.json") ||
+          conventional === normalized
         )
-      this.state.catalogs = this.state.catalogs.filter((s) => s !== source)
-      await atomicWrite(
-        this.statePath,
-        JSON.stringify(this.state, null, 2) + "\n",
-      )
+          throw new Error(
+            "The conventional catalog is discovered automatically; remove or rename .loadout/catalog.json to stop sharing it",
+          )
+        await this.editRepositoryManifest(async (sources) => {
+          let found = false
+          const remaining: string[] = []
+          for (const reference of sources) {
+            const path = reference.startsWith("https://")
+              ? new URL(reference).href
+              : resolve(this.repository, reference)
+            let matches = path === lexical
+            if (!matches) {
+              try {
+                matches =
+                  (await repositorySource(
+                    reference,
+                    this.repository,
+                    false,
+                  )) ===
+                  (await repositorySource(source, this.repository, false))
+              } catch {
+                /* Missing/unsafe references can still be removed by their stored spelling. */
+              }
+            }
+            if (matches) found = true
+            else remaining.push(reference)
+          }
+          if (!found)
+            throw new Error("Catalog is not registered in this repository")
+          return remaining
+        })
+      } else {
+        let normalized = lexical
+        try {
+          normalized = await normalizeSource(source, this.repository)
+        } catch {
+          /* Missing global source. */
+        }
+        const sources = this.state.catalogs.filter(
+          (s) => s !== normalized && s !== lexical,
+        )
+        if (sources.length === this.state.catalogs.length)
+          throw new Error(
+            "Catalog is not registered globally; Loadout is permanent",
+          )
+        this.state.catalogs = sources
+        await atomicWrite(
+          this.statePath,
+          JSON.stringify(this.state, null, 2) + "\n",
+        )
+      }
       await this.reload()
     })
+  }
+
+  private async editRepositoryManifest(
+    edit: (sources: string[]) => Promise<string[]>,
+  ): Promise<void> {
+    const path = join(this.repository, ".loadout/catalogs.json")
+    const lock = `${path}.lock`
+    await assertSafePath(path)
+    await assertSafePath(lock)
+    await mkdir(dirname(path), { recursive: true })
+    const token = randomUUID()
+    await writeFile(lock, token, { flag: "wx", mode: 0o600 })
+    try {
+      const { manifest, raw } = await readRepositoryManifestSnapshot(
+        this.repository,
+      )
+      const catalogs = await edit([...manifest.catalogs])
+      await atomicWrite(
+        path,
+        JSON.stringify({ catalogs }, null, 2) + "\n",
+        undefined,
+        raw,
+      )
+    } finally {
+      await assertSafePath(lock)
+      if ((await readOptional(lock)) === token) await unlink(lock)
+    }
   }
 
   async plan(selections: Selection[]): Promise<Plan> {
@@ -207,6 +413,8 @@ export class LoadoutService {
     selections = structuredClone(selections)
     for (const selection of selections) {
       selection.item.kit = kitSchema.parse(selection.item.kit)
+      if (selection.item.origin)
+        selection.item.origin = catalogOriginSchema.parse(selection.item.origin)
       selection.scope = z
         .enum(["repository", "global", "both", "none"])
         .parse(selection.scope)
@@ -219,6 +427,9 @@ export class LoadoutService {
     const repo = (next.repositories[this.repository] ??= {})
     const summary: string[] = []
     const seen = new Set<string>()
+    const sources: LoadedKit[] = []
+    let listing: CatalogListing | undefined
+    const sourceCache = new Map<string, Promise<CatalogListing>>()
     for (const { item, scope, answers } of selections) {
       if (seen.has(item.key))
         throw new Error(`Duplicate selection: ${item.key}`)
@@ -228,10 +439,54 @@ export class LoadoutService {
       )
         throw new Error(`Invalid kit identity: ${item.key}`)
       seen.add(item.key)
+      if (scope !== "none") {
+        const snapshots = [
+          previous.global[item.key],
+          previous.repositories[this.repository]?.[item.key],
+        ]
+        const saved = snapshots.find(
+          (saved) =>
+            saved &&
+            canonical(saved.kit) === canonical(item.kit) &&
+            (!item.origin ||
+              canonical(saved.origin) === canonical(item.origin)),
+        )
+        if (saved) {
+          // Configuring an unchanged saved snapshot works offline and keeps its original provenance.
+          item.origin = saved.origin
+        } else {
+          // Older callers may omit origin while editing a saved kit. Do not let that detach an update from its source.
+          item.origin ??= (
+            previous.global[item.key] ??
+            previous.repositories[this.repository]?.[item.key]
+          )?.origin
+          listing ??= await loadSubscriptions(
+            previous.catalogs,
+            this.repository,
+          )
+          sourceCache.set(this.repository, Promise.resolve(listing))
+          const current = await sourceKit(
+            item,
+            listing,
+            previous.catalogs,
+            sourceCache,
+          )
+          // Untracked, originless programmatic kits remain supported; live catalog selections must match.
+          if (item.origin || current.status !== "untracked") {
+            if (current.status !== "current")
+              throw new Error(
+                `Kit source changed or is unavailable; select and review its current definition: ${item.key}: ${current.reason}`,
+              )
+            item.origin = current.latest?.origin
+            sources.push(structuredClone(item))
+          }
+        }
+      }
       const config: ConfiguredKit = {
         key: item.key,
         kit: item.kit,
         answers: scope === "none" ? {} : validateAnswers(item.kit, answers),
+        ...(item.origin ? { origin: item.origin } : {}),
       }
       if (scope === "global" || scope === "both") next.global[item.key] = config
       else delete next.global[item.key]
@@ -243,6 +498,7 @@ export class LoadoutService {
     }
     next.managed = renderState(next, this.home)
     const changes: Change[] = []
+    const files: { path: string; before: string | null }[] = []
     for (const path of new Set([
       ...Object.keys(previous.managed),
       ...Object.keys(next.managed),
@@ -250,6 +506,7 @@ export class LoadoutService {
       this.assertOwnedPath(path, next)
       await assertSafePath(path)
       const before = await readOptional(path)
+      files.push({ path, before })
       const after = reconcile(
         path,
         before,
@@ -259,7 +516,13 @@ export class LoadoutService {
       if (before !== after) changes.push({ path, before, after })
     }
     const plan: Plan = { changes: structuredClone(changes), summary }
-    this.plans.set(plan, { before: beforeState, state: next, changes })
+    this.plans.set(plan, {
+      before: beforeState,
+      state: next,
+      changes,
+      sources,
+      files,
+    })
     return plan
   }
 
@@ -271,12 +534,42 @@ export class LoadoutService {
         throw new Error(
           "Selections changed in another session. Review again before applying.",
         )
-      for (const change of data.changes) {
-        await assertSafePath(change.path)
-        if ((await readOptional(change.path)) !== change.before)
-          throw new Error(
-            `File changed since review; review again: ${change.path}`,
+      if (data.sources.length) {
+        const listing = await loadSubscriptions(
+          this.state.catalogs,
+          this.repository,
+        )
+        const cache = new Map<string, Promise<CatalogListing>>([
+          [this.repository, Promise.resolve(listing)],
+        ])
+        for (const item of data.sources) {
+          const current = await sourceKit(
+            item,
+            listing,
+            this.state.catalogs,
+            cache,
           )
+          if (current.status !== "current")
+            throw new Error(
+              `Kit source changed since review; review again: ${item.key}: ${current.reason}`,
+            )
+        }
+      }
+      for (const change of data.files) {
+        await assertSafePath(change.path)
+        const current = await readOptional(change.path)
+        if (current !== change.before) {
+          const managed = data.state.managed[change.path]
+          if (
+            data.changes.some((file) => file.path === change.path) ||
+            !managed
+          )
+            throw new Error(
+              `File changed since review; review again: ${change.path}`,
+            )
+          // No write is planned here: unrelated instruction text may change, but managed blocks may not.
+          reconcile(change.path, current, managed, structuredClone(managed))
+        }
       }
       const after = JSON.stringify(data.state, null, 2) + "\n"
       const changes = await Promise.all(

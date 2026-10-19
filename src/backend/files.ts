@@ -3,8 +3,12 @@ import { dirname, parse, resolve } from "node:path"
 import type { Managed } from "./state"
 
 export async function readOptional(path: string): Promise<string | null> {
+  return (await readOptionalBytes(path))?.toString("utf8") ?? null
+}
+
+export async function readOptionalBytes(path: string): Promise<Buffer | null> {
   try {
-    return await readFile(path, "utf8")
+    return await readFile(path)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
     throw error
@@ -18,6 +22,8 @@ export async function assertSafePath(path: string): Promise<void> {
     try {
       const stat = await lstat(current)
       if (stat.isSymbolicLink()) throw new Error(`Refusing symlink: ${current}`)
+      if (current === resolve(path) && !stat.isFile())
+        throw new Error(`Not a regular file: ${current}`)
       if (current !== resolve(path) && !stat.isDirectory())
         throw new Error(`Not a directory: ${current}`)
     } catch (error) {

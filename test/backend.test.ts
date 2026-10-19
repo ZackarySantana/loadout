@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import * as filesystem from "node:fs/promises"
 import {
   chmod,
   mkdir,
@@ -675,11 +676,13 @@ describe("backend integration flows", () => {
     expect(builtin.permanent).toBe(true)
     expect(builtin.kits.length).toBeGreaterThan(0)
     const source = await catalogFixture(join(repository, "catalog"))
-    const registered = await service.register("catalog/catalog.json")
+    const registered = await service.register("catalog/catalog.json", "global")
     expect(registered.source).toBe(source)
     expect(registered.permanent).toBe(false)
     expect(registered.kits.map((item) => item.key)).toEqual(["team/guide"])
-    await expect(service.register(source)).rejects.toThrow(/already registered/)
+    await expect(service.register(source, "global")).rejects.toThrow(
+      /already registered/,
+    )
     const reopened = await open()
     expect(
       (await reopened.catalogs()).catalogs.map((catalog) => catalog.id),
@@ -690,68 +693,166 @@ describe("backend integration flows", () => {
     expect(await text(join(repository, "context/guide.txt"))).toBe(
       "From catalog\n",
     )
-    await reopened.unregister(source)
+    await reopened.unregister(source, "global")
     const after = await open()
     expect(
       (await after.catalogs()).catalogs.map((catalog) => catalog.id),
     ).toEqual(["loadout"])
     expect(after.configuration("team/guide").scope).toBe("repository")
     const before = await snapshot(root)
-    await expect(after.unregister(builtin.source)).rejects.toThrow(/permanent/)
+    await expect(after.unregister(builtin.source, "global")).rejects.toThrow(
+      /permanent/,
+    )
     expect(await snapshot(root)).toEqual(before)
   })
 
-  test("invalid catalog formats and escaping kit references are rejected without registration; broken registered sources are reported", async () => {
+  test("catalog formats stay strict while invalid or escaping kit sources are quarantined without hiding healthy siblings or discarding installed snapshots", async () => {
     const { service, root, repository, open } = await fixture()
     const directory = join(repository, "catalog")
     const source = await catalogFixture(directory)
-    const validCatalog = (await text(source))!
+    const document = JSON.parse((await text(source))!)
+    document.kits.push({
+      id: "healthy",
+      name: "Healthy",
+      source: "healthy.yaml",
+    })
+    const validCatalog = JSON.stringify(document)
     const validKit = (await text(join(directory, "guide.yaml")))!
+    await put(
+      join(directory, "healthy.yaml"),
+      stringify(simpleKit("healthy").kit),
+    )
     const outsideKit = join(repository, "outside.yaml")
     await put(outsideKit, validKit)
     const before = await text(join(root, "home/.loadout/state.json"))
-    const invalidSources = [
-      { catalog: "id: team\nname: Not JSON\nkits: []\n", kit: validKit },
-      {
-        catalog: JSON.stringify({
-          ...JSON.parse(validCatalog),
-          unexpected: true,
-        }),
-        kit: validKit,
-      },
-      { catalog: validCatalog, kit: `${validKit}\nexecute: shell\n` },
-      { catalog: validCatalog, kit: `${validKit}\nid: duplicate\n` },
-      {
-        catalog: validCatalog,
-        kit: validKit.replace("id: guide", "id: other"),
-      },
-      {
-        catalog: JSON.stringify({
-          ...JSON.parse(validCatalog),
-          kits: [{ id: "guide", name: "Guide", source: "../outside.yaml" }],
-        }),
-        kit: validKit,
-      },
-    ]
-    for (const invalid of invalidSources) {
-      await put(source, invalid.catalog)
-      await put(join(directory, "guide.yaml"), invalid.kit)
-      await expect(service.register(source)).rejects.toThrow()
+    for (const invalidCatalog of [
+      "id: team\nname: Not JSON\nkits: []\n",
+      "{broken JSON",
+      JSON.stringify({ ...document, unexpected: true }),
+      JSON.stringify({ ...document, kits: "not an array" }),
+    ]) {
+      await put(source, invalidCatalog)
+      await expect(service.register(source, "global")).rejects.toThrow()
       expect(await text(join(root, "home/.loadout/state.json"))).toBe(before)
     }
-    await put(source, validCatalog)
-    await rm(join(directory, "guide.yaml"))
-    await symlink(outsideKit, join(directory, "guide.yaml"))
-    await expect(service.register(source)).rejects.toThrow(/catalog directory/)
+
+    const staleItem: LoadedKit = {
+      ...simpleKit(),
+      origin: { source, scope: "global", catalogId: "team" },
+    }
+    const invalidKits = [
+      { yaml: "id: guide\noutputs: [\n", reason: /flow|expected|stream/i },
+      { yaml: `${validKit}\nexecute: shell\n`, reason: /unrecognized/i },
+      { yaml: `${validKit}\nid: duplicate\n`, reason: /unique|duplicate/i },
+      {
+        yaml: validKit.replace("id: guide", "id: other"),
+        reason: /ID mismatch/,
+      },
+      {
+        yaml: validKit,
+        reference: "../outside.yaml",
+        reason: /catalog directory/,
+      },
+      { yaml: validKit, link: true, reason: /catalog directory/ },
+    ]
+    for (const invalid of invalidKits) {
+      await rm(join(directory, "guide.yaml"))
+      if (invalid.link) await symlink(outsideKit, join(directory, "guide.yaml"))
+      else await put(join(directory, "guide.yaml"), invalid.yaml)
+      const changedDocument = structuredClone(document)
+      changedDocument.kits[0].source = invalid.reference ?? "guide.yaml"
+      await put(source, JSON.stringify(changedDocument))
+      // Reject escaped assets before reading them, not after parsing their valid YAML.
+      const reads = spyOn(filesystem, "readFile")
+      try {
+        const registered = await service.register(source, "global")
+        expect(registered.kits.map((item) => item.key)).toEqual([
+          "team/healthy",
+        ])
+        expect(
+          registered.unavailableKits?.find((item) => item.key === "team/guide")
+            ?.reason,
+        ).toMatch(invalid.reason)
+        const listing = await service.catalogs()
+        expect(listing.errors.join("\n")).toContain("team/guide")
+        expect(
+          listing.catalogs
+            .find((catalog) => catalog.id === "team")
+            ?.kits.map((item) => item.key),
+        ).toEqual(["team/healthy"])
+        if (invalid.reference || invalid.link) {
+          const pathsRead = reads.mock.calls.map(([path]) => String(path))
+          expect(pathsRead).toContain(join(directory, "healthy.yaml"))
+          expect(pathsRead).not.toContain(outsideKit)
+          if (invalid.link)
+            expect(pathsRead).not.toContain(join(directory, "guide.yaml"))
+        }
+        expect(service.installed().map((item) => item.key)).not.toContain(
+          "team/guide",
+        )
+        const beforeAttempt = await snapshot(root)
+        await expect(
+          service.plan([
+            {
+              item: staleItem,
+              scope: "repository",
+              answers: { project: "Unsafe" },
+            },
+          ]),
+        ).rejects.toThrow(/source changed or is unavailable/)
+        expect(await snapshot(root)).toEqual(beforeAttempt)
+        await configure(service, registered.kits[0]!, "repository", {
+          project: "Healthy",
+        })
+        expect(await text(join(repository, "context/healthy.txt"))).toBe(
+          "Healthy\n",
+        )
+        expect(await text(join(repository, "context/guide.txt"))).toBeNull()
+      } finally {
+        reads.mockRestore()
+      }
+      await service.unregister(source, "global")
+    }
+
     await rm(join(directory, "guide.yaml"))
     await put(join(directory, "guide.yaml"), validKit)
-    await service.register(source)
+    await put(source, validCatalog)
+    const restored = await service.register(source, "global")
+    await configure(
+      service,
+      restored.kits.find((item) => item.key === "team/guide")!,
+      "repository",
+      { project: "Saved" },
+    )
+    const savedGuide = service
+      .installed()
+      .find((item) => item.key === "team/guide")!
     await put(join(directory, "guide.yaml"), "not: a valid kit\n")
-    const loaded = await (await open()).catalogs()
-    expect(loaded.catalogs.map((catalog) => catalog.id)).toEqual(["loadout"])
-    expect(loaded.errors).toHaveLength(1)
-    expect(loaded.errors[0]).toContain(source)
-    await service.unregister(source)
+    const reopened = await open()
+    const loaded = await reopened.status()
+    expect(
+      loaded.catalogs
+        .find((catalog) => catalog.id === "team")
+        ?.kits.map((item) => item.key),
+    ).toEqual(["team/healthy"])
+    expect(
+      loaded.catalogs
+        .find((catalog) => catalog.id === "team")
+        ?.unavailableKits?.find((item) => item.key === "team/guide"),
+    ).toBeDefined()
+    expect(loaded.errors.join("\n")).toContain(source)
+    expect(
+      loaded.drift.kits.find((item) => item.key === "team/guide")?.status,
+    ).toBe("kit-unavailable")
+    expect(
+      reopened.installed().find((item) => item.key === "team/guide"),
+    ).toEqual(savedGuide)
+    expect(reopened.configuration("team/guide")).toEqual({
+      scope: "repository",
+      answers: { project: "Saved" },
+    })
+    expect(await text(join(repository, "context/guide.txt"))).toBe("Saved\n")
+    await service.unregister(source, "global")
     expect((await (await open()).catalogs()).errors).toEqual([])
   })
 

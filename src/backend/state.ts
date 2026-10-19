@@ -1,12 +1,17 @@
 import { z } from "zod"
-import { kitSchema } from "../domain/kit"
+import { catalogOriginSchema, kitSchema } from "../domain/kit"
 
 const answerSchema = z.record(
   z.string(),
   z.union([z.string(), z.boolean(), z.array(z.string())]),
 )
 const configuredSchema = z
-  .object({ key: z.string(), kit: kitSchema, answers: answerSchema })
+  .object({
+    key: z.string(),
+    kit: kitSchema,
+    answers: answerSchema,
+    origin: catalogOriginSchema.optional(),
+  })
   .strict()
 const selectionSchema = z.record(z.string(), configuredSchema)
 const managedSchema = z.discriminatedUnion("type", [

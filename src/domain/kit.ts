@@ -177,14 +177,29 @@ export type Question = Kit["questions"][number]
 export type Condition = z.infer<typeof conditionSchema>
 export type Answers = Record<string, string | boolean | string[]>
 export type Scope = "repository" | "global" | "both" | "none"
+export const catalogOriginSchema = z
+  .object({
+    catalogId: id.optional(),
+    source: z.string().min(1),
+    scope: z.enum(["repository", "global"]),
+    repository: z.string().min(1).optional(),
+  })
+  .strict()
+  .refine(
+    (origin) => origin.scope !== "repository" || !!origin.repository,
+    "Repository origins require a repository",
+  )
+export type CatalogOrigin = z.infer<typeof catalogOriginSchema>
 export interface ConfiguredKit {
   key: string
   kit: Kit
   answers: Answers
+  origin?: CatalogOrigin
 }
 export interface LoadedKit {
   key: string
   kit: Kit
+  origin?: CatalogOrigin
 }
 export interface Catalog {
   id: string
@@ -193,6 +208,18 @@ export interface Catalog {
   source: string
   permanent: boolean
   kits: LoadedKit[]
+  subscriptionScope?: "repository" | "global" | "both"
+  automatic?: boolean
+  shared?: boolean
+  unavailableKits?: {
+    key: string
+    id: string
+    name: string
+    description: string
+    source: string
+    reason: string
+  }[]
+  issues?: string[]
 }
 
 export function matches(
