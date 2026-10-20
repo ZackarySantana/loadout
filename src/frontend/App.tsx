@@ -324,6 +324,16 @@ export function App(props: {
       void model.cycle(key.shift)
       return
     }
+    if (
+      key.shift &&
+      !key.ctrl &&
+      !key.meta &&
+      (key.name === "up" || key.name === "down")
+    ) {
+      key.preventDefault()
+      info?.scrollBy(key.name === "up" ? -1 : 1)
+      return
+    }
     if (editing()) {
       if (key.name === "up" || key.name === "down") {
         key.preventDefault()
@@ -794,7 +804,7 @@ export function App(props: {
                   ? "↑↓/jk rows · ←→/hl actions · Space select · Esc accept group · Cancel discards"
                   : formOpen()
                     ? "↑↓/jk questions · ←→/hl options · Space select/toggle · Esc accept kit · Cancel discards"
-                    : "↑↓/jk rows · ←→/hl options · Space select · Tab pages · ? walkthrough · r refresh · Esc back · PgUp/PgDn details · q q quit"}
+                    : "↑↓/jk rows · ←→/hl options · Space select · Tab pages · ? walkthrough · r refresh · Esc back · Shift+↑↓/PgUp/PgDn details · q q quit"}
       </text>
     </box>
   )

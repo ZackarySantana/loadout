@@ -496,7 +496,6 @@ describe("rendered keyboard workflows", () => {
       "File changes",
       "Locations",
       "Preservation & safety",
-      "How to apply",
     ].map((title) => {
       const heading = descendants(
         ui.setup.renderer.root.findDescendantById("review-preview")!,

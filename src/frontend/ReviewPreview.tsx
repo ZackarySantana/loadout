@@ -528,26 +528,6 @@ export function ReviewPreview(props: ReviewPreviewProps) {
                 </box>
               )}
             </For>
-            <For each={ignore().warnings}>
-              {(warning) => (
-                <text fg={theme.warning} wrapMode="word" flexShrink={0}>
-                  {safeText(warning)}
-                </text>
-              )}
-            </For>
-            <text fg={theme.muted} wrapMode="word" flexShrink={0}>
-              Repository managed files and links only. Existing user rules are
-              preserved. Tracked files stay tracked; Git index flags are never
-              changed.
-            </text>
-            <Show
-              when={ignore().targets.length || ignore().removedTargets.length}
-            >
-              <text fg={theme.sage} wrapMode="word" flexShrink={0}>
-                Select an ignore-file change on the left to inspect its exact
-                rule diff before applying.
-              </text>
-            </Show>
           </Section>
         )}
       </Show>
@@ -593,31 +573,6 @@ export function ReviewPreview(props: ReviewPreviewProps) {
           </text>
         </Section>
       </Show>
-      <Section title="How to apply" accent={theme.warning}>
-        <Show
-          when={props.plan}
-          fallback={
-            <text fg={theme.muted} wrapMode="word" flexShrink={0}>
-              Stage kits or settings, then return to Review. Reviewing does not
-              write any files.
-            </text>
-          }
-        >
-          <text fg={theme.text} wrapMode="word" flexShrink={0}>
-            Reviewing does not write. Apply changes writes all listed files and
-            saves settings and installation intent, including changes in other
-            known repositories.
-          </text>
-          <text fg={theme.sage} wrapMode="word" flexShrink={0}>
-            Focus Apply changes with ←/→ or h/l, then press Space. This is the
-            final confirmation; there is no second menu.
-          </text>
-          <text fg={theme.muted} wrapMode="word" flexShrink={0}>
-            Keep editing is focused by default. Space returns to staged changes
-            without writing. PgUp / PgDn scroll this preview.
-          </text>
-        </Show>
-      </Section>
     </box>
   )
 }

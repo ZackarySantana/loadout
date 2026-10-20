@@ -22,6 +22,13 @@ import {
 } from "../domain/kit"
 import { theme as color } from "./theme"
 import { displayKitKey } from "../domain/catalog"
+import type { AgentHarness } from "../domain/subagents"
+
+const harnessLabels: Record<AgentHarness, string> = {
+  codex: "Codex",
+  claude: "Claude Code",
+  opencode: "OpenCode",
+}
 
 // Preserve line breaks and tabs, but never pass terminal controls through.
 const safeText = (text: string) =>
@@ -79,6 +86,7 @@ interface Contribution {
   label: string
   accent: string
   included: boolean
+  metadata?: { label: string; value: string }[]
   files: {
     path: string
     content: string
@@ -389,14 +397,36 @@ export function KitPreview(props: KitPreviewProps) {
           instructions: false,
         })
       } else if (output.type === "agent") {
+        const metadata = [
+          {
+            label: "Harnesses",
+            value: output.harnesses
+              .map((harness) => harnessLabels[harness])
+              .join(" · "),
+          },
+        ]
+        for (const harness of output.harnesses) {
+          const options = output.options?.[harness]
+          if (options?.model)
+            metadata.push({
+              label: `${harnessLabels[harness]} model`,
+              value: options.model,
+            })
+          if (harness === "claude" && output.options?.claude?.tools)
+            metadata.push({
+              label: "Claude Code tools",
+              value: output.options.claude.tools.join(" · "),
+            })
+        }
         sections.push({
           label: `Agent · ${output.name}`,
           accent: color.skill,
           included,
+          metadata,
           files: [
             {
               path: "",
-              content: `${output.harnesses.join(" · ")}${output.options ? `\n${JSON.stringify(output.options)}` : ""}\n\n${output.description}`,
+              content: output.description,
               markdown: false,
               included,
             },
@@ -482,6 +512,38 @@ export function KitPreview(props: KitPreviewProps) {
                 Not included
               </text>
             </Show>
+            <Show when={card().metadata}>
+              {(metadata) => (
+                <box
+                  width="100%"
+                  minWidth={0}
+                  flexDirection="column"
+                  flexShrink={0}
+                  marginBottom={1}
+                >
+                  <Index each={metadata()}>
+                    {(field) => (
+                      <text
+                        width="100%"
+                        minWidth={0}
+                        flexShrink={0}
+                        wrapMode="word"
+                        fg={card().included ? card().accent : color.excluded}
+                      >
+                        <span
+                          style={{
+                            fg: card().included ? color.muted : color.excluded,
+                          }}
+                        >
+                          {`${field().label}: `}
+                        </span>
+                        {safeText(field().value)}
+                      </text>
+                    )}
+                  </Index>
+                </box>
+              )}
+            </Show>
             <Index each={card().files}>
               {(file, index) => (
                 <box
@@ -494,7 +556,11 @@ export function KitPreview(props: KitPreviewProps) {
                   width="100%"
                   flexDirection="column"
                   flexShrink={0}
-                  marginTop={card().instructions && index > 0 ? 1 : 0}
+                  marginTop={
+                    (card().instructions || card().metadata) && index > 0
+                      ? 1
+                      : 0
+                  }
                 >
                   <Show when={card().nested && file().path !== "SKILL.md"}>
                     <text
