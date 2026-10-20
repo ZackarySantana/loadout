@@ -405,13 +405,21 @@ outputs:
       Report concrete findings with file references.
     harnesses: [codex, claude, opencode]
     options:
+      codex:
+        features:
+          shell_tool: false
       claude:
-        tools: [Read, Grep, Glob]</code></pre>
+        tools: [Read, Grep, Glob]
+      opencode:
+        permissions:
+          - { action: edit, resource: "*", effect: deny }
+          - { action: shell, resource: "*", effect: deny }</code></pre>
           <p>
             <code>harnesses</code> defaults to all three; an explicit list must
             be nonempty and unique. Agent outputs support <code>when</code>.
             Description and instructions support content interpolation; names,
-            paths, and model fields do not. Unknown fields are rejected.
+            paths, and native options do not. Permission patterns are literal,
+            not answer templates. Unknown fields are rejected.
           </p>
           <details open>
             <summary>Native options and permission caveats</summary>
@@ -421,6 +429,15 @@ outputs:
                 identifier.
               </li>
               <li>
+                <code>options.codex.features</code>: optional nonempty object
+                whose supported keys are <code>shell_tool</code>,
+                <code>apps</code>, <code>plugins</code>, <code>memories</code>,
+                and <code>request_permissions_tool</code>. Each supplied value
+                must be <code>false</code>; these switches disable capabilities,
+                not grant them. They generate a native <code>[features]</code>
+                TOML table.
+              </li>
+              <li>
                 <code>options.claude.model</code>: optional native model
                 identifier; <code>options.claude.tools</code>: optional nonempty
                 list limited to <code>Read</code>, <code>Grep</code>,
@@ -428,8 +445,19 @@ outputs:
                 <code>WebSearch</code>.
               </li>
               <li>
-                <code>options.opencode.model</code>: optional
-                <code>provider/model</code> identifier.
+                <code>options.opencode.model</code>: optional native
+                slash-separated model identifier.
+              </li>
+              <li>
+                <code>options.opencode.permissions</code>: optional list of
+                1–128 ordered rules, each with exactly <code>action</code>,
+                <code>resource</code>, and <code>effect</code>. Action and
+                resource are nonblank strings, at most 256 and 4,096 characters
+                respectively. Controls, line breaks, and unpaired Unicode
+                surrogates are rejected. Effects are <code>allow</code>,
+                <code>ask</code>, or <code>deny</code>. Actions and resources
+                support native wildcard patterns; the last matching rule wins.
+                Rules are emitted unchanged in the agent's frontmatter.
               </li>
             </ul>
             <p>
@@ -440,11 +468,30 @@ outputs:
             </p>
             <p>
               These are intentionally separate native options, not a portable
-              permission system. The example’s “Do not edit” instruction is a
-              behavioral request, not a Codex or OpenCode sandbox. Claude’s
-              explicit tools list narrows its tool surface; omitted options
-              inherit the host’s capabilities. Loadout does not launch agents or
-              validate model-account access.
+              permission system. In this example, Codex disables its shell tool,
+              Claude exposes only the listed tools, and OpenCode denies edit and
+              shell actions. Tool and permission values are shown in gray in the
+              preview beneath their harness-colored labels.
+            </p>
+            <p>
+              Codex still inherits its parent's sandbox and approval policy;
+              disabling shell access alone is not a read-only sandbox and does
+              not disable other inherited tools or MCP access. A “Do not edit”
+              instruction remains behavioral guidance, not an enforced Codex
+              editing restriction. Parent sandbox/approval overrides are not
+              accepted in these options.
+            </p>
+            <p>
+              OpenCode applies global permissions followed by agent-specific
+              rules, rather than inheriting the parent's agent-specific rules.
+              Later matching agent rules can refine earlier global permissions;
+              organization policies can still deny actions. Omitted controls
+              preserve native host behavior. Loadout does not launch agents or
+              validate model-account access. See the
+              <a href="https://opencode.ai/v2/docs/permissions"
+                >native permission reference</a
+              >
+              for action and resource matching.
             </p>
           </details>
           <details open>
@@ -467,7 +514,8 @@ outputs:
                     <td><code>.codex/agents/&lt;name&gt;.toml</code></td>
                     <td>
                       Standalone TOML with name, description,
-                      developer_instructions, and optional model.
+                      developer_instructions, optional model, and capability
+                      switches.
                     </td>
                   </tr>
                   <tr>

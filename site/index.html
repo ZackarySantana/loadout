@@ -763,7 +763,9 @@ mise exec -- bun src/cli.tsx apply --request request.json --review-token TOKEN -
               <p>
                 Follow Codex’s native agent configuration and delegation
                 support. Do not assume Claude frontmatter or OpenCode permission
-                rules translate directly.
+                rules translate directly. Loadout supports native capability
+                disables, such as disabling shell access; the parent's sandbox
+                and approval policy still apply.
               </p>
               <a href="https://developers.openai.com/codex/subagents"
                 >Native documentation ↗</a
@@ -785,7 +787,9 @@ mise exec -- bun src/cli.tsx apply --request request.json --review-token TOKEN -
               <p>
                 Subagents run in fresh child sessions. Parent permissions
                 control launching; children use their own configured
-                permissions. Native profiles use <code>mode: subagent</code>.
+                permissions. Loadout supports ordered allow/ask/deny rules for
+                actions and resources. Native profiles use
+                <code>mode: subagent</code>.
               </p>
               <a href="https://opencode.ai/v2/docs/agents"
                 >Native documentation ↗</a
@@ -800,7 +804,7 @@ mise exec -- bun src/cli.tsx apply --request request.json --review-token TOKEN -
             copies.
           </p>
           <p>
-            Omitted model/tool settings inherit host behavior, not a
+            Omitted model and capability controls preserve host behavior, not a
             least-privilege sandbox. Delegation may isolate a task’s working
             context, but child prompts, repeated instructions, and returned
             results still have costs; it is not free context or automatic token

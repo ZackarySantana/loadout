@@ -30,6 +30,14 @@ const harnessLabels: Record<AgentHarness, string> = {
   opencode: "OpenCode",
 }
 
+const codexCapabilityLabels: Record<string, string> = {
+  shell_tool: "Shell",
+  apps: "Apps",
+  plugins: "Plugins",
+  memories: "Memories",
+  request_permissions_tool: "Permission requests",
+}
+
 // Preserve line breaks and tabs, but never pass terminal controls through.
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
@@ -420,12 +428,38 @@ export function KitPreview(props: KitPreviewProps) {
               harness,
               values: [{ text: options.model, harness }],
             })
+          if (harness === "codex" && output.options?.codex?.features)
+            metadata.push({
+              label: "Codex disabled capabilities",
+              harness,
+              values: [
+                {
+                  text: Object.entries(output.options.codex.features)
+                    .filter(([, value]) => value === false)
+                    .map(([name]) => codexCapabilityLabels[name] ?? name)
+                    .join(" · "),
+                },
+              ],
+            })
           if (harness === "claude" && output.options?.claude?.tools)
             metadata.push({
               label: "Claude Code tools",
               harness,
               values: [{ text: output.options.claude.tools.join(" · ") }],
             })
+          if (harness === "opencode")
+            for (const [index, rule] of (
+              output.options?.opencode?.permissions ?? []
+            ).entries())
+              metadata.push({
+                label: `OpenCode permission ${index + 1}`,
+                harness,
+                values: [
+                  {
+                    text: `${rule.effect[0]!.toUpperCase()}${rule.effect.slice(1)} ${rule.action} on ${rule.resource}`,
+                  },
+                ],
+              })
         }
         sections.push({
           label: `Agent · ${output.name}`,

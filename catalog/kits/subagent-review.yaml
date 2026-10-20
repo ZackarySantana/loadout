@@ -1,6 +1,6 @@
 id: subagent-review
 name: Focused review agent
-description: A native review subagent for Codex, Claude Code, and OpenCode. Permissions otherwise inherit from each harness.
+description: A native review agent with Codex shell disabled, Claude read tools, and OpenCode edit/shell denied. Codex still inherits session permissions.
 questions:
   - id: focus
     type: input
@@ -17,5 +17,16 @@ outputs:
       only concrete findings, ordered by severity, with file references.
       If there are no findings, say so and mention remaining uncertainty.
     options:
+      codex:
+        features:
+          shell_tool: false
       claude:
         tools: [Read, Grep, Glob]
+      opencode:
+        permissions:
+          - action: edit
+            resource: "*"
+            effect: deny
+          - action: shell
+            resource: "*"
+            effect: deny

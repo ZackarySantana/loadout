@@ -2,7 +2,7 @@ import { join, resolve } from "node:path"
 import { stringify } from "yaml"
 import type { Kit } from "../domain/kit"
 import type { OutputSettings } from "../domain/settings"
-import type { AgentHarness } from "../domain/subagents"
+import { codexFeatureKeys, type AgentHarness } from "../domain/subagents"
 
 type Agent = Extract<Kit["outputs"][number], { type: "agent" }>
 
@@ -80,11 +80,28 @@ export function serializeAgent(
   for (const [target, options] of Object.entries(agent.options ?? {}))
     if (options.model !== undefined)
       assertUnicodeScalars(options.model, agent.name, `${target}.model`)
+  for (const [index, rule] of (
+    agent.options?.opencode?.permissions ?? []
+  ).entries()) {
+    assertUnicodeScalars(
+      rule.action,
+      agent.name,
+      `opencode.permissions[${index}].action`,
+    )
+    assertUnicodeScalars(
+      rule.resource,
+      agent.name,
+      `opencode.permissions[${index}].resource`,
+    )
+  }
   if (!description.trim() || !instructions.trim())
     throw new Error(
       `Agent ${agent.name} requires nonempty description and instructions`,
     )
   if (harness === "codex") {
+    const disabledFeatures = codexFeatureKeys.filter(
+      (key) => agent.options?.codex?.features?.[key] === false,
+    )
     return (
       [
         `name = ${tomlString(agent.name)}`,
@@ -93,6 +110,13 @@ export function serializeAgent(
           ? [`model = ${tomlString(agent.options.codex.model)}`]
           : []),
         `developer_instructions = ${tomlString(instructions)}`,
+        ...(disabledFeatures.length
+          ? [
+              "",
+              "[features]",
+              ...disabledFeatures.map((key) => `${key} = false`),
+            ]
+          : []),
       ].join("\n") + "\n"
     )
   }
