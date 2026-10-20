@@ -13,6 +13,7 @@ export function renderState(
   state: State,
   home: string,
   settings: OutputSettings = state.settings ?? defaultOutputSettings(home, {}),
+  repositoryOutputs?: Map<string, Set<string>>,
 ): State["managed"] {
   const result: State["managed"] = {}
   const groups = resolveDestinations(
@@ -20,7 +21,13 @@ export function renderState(
     home,
     Object.keys(state.repositories),
   )
+  let repository: string | undefined
   const add = (path: string, output: Managed) => {
+    if (repository && repositoryOutputs) {
+      const paths = repositoryOutputs.get(repository) ?? new Set<string>()
+      paths.add(path)
+      repositoryOutputs.set(repository, paths)
+    }
     const existing = result[path]
     if (existing?.type === "instructions" && output.type === "instructions") {
       for (const [key, content] of Object.entries(output.blocks))
@@ -32,6 +39,7 @@ export function renderState(
     else result[path] = output
   }
   const render = (config: ConfiguredKit, root: string, global: boolean) => {
+    repository = global ? undefined : root
     const answers = validateAnswers(config.kit, config.answers)
     const destinations = (kind: "instructions" | "skills") =>
       groups.find(
@@ -101,6 +109,7 @@ export function renderState(
     for (const config of Object.values(selections))
       if (!state.global[config.key]) render(config, repo, false)
   for (const group of groups) {
+    repository = group.scope === "repository" ? group.base : undefined
     if (group.mode !== "link" || !group.locations.length) continue
     const primary = group.locations[0]!
     const sources = Object.keys(result).filter((path) =>

@@ -16,6 +16,16 @@ export async function planOutputs(
     ...Object.keys(desired),
   ])) {
     const managed = previous[path]
+    const next = desired[path]
+    if (
+      managed &&
+      next &&
+      managed.type !== next.type &&
+      (managed.type === "ignore" || next.type === "ignore")
+    )
+      throw new Error(
+        `Output type conflicts with an owned ignore file: ${path}`,
+      )
     const node = await snapshotNode(path, managed?.type === "symlink")
     if (managed?.type === "symlink") {
       if (node.kind !== "symlink" || node.target !== managed.target)
@@ -134,7 +144,7 @@ export function assertLink(
     resolve(dirname(path), link.target) !== link.source ||
     !isAbsolute(link.source) ||
     !managed[link.source] ||
-    managed[link.source]?.type === "symlink"
+    !["file", "instructions"].includes(managed[link.source]!.type)
   )
     throw new Error(
       `Managed link must point directly to its managed regular source: ${path}`,

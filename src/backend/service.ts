@@ -52,6 +52,13 @@ import {
 import { renderState } from "./render"
 import { planOutputs } from "./outputs"
 import { emptyState, stateSchema, type State } from "./state"
+import {
+  authorizeIgnoreTargets,
+  planIgnores,
+  type IgnorePlan,
+  type IgnoreReport,
+} from "./ignore"
+export type { IgnoreReport, IgnoreTarget } from "./ignore"
 
 export interface Selection {
   item: LoadedKit
@@ -74,6 +81,7 @@ export interface Plan {
   previousSettings: OutputSettings
   settingsChanged: boolean
   resolvedLocations: ResolvedDestinationGroup[]
+  ignore: IgnoreReport
 }
 interface NodeChange extends Change {
   beforeNode: NodeSnapshot
@@ -87,6 +95,9 @@ interface PlanData {
   files: { path: string; before: NodeSnapshot }[]
   materializedSources: Set<string>
   linkSources: Set<string>
+  ignore: IgnorePlan
+  repositoryOutputs: Map<string, Set<string>>
+  previousState: State
 }
 const journalSchema = z.object({
   before: z.string().nullable(),
@@ -509,12 +520,35 @@ export class LoadoutService {
       this.repository,
     ])
     next.settings = structuredClone(effectiveSettings)
-    next.managed = renderState(next, this.home, effectiveSettings)
+    const repositoryOutputs = new Map<string, Set<string>>()
+    next.managed = renderState(
+      next,
+      this.home,
+      effectiveSettings,
+      repositoryOutputs,
+    )
+    const ignore = await planIgnores(
+      effectiveSettings.ignore,
+      repositoryOutputs,
+      this.repository,
+      previous,
+    )
+    for (const [path, managed] of Object.entries(ignore.managed)) {
+      if (
+        next.managed[path] ||
+        Object.keys(next.managed).some(
+          (output) => inside(output, path) || inside(path, output),
+        )
+      )
+        throw new Error(`Managed output conflicts with ignore target: ${path}`)
+      next.managed[path] = structuredClone(managed)
+    }
+    const ignorePaths = await authorizeIgnoreTargets([previous, next])
     for (const path of new Set([
       ...Object.keys(previous.managed),
       ...Object.keys(next.managed),
     ]))
-      this.assertOwnedPath(path, next, previous)
+      this.assertOwnedPath(path, next, previous, ignorePaths)
     const nodes = await planOutputs(previous.managed, next.managed)
     const changes: NodeChange[] = []
     const files = [...nodes.before].map(([path, before]) => ({ path, before }))
@@ -564,6 +598,7 @@ export class LoadoutService {
         ...Object.keys(next.repositories),
         this.repository,
       ]),
+      ignore: structuredClone(ignore.report),
     }
     this.plans.set(plan, {
       before: beforeState,
@@ -571,6 +606,9 @@ export class LoadoutService {
       changes,
       sources,
       files,
+      ignore: structuredClone(ignore),
+      repositoryOutputs: structuredClone(repositoryOutputs),
+      previousState: structuredClone(previous),
       materializedSources: new Set(
         Object.entries(previous.managed).flatMap(([path, managed]) =>
           managed.type === "symlink" &&
@@ -621,6 +659,23 @@ export class LoadoutService {
             )
         }
       }
+      const checkIgnoreContext = async () => {
+        const current = await planIgnores(
+          data.state.settings!.ignore,
+          data.repositoryOutputs,
+          this.repository,
+          data.previousState,
+        )
+        if (
+          canonical(current.report) !== canonical(data.ignore.report) ||
+          canonical(current.contexts) !== canonical(data.ignore.contexts)
+        )
+          throw new Error(
+            "Git worktree, exclude target, or tracked managed paths changed since review. Review again before applying.",
+          )
+        return authorizeIgnoreTargets([data.previousState, data.state])
+      }
+      const ignorePaths = await checkIgnoreContext()
       const expectedNodes = new Map<string, NodeSnapshot>()
       for (const change of data.files) {
         const current = await snapshotNode(
@@ -674,6 +729,15 @@ export class LoadoutService {
         }
         for (const change of data.changes) {
           await checkSources()
+          if (ignorePaths.has(change.path)) {
+            await checkIgnoreContext()
+            this.assertOwnedPath(
+              change.path,
+              data.state,
+              data.previousState,
+              ignorePaths,
+            )
+          }
           await atomicNodeWrite(
             change.path,
             change.afterNode,
@@ -698,7 +762,20 @@ export class LoadoutService {
     })
   }
 
-  private assertOwnedPath(path: string, state: State, previous?: State): void {
+  private assertOwnedPath(
+    path: string,
+    state: State,
+    previous?: State,
+    ignorePaths = new Set<string>(),
+  ): void {
+    const managed = state.managed[path] ?? previous?.managed[path]
+    if (managed?.type === "ignore") {
+      if (!ignorePaths.has(path))
+        throw new Error(
+          `Ignore target was not authorized for a known repository: ${path}`,
+        )
+      return
+    }
     const roots = [this.home, ...Object.keys(state.repositories)]
     const configured = resolveDestinations(
       state.settings ?? this.defaults,
@@ -750,6 +827,7 @@ export class LoadoutService {
       journal.before === null
         ? emptyState()
         : stateSchema.parse(JSON.parse(journal.before))
+    const ignorePaths = await authorizeIgnoreTargets([previous, state])
     const changes = journal.changes.map((change) => ({
       ...change,
       legacy: change.beforeNode === undefined && change.afterNode === undefined,
@@ -783,7 +861,7 @@ export class LoadoutService {
         expected.kind === "file" &&
         current.content === expected.content)
     for (const change of changes) {
-      this.assertOwnedPath(change.path, state, previous)
+      this.assertOwnedPath(change.path, state, previous, ignorePaths)
       const content = await snapshotNode(
         change.path,
         change.beforeNode.kind === "symlink" ||
@@ -816,6 +894,13 @@ export class LoadoutService {
         throw new Error(
           `Cannot recover a file edited after interruption: ${change.path}`,
         )
+      if (ignorePaths.has(change.path)) {
+        const currentIgnorePaths = await authorizeIgnoreTargets([
+          previous,
+          state,
+        ])
+        this.assertOwnedPath(change.path, state, previous, currentIgnorePaths)
+      }
       await atomicNodeWrite(change.path, change.beforeNode, current)
     }
     await unlink(path)

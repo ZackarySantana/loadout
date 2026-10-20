@@ -18,6 +18,19 @@ const selectionSchema = z.record(z.string(), configuredSchema)
 const managedSchema = z.discriminatedUnion("type", [
   z
     .object({
+      type: z.literal("ignore"),
+      mode: z.enum(["shared", "local"]),
+      repositories: z.array(z.string().min(1)).min(1),
+      patterns: z.array(z.string().min(1)).min(1),
+      block: z.string().optional(),
+      layout: z
+        .object({ prefix: z.string(), suffix: z.string() })
+        .strict()
+        .optional(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("instructions"),
       blocks: z.record(z.string(), z.string()),
       originallyAbsent: z.boolean().optional(),

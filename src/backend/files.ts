@@ -3,6 +3,7 @@ import { constants } from "node:fs"
 import { dirname, parse, resolve } from "node:path"
 import type { Managed } from "./state"
 import { z } from "zod"
+import { reconcileIgnore } from "./ignore-section"
 
 export const nodeSnapshotSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("missing") }).strict(),
@@ -49,7 +50,10 @@ export async function snapshotNode(
     const opened = await handle.stat()
     if (!opened.isFile() || opened.ino !== stat.ino || opened.dev !== stat.dev)
       throw new Error(`File changed while reading: ${path}`)
-    const content = await handle.readFile("utf8")
+    const bytes = await handle.readFile()
+    const content = bytes.toString("utf8")
+    if (!bytes.equals(Buffer.from(content, "utf8")))
+      throw new Error(`Cannot safely preserve non-UTF-8 file content: ${path}`)
     await assertSafePath(path)
     const current = await lstat(path)
     if (
@@ -119,6 +123,13 @@ export function reconcile(
     throw new Error(`Links must be reconciled without following them: ${path}`)
   if (previous && desired && previous.type !== desired.type)
     throw new Error(`Output type conflict: ${path}`)
+  if (previous?.type === "ignore" || desired?.type === "ignore")
+    return reconcileIgnore(
+      path,
+      before,
+      previous?.type === "ignore" ? previous : undefined,
+      desired?.type === "ignore" ? desired : undefined,
+    )
   if (previous?.type === "file" || desired?.type === "file") {
     if (previous?.type === "file" && before !== previous.content)
       throw new Error(

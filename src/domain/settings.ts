@@ -24,11 +24,14 @@ export const outputSettingsSchema = z
     globalInstructions: group,
     repositorySkills: group,
     globalSkills: group,
+    ignore: z.enum(["none", "shared", "local"]).default("none"),
   })
   .strict()
 
 export type OutputSettings = z.infer<typeof outputSettingsSchema>
-export type DestinationGroupKey = keyof OutputSettings
+export type DestinationGroupKey = Exclude<keyof OutputSettings, "ignore">
+export type SettingsKey = keyof OutputSettings
+export type IgnoreMode = OutputSettings["ignore"]
 export const destinationGroups = [
   {
     key: "repositoryInstructions",

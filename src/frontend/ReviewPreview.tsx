@@ -8,6 +8,8 @@ import { destinationGroups } from "../domain/settings"
 
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
+const ignoreLabel = (mode: "none" | "shared" | "local") =>
+  mode === "none" ? "None" : mode === "shared" ? "Shared" : "Local"
 
 export interface ReviewPreviewProps {
   plan?: Plan
@@ -159,6 +161,25 @@ export function ReviewPreview(props: ReviewPreviewProps) {
             </Section>
             <Show when={props.plan?.settingsChanged}>
               <Section title="Settings changes" accent={theme.warning}>
+                <Show
+                  when={
+                    props.plan!.previousSettings.ignore !==
+                    props.plan!.settings.ignore
+                  }
+                >
+                  <box flexDirection="column" flexShrink={0} marginBottom={1}>
+                    <text fg={theme.repository} wrapMode="word" flexShrink={0}>
+                      Generated file ignores
+                    </text>
+                    <text fg={theme.removed} wrapMode="word" flexShrink={0}>
+                      Before ·{" "}
+                      {ignoreLabel(props.plan!.previousSettings.ignore)}
+                    </text>
+                    <text fg={theme.sage} wrapMode="word" flexShrink={0}>
+                      After · {ignoreLabel(props.plan!.settings.ignore)}
+                    </text>
+                  </box>
+                </Show>
                 <For
                   each={destinationGroups.filter(
                     (group) =>
@@ -403,6 +424,131 @@ export function ReviewPreview(props: ReviewPreviewProps) {
               </For>
             </Section>
           </>
+        )}
+      </Show>
+      <Show
+        when={
+          props.plan?.ignore &&
+          (props.plan.ignore.mode !== "none" ||
+            props.plan.ignore.removedTargets.length ||
+            props.plan.ignore.tracked.length ||
+            props.plan.ignore.warnings.length ||
+            props.plan.previousSettings.ignore !== props.plan.settings.ignore)
+            ? props.plan.ignore
+            : undefined
+        }
+      >
+        {(ignore) => (
+          <Section title="Ignore rules" accent={theme.repository}>
+            <text fg={theme.repository} wrapMode="word" flexShrink={0}>
+              Mode · {ignoreLabel(ignore().mode)}
+            </text>
+            <text
+              fg={theme.muted}
+              wrapMode="word"
+              flexShrink={0}
+            >{`${ignore().targets.length} targets · ${ignore().removedTargets.length} removed sections · ${ignore().tracked.length} tracked outputs skipped`}</text>
+            <Show when={ignore().mode === "none"}>
+              <text fg={theme.muted} wrapMode="word" flexShrink={0}>
+                No new rules. Previously generated sections are removed; user
+                rules are preserved.
+              </text>
+            </Show>
+            <For each={ignore().targets}>
+              {(target) => (
+                <box flexDirection="column" flexShrink={0} marginTop={1}>
+                  <text fg={theme.file} wrapMode="word" flexShrink={0}>
+                    {safeText(path(target.path))}
+                  </text>
+                  <text fg={theme.muted} wrapMode="word" flexShrink={0}>
+                    {ignoreLabel(target.mode)} · Rules after Apply
+                  </text>
+                  <For each={target.repositories}>
+                    {(repository) => (
+                      <text
+                        fg={theme.repository}
+                        wrapMode="word"
+                        flexShrink={0}
+                      >
+                        {safeText(repository)}
+                      </text>
+                    )}
+                  </For>
+                  <For each={target.patterns}>
+                    {(pattern) => (
+                      <text fg={theme.text} wrapMode="word" flexShrink={0}>
+                        {safeText(pattern)}
+                      </text>
+                    )}
+                  </For>
+                </box>
+              )}
+            </For>
+            <For each={ignore().removedTargets}>
+              {(target) => (
+                <box flexDirection="column" flexShrink={0} marginTop={1}>
+                  <text fg={theme.removed} wrapMode="word" flexShrink={0}>
+                    {safeText(
+                      `Remove generated section · ${path(target.path)}`,
+                    )}
+                  </text>
+                  <For each={target.repositories}>
+                    {(repository) => (
+                      <text
+                        fg={theme.repository}
+                        wrapMode="word"
+                        flexShrink={0}
+                      >
+                        {safeText(repository)}
+                      </text>
+                    )}
+                  </For>
+                  <For each={target.patterns}>
+                    {(pattern) => (
+                      <text fg={theme.removed} wrapMode="word" flexShrink={0}>
+                        {safeText(`− ${pattern}`)}
+                      </text>
+                    )}
+                  </For>
+                </box>
+              )}
+            </For>
+            <For each={ignore().tracked}>
+              {(tracked) => (
+                <box flexDirection="column" flexShrink={0} marginTop={1}>
+                  <text fg={theme.warning} wrapMode="word" flexShrink={0}>
+                    {safeText(`Skipped · ${path(tracked.path)}`)}
+                  </text>
+                  <text fg={theme.repository} wrapMode="word" flexShrink={0}>
+                    {safeText(tracked.repository)}
+                  </text>
+                  <text fg={theme.muted} wrapMode="word" flexShrink={0}>
+                    Already tracked; no ignore rule added.
+                  </text>
+                </box>
+              )}
+            </For>
+            <For each={ignore().warnings}>
+              {(warning) => (
+                <text fg={theme.warning} wrapMode="word" flexShrink={0}>
+                  {safeText(warning)}
+                </text>
+              )}
+            </For>
+            <text fg={theme.muted} wrapMode="word" flexShrink={0}>
+              Repository managed files and links only. Existing user rules are
+              preserved. Tracked files stay tracked; Git index flags are never
+              changed.
+            </text>
+            <Show
+              when={ignore().targets.length || ignore().removedTargets.length}
+            >
+              <text fg={theme.sage} wrapMode="word" flexShrink={0}>
+                Select an ignore-file change on the left to inspect its exact
+                rule diff before applying.
+              </text>
+            </Show>
+          </Section>
         )}
       </Show>
       <Show

@@ -21,6 +21,22 @@ Defaults support Codex, Claude, and OpenCode. Codex and OpenCode share one repos
 
 Copy mode is the default. Restore defaults stages the default location lists and modes; it does not immediately move files.
 
+## Generated-file ignore rules
+
+Choose how Loadout manages ignore rules for generated repository outputs:
+
+- **None** (default): Loadout adds no ignore rules.
+- **Shared:** add a managed section to the project's `.gitignore`. Commit that file when the rules should be shared with the team.
+- **Local:** add a managed section to Git's private `info/exclude` file. These rules are not committed. Git may share the same exclude file across linked worktrees.
+
+Rules cover exact managed repository files and links, not entire skill directories, kit sources, unrelated files, or global outputs. Existing user rules outside Loadout's marked section are preserved. Changing the mode or selected kits updates only Loadout's own section.
+
+Shared and Local require an accessible Git working tree. None does not require Git, except when cleaning up a previously managed Local section safely.
+
+Already-tracked files remain tracked. Review reports those paths and skips ineffective ignore entries; Loadout never untracks files or changes Git index flags.
+
+The preference and rule-file edits are staged together. Review shows the exact ignore file, patterns, and tracked-file warnings before Apply writes anything. Merely editing settings or checking status never adds rules.
+
 ## Copy or link
 
 Each group chooses how later locations relate to its first location:
@@ -38,6 +54,6 @@ Loadout records the symbolic links it creates. A changed or missing link is drif
 
 Accepting a Settings group stages it with any kit changes. It does not save preferences or change files yet. Cancel discards only the open group's edit.
 
-Settings-only changes can be reviewed without selecting any kits. Review shows settings changes, exact destinations, file relocations, and link targets. Keep editing remains focused by default. Only explicitly choosing Apply changes saves settings and changes the filesystem.
+Settings-only changes can be reviewed without selecting any kits. Review shows settings changes, exact destinations, file relocations, link targets, and ignore-rule edits. Keep editing remains focused by default. Only explicitly choosing Apply changes saves settings and changes the filesystem.
 
 Destination changes can affect existing global outputs and every known repository that retains installation intent. Conflicting edits block apply rather than being overwritten. The same apply journal protects file and link changes during interruption or rollback.

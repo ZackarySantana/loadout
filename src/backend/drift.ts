@@ -210,7 +210,9 @@ export async function inspectDrift(
         reason:
           managed.type === "symlink"
             ? "Managed link and its source match"
-            : "Managed content matches; unrelated instruction text is ignored",
+            : managed.type === "ignore"
+              ? "Owned ignore section matches; unrelated rules are ignored"
+              : "Managed content matches; unrelated instruction text is ignored",
       })
     } catch (error) {
       files.push({ path, status: "modified", reason: message(error) })

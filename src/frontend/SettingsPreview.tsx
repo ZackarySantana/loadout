@@ -3,7 +3,7 @@ import { destinationGroups, type DestinationGroupKey } from "../domain/settings"
 import { scopeColor, theme } from "./theme"
 
 export function SettingsPreview(props: {
-  group?: DestinationGroupKey
+  group?: DestinationGroupKey | "ignore"
   restoring?: boolean
   staged: boolean
 }) {
@@ -24,12 +24,29 @@ export function SettingsPreview(props: {
           </text>
         )}
       </Show>
+      <Show when={props.group === "ignore"}>
+        <text fg={theme.repository} wrapMode="word" flexShrink={0}>
+          Generated file ignores
+        </text>
+      </Show>
       <text fg={theme.text} wrapMode="word" flexShrink={0}>
         {props.restoring
-          ? "Restore all four location lists and copy/link choices. Accept stages defaults; it does not apply them."
-          : "First location is canonical. Copy writes each location. Link makes managed files at later locations symbolic links to the first."}
+          ? "Restore destination and ignore preferences. Accept stages defaults; it does not apply them."
+          : props.group === "ignore"
+            ? "This controls managed repository output files only. None adds no rules. Shared makes team-shared rules; Local uses Git private excludes."
+            : "First location is canonical. Copy writes each location. Link makes managed files at later locations symbolic links to the first."}
       </text>
-      <Show when={!props.restoring}>
+      <Show when={props.group === "ignore"}>
+        <text fg={theme.warning} wrapMode="word" flexShrink={0}>
+          Already tracked files stay tracked; nothing is untracked
+          automatically.
+        </text>
+        <text fg={theme.muted} wrapMode="word" flexShrink={0}>
+          Only generated rules are updated or removed. Existing user rules are
+          preserved.
+        </text>
+      </Show>
+      <Show when={!props.restoring && props.group !== "ignore"}>
         <text fg={theme.muted} wrapMode="word" flexShrink={0}>
           Only managed files are linked, not entire skill directories. Unrelated
           files stay untouched.

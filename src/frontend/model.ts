@@ -21,6 +21,11 @@ import {
 } from "../domain/settings"
 
 export const pages = ["Catalogs", "Installed", "Review", "Settings"] as const
+export type UISettingsKey = DestinationGroupKey | "ignore"
+const settingsKeys: readonly UISettingsKey[] = [
+  ...destinationGroups.map((group) => group.key),
+  "ignore",
+]
 export interface RowChoice {
   value: string | boolean
   label: string
@@ -61,7 +66,7 @@ export interface Row {
   sourceDrift?: KitDrift
   updateStaged?: boolean
   fileDrift?: FileDrift
-  settingsGroup?: DestinationGroupKey
+  settingsGroup?: UISettingsKey
   locationId?: string
   description?: string
   value?: string
@@ -100,11 +105,12 @@ export class ScreenModel {
   savedSettings?: OutputSettings
   defaultsSettings?: OutputSettings
   settingsDraft?: OutputSettings
-  readonly stagedSettingsGroups = new Set<DestinationGroupKey>()
+  readonly stagedSettingsGroups = new Set<UISettingsKey>()
   settingsForm?: {
-    group: DestinationGroupKey | "restore"
+    group: UISettingsKey | "restore"
     locations: { id: string; value: string }[]
     mode: "copy" | "link"
+    ignore: OutputSettings["ignore"]
     inputId?: string
   }
   private nextLocationId = 0
@@ -154,6 +160,8 @@ export class ScreenModel {
           canonical(this.savedSettings[group])
       )
         this.stagedSettingsGroups.delete(group)
+      else if (group === "ignore")
+        rebasedSettings.ignore = previousSettings.ignore
       else rebasedSettings[group] = structuredClone(previousSettings[group])
     }
     this.settingsDraft = this.stagedSettingsGroups.size
@@ -619,13 +627,59 @@ export class ScreenModel {
         focusedOptionIndex: this.optionFocus.get(id) ?? 0,
       })
     }
+    rows.push({
+      id: "settings:ignore",
+      kind: "settings-group",
+      settingsGroup: "ignore",
+      label: "Generated file ignores",
+      scope: "repository",
+      description:
+        settings.ignore === "none"
+          ? "None"
+          : settings.ignore === "shared"
+            ? "Shared"
+            : "Local",
+      staged: settings.ignore !== this.savedSettings?.ignore,
+    })
+    if (this.settingsForm?.group === "ignore") {
+      const id = "settings:ignore:mode"
+      const modes = ["none", "shared", "local"] as const
+      rows.push({
+        id,
+        kind: "choice",
+        label: "Ignore rules",
+        settingsGroup: "ignore",
+        indent: true,
+        choices: modes.map((value) => ({
+          value,
+          label:
+            value === "none" ? "None" : value === "shared" ? "Shared" : "Local",
+          selected: this.settingsForm!.ignore === value,
+        })),
+        focusedOptionIndex:
+          this.optionFocus.get(id) ?? modes.indexOf(this.settingsForm.ignore),
+      })
+      rows.push({
+        id: "settings:ignore:actions",
+        kind: "actions",
+        label: "",
+        settingsGroup: "ignore",
+        indent: true,
+        choices: [
+          { value: "accept", label: "Accept", selected: false },
+          { value: "cancel", label: "Cancel", selected: false },
+        ],
+        focusedOptionIndex:
+          this.optionFocus.get("settings:ignore:actions") ?? 0,
+      })
+    }
     const restoring = this.settingsForm?.group === "restore"
     rows.push({
       id: "settings:restore",
       kind: "settings-group",
       label: "Restore defaults",
       description: restoring
-        ? "Restore all four location lists and copy/link choices."
+        ? "Restore destination and ignore preferences."
         : undefined,
     })
     if (restoring)
@@ -643,9 +697,9 @@ export class ScreenModel {
       })
     return rows
   }
-  private openSettings(group: DestinationGroupKey | "restore"): void {
+  private openSettings(group: UISettingsKey | "restore"): void {
     const value =
-      group === "restore"
+      group === "restore" || group === "ignore"
         ? undefined
         : (this.settingsDraft ?? this.savedSettings)?.[group]
     this.settingsForm = {
@@ -656,6 +710,7 @@ export class ScreenModel {
           value,
         })) ?? [],
       mode: value?.mode ?? "copy",
+      ignore: (this.settingsDraft ?? this.savedSettings)!.ignore,
     }
     this.optionFocus.clear()
     this.cursor = Math.max(
@@ -667,7 +722,7 @@ export class ScreenModel {
       ),
     )
     this.message =
-      "Edit locations, then Accept to stage. Review and Apply saves settings."
+      "Choose preferences, then Accept to stage. Review and Apply saves settings."
   }
   private acceptSettings(): void {
     const form = this.settingsForm
@@ -678,6 +733,7 @@ export class ScreenModel {
       )
       if (form.group === "restore")
         Object.assign(candidate, structuredClone(this.defaultsSettings!))
+      else if (form.group === "ignore") candidate.ignore = form.ignore
       else
         candidate[form.group] = {
           locations: form.locations.map((location) => location.value.trim()),
@@ -688,7 +744,7 @@ export class ScreenModel {
         throw new Error(
           parsed.error.issues[0]?.message ?? "Check the location settings.",
         )
-      if (form.group !== "restore") {
+      if (form.group !== "restore" && form.group !== "ignore") {
         const locations = candidate[form.group].locations
         if (new Set(locations).size !== locations.length)
           throw new Error("Each location must be unique within this group.")
@@ -709,12 +765,11 @@ export class ScreenModel {
         }
       }
       this.stagedSettingsGroups.clear()
-      for (const group of destinationGroups)
+      for (const group of settingsKeys)
         if (
-          canonical(candidate[group.key]) !==
-          canonical(this.savedSettings![group.key])
+          canonical(candidate[group]) !== canonical(this.savedSettings![group])
         )
-          this.stagedSettingsGroups.add(group.key)
+          this.stagedSettingsGroups.add(group)
       this.settingsDraft = this.stagedSettingsGroups.size
         ? candidate
         : undefined
@@ -750,8 +805,11 @@ export class ScreenModel {
         this.message =
           "Settings edit discarded. Previously staged changes are unchanged."
       } else this.acceptSettings()
-    } else if (row.id.endsWith(":mode")) form.mode = action as "copy" | "link"
-    else if (action === "add") {
+    } else if (row.id.endsWith(":mode")) {
+      if (form.group === "ignore")
+        form.ignore = action as OutputSettings["ignore"]
+      else form.mode = action as "copy" | "link"
+    } else if (action === "add") {
       const location = { id: String(++this.nextLocationId), value: "" }
       form.locations.push(location)
       this.editLocation(location.id)

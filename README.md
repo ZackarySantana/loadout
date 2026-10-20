@@ -53,7 +53,9 @@ Instructions and skills go to the ordered locations configured in **Settings**. 
 
 Edit repository/global instruction and skill locations in the Settings tab. Each group supports independent copies or links to its first, primary location. Add, reorder, or remove locations; settings edits are staged alongside kit selections and take effect only after Review and Apply changes.
 
-Link mode links only managed files, not whole skill roots. Unrelated files and independent user instructions are protected; conflicts block apply. Review shows the exact resolved destinations, relocations, and link targets, including effects on other known repositories. See [output settings](docs/settings.md).
+Link mode links only managed files, not whole skill roots. Unrelated files and independent user instructions are protected; conflicts block apply. Review shows the exact resolved destinations, relocations, and link targets, including effects on other known repositories.
+
+The generated-file ignore preference defaults to **None**. Choose **Shared** for project ignore rules or **Local** for Git's private excludes. Only exact managed repository output paths are covered; existing rules are preserved and already-tracked files are reported rather than untracked. Ignore edits also require Review and Apply. See [output settings](docs/settings.md).
 
 ## Catalogs and kits
 

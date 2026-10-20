@@ -13,6 +13,7 @@ export function defaultOutputSettings(
   const codex = environment.CODEX_HOME || "~/.codex"
   const config = environment.XDG_CONFIG_HOME || "~/.config"
   return {
+    ignore: "none",
     repositoryInstructions: {
       locations: ["AGENTS.md", "CLAUDE.md"],
       mode: "copy",
