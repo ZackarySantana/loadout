@@ -117,6 +117,11 @@ test("built CLI navigates bundled kits and updates a live answer in a real PTY o
   const home = join(root, "home")
   const repository = join(root, "external-repo")
   await Promise.all([home, repository].map((path) => mkdir(path)))
+  await mkdir(join(home, ".loadout"))
+  await writeFile(
+    join(home, ".loadout/preferences.json"),
+    JSON.stringify({ walkthroughSeen: true }),
+  )
   let output = ""
   const screen = terminalScreen(160, 50)
   const decoder = new TextDecoder()

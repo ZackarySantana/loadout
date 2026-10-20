@@ -24,12 +24,23 @@ export const outputSettingsSchema = z
     globalInstructions: group,
     repositorySkills: group,
     globalSkills: group,
+    agentLocations: z
+      .object({
+        codex: location,
+        claude: location,
+        opencode: location,
+      })
+      .strict()
+      .optional(),
     ignore: z.enum(["none", "shared", "local"]).default("none"),
   })
   .strict()
 
 export type OutputSettings = z.infer<typeof outputSettingsSchema>
-export type DestinationGroupKey = Exclude<keyof OutputSettings, "ignore">
+export type DestinationGroupKey = Exclude<
+  keyof OutputSettings,
+  "ignore" | "agentLocations"
+>
 export type SettingsKey = keyof OutputSettings
 export type IgnoreMode = OutputSettings["ignore"]
 export const destinationGroups = [

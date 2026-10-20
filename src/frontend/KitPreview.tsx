@@ -388,6 +388,28 @@ export function KitPreview(props: KitPreviewProps) {
           nested: true,
           instructions: false,
         })
+      } else if (output.type === "agent") {
+        sections.push({
+          label: `Agent · ${output.name}`,
+          accent: color.skill,
+          included,
+          files: [
+            {
+              path: "",
+              content: `${output.harnesses.join(" · ")}${output.options ? `\n${JSON.stringify(output.options)}` : ""}\n\n${output.description}`,
+              markdown: false,
+              included,
+            },
+            {
+              path: "",
+              content: output.instructions,
+              markdown: true,
+              included,
+            },
+          ],
+          nested: false,
+          instructions: false,
+        })
       } else {
         sections.push({
           label: `File · ${output.path}`,

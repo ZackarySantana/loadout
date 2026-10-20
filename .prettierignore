@@ -1,0 +1,4 @@
+# Licensed upstream snapshots and their provenance must remain byte-for-byte stable.
+catalog/external/anthropic/
+catalog/external/mattpocock/
+catalog/external/ponytail/

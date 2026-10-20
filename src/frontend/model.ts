@@ -731,9 +731,12 @@ export class ScreenModel {
       const candidate = structuredClone(
         this.settingsDraft ?? this.savedSettings!,
       )
-      if (form.group === "restore")
-        Object.assign(candidate, structuredClone(this.defaultsSettings!))
-      else if (form.group === "ignore") candidate.ignore = form.ignore
+      if (form.group === "restore") {
+        // Restore only the preferences exposed by this editor.
+        for (const { key } of destinationGroups)
+          candidate[key] = structuredClone(this.defaultsSettings![key])
+        candidate.ignore = this.defaultsSettings!.ignore
+      } else if (form.group === "ignore") candidate.ignore = form.ignore
       else
         candidate[form.group] = {
           locations: form.locations.map((location) => location.value.trim()),

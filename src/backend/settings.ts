@@ -14,6 +14,11 @@ export function defaultOutputSettings(
   const config = environment.XDG_CONFIG_HOME || "~/.config"
   return {
     ignore: "none",
+    agentLocations: {
+      codex: join(codex, "agents"),
+      claude: "~/.claude/agents",
+      opencode: join(config, "opencode/agents"),
+    },
     repositoryInstructions: {
       locations: ["AGENTS.md", "CLAUDE.md"],
       mode: "copy",

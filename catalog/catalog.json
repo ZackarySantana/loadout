@@ -41,6 +41,26 @@
       "id": "project-context",
       "name": "Project context and deployment",
       "source": "kits/project-context.yaml"
+    },
+    {
+      "id": "external-matt-questionnaire",
+      "name": "Matt Pocock: discovery questionnaire",
+      "source": "kits/external-matt-questionnaire.yaml"
+    },
+    {
+      "id": "external-anthropic-design",
+      "name": "Anthropic: frontend design",
+      "source": "kits/external-anthropic-design.yaml"
+    },
+    {
+      "id": "external-ponytail",
+      "name": "Ponytail: smallest complete change",
+      "source": "kits/external-ponytail.yaml"
+    },
+    {
+      "id": "subagent-review",
+      "name": "Focused review agent",
+      "source": "kits/subagent-review.yaml"
     }
   ]
 }

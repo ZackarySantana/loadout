@@ -1,0 +1,27 @@
+id: subagent-review
+name: Focused review agent
+description: Install a native review subagent for Codex, Claude Code, and OpenCode.
+questions:
+  - id: enabled
+    type: boolean
+    label: Include the review agent?
+    default: true
+  - id: focus
+    type: input
+    label: What should the reviewer focus on?
+    default: correctness and security
+outputs:
+  - type: agent
+    name: loadout-reviewer
+    description: Review proposed changes for {{focus}} and return actionable findings.
+    when:
+      question: enabled
+      equals: true
+    instructions: |
+      Review the proposed changes for {{focus}}.
+      Do not edit files or run commands. Read relevant source files and return
+      only concrete findings, ordered by severity, with file references.
+      If there are no findings, say so and mention remaining uncertainty.
+    options:
+      claude:
+        tools: [Read, Grep, Glob]

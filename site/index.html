@@ -1,0 +1,1023 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Compose agent instructions, skills, and reusable project context. Choose a kit, configure it, review exact changes, then apply."
+    />
+    <title>Loadout — a considered home for agent context</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand" href="index.html" aria-label="Loadout home"
+          ><span>[ / ]</span> LOADOUT</a
+        >
+        <nav aria-label="Top navigation">
+          <a href="#start">Get started</a><a href="reference.html">Reference</a
+          ><a href="https://github.com/ZackarySantana/loadout">Repository</a>
+        </nav>
+      </div>
+    </header>
+    <div class="layout">
+      <nav class="sidebar" aria-label="On this page">
+        <p>A little orientation</p>
+        <a href="#why">Why Loadout</a
+        ><a href="#choose">Choose the right shape</a
+        ><a href="#start">Get started</a
+        ><a href="#walkthrough">Your first loadout</a
+        ><a href="#scope">Scope &amp; locations</a
+        ><a href="#agent-workflow">Work with an agent</a>
+        <p class="nav-break">A closer look</p>
+        <a href="#context">Context, measured honestly</a
+        ><a href="#subagents">Native subagents</a
+        ><a href="#author">Share &amp; author</a
+        ><a href="#safety">Safety &amp; recovery</a
+        ><a href="#sources">Sources</a>
+      </nav>
+      <main id="main">
+        <section class="hero" id="why">
+          <div class="eyebrow">Small files. Deliberate choices.</div>
+          <h1>The right context.<br />A loadout of your own.</h1>
+          <p class="lede">
+            Compose instructions and skills for your coding agents without
+            hand-maintaining every destination. Pick declarative kits, answer a
+            few questions, and review the real files before anything changes.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="#start"
+              >Build your first loadout ↗</a
+            ><a class="button" href="reference.html">Read the reference</a>
+          </div>
+          <div class="flow" aria-label="Loadout workflow">
+            <div>
+              <span class="step">01 / DISCOVER</span>
+              <svg
+                class="flow-art"
+                viewBox="0 0 120 80"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <rect
+                  class="art-tint"
+                  x="10"
+                  y="12"
+                  width="100"
+                  height="56"
+                  rx="5"
+                />
+                <path
+                  d="M60 12v56M22 27h24m-24 9h17m-17 14h24m-24 9h17M73 27h24m-24 9h17m-17 14h24m-24 9h17"
+                />
+              </svg>
+              <strong>Browse a catalog</strong>
+              <p>Reusable kits, not a pile of pasted prompts.</p>
+            </div>
+            <div>
+              <span class="step">02 / CONFIGURE</span>
+              <svg
+                class="flow-art"
+                viewBox="0 0 120 80"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M33 18h70M33 40h70M33 62h70" />
+                <circle cx="16" cy="18" r="5" />
+                <circle class="art-tint" cx="16" cy="40" r="5" />
+                <circle cx="16" cy="62" r="5" />
+                <rect x="61" y="12" width="9" height="12" rx="2" />
+                <rect
+                  class="art-tint"
+                  x="83"
+                  y="34"
+                  width="9"
+                  height="12"
+                  rx="2"
+                />
+                <rect x="45" y="56" width="9" height="12" rx="2" />
+              </svg>
+              <strong>Make it yours</strong>
+              <p>Choose scope, answer questions, preview content.</p>
+            </div>
+            <div>
+              <span class="step">03 / REVIEW</span>
+              <svg
+                class="flow-art"
+                viewBox="0 0 120 80"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <rect x="15" y="8" width="90" height="64" rx="5" />
+                <path d="M15 24h90M26 16h3m5 0h3m5 0h3" />
+                <rect
+                  class="art-tint"
+                  x="23"
+                  y="32"
+                  width="74"
+                  height="14"
+                  rx="2"
+                />
+                <path d="M29 39h8m-4-4v8m12-4h42M29 57h8m8 0h42" />
+              </svg>
+              <strong>See the changes</strong>
+              <p>Exact destinations, diffs, and conflicts.</p>
+            </div>
+            <div>
+              <span class="step">04 / APPLY</span>
+              <svg
+                class="flow-art"
+                viewBox="0 0 120 80"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M26 22H15v49h64V60" />
+                <rect x="26" y="9" width="64" height="51" rx="4" />
+                <path d="M38 23h35M38 32h23M38 43h16" />
+                <circle class="art-tint" cx="89" cy="55" r="19" />
+                <path d="m80 55 6 6 12-13" />
+              </svg>
+              <strong>Keep control</strong>
+              <p>Write only after explicit confirmation.</p>
+            </div>
+          </div>
+          <p class="small">
+            For Codex, Claude Code, and OpenCode. Local-first configuration; no
+            hosted account required by Loadout.
+          </p>
+        </section>
+        <section id="choose">
+          <div class="eyebrow">Use the smallest useful thing</div>
+          <h2>Not every note needs a kit.</h2>
+          <p>
+            Loadout manages how context is composed and installed. Your agent
+            harness still decides how that context is discovered and used.
+          </p>
+          <div class="cards">
+            <article class="card">
+              <span class="tag">PLAIN INSTRUCTIONS</span>
+              <h3>A few enduring rules</h3>
+              <p>
+                Keep repository facts and everyday conventions in
+                <code>AGENTS.md</code> or <code>CLAUDE.md</code>. Editing one
+                small file yourself may be all you need.
+              </p>
+            </article>
+            <article class="card">
+              <span class="tag">A SKILL</span>
+              <h3>A task-shaped workflow</h3>
+              <p>
+                Put a focused procedure in <code>SKILL.md</code>, with a clear
+                description and supporting references. The harness can load it
+                when relevant rather than treating the whole procedure as
+                standing guidance.
+              </p>
+            </article>
+            <article class="card">
+              <span class="tag">A LOADOUT KIT</span>
+              <h3>A repeatable choice</h3>
+              <p>
+                Use a kit when you want questions, conditional content, multiple
+                outputs, shared authoring, consistent destinations, or
+                independent repository and global intent.
+              </p>
+            </article>
+          </div>
+          <div class="callout">
+            <p>
+              <strong>Organization, not magic compression.</strong> Linking
+              files can reduce duplicate files on disk. It does not, by itself,
+              reduce model context or guarantee that a harness will load content
+              only once.
+            </p>
+          </div>
+        </section>
+        <section id="start">
+          <div class="eyebrow">From this checkout</div>
+          <h2>Get started, locally.</h2>
+          <p>
+            Loadout currently runs from the repository with Bun. It is not an
+            npm-published CLI to install with <code>npx</code>. Use
+            <a href="https://mise.jdx.dev/">mise</a> for the runtimes pinned in
+            <code>.mise.toml</code> in the checkout.
+          </p>
+          <pre><code>mise trust
+mise install
+mise exec -- npm install
+mise run dev</code></pre>
+          <p>
+            Run these commands in the Loadout checkout. To configure another
+            project, point Loadout at it explicitly:
+          </p>
+          <pre><code>mise exec -- npm run dev -- --repo /path/to/project</code></pre>
+          <div class="split">
+            <div>
+              <h3>Build and inspect</h3>
+              <pre><code>mise run build
+mise exec -- bun dist/cli.js --help
+mise exec -- bun src/cli.tsx status</code></pre>
+            </div>
+            <div>
+              <h3>Know what runs</h3>
+              <p>
+                OpenTUI’s Solid integration runs on Bun. npm manages the local
+                dependency lockfile. <code>status</code> is read-only and
+                returns nonzero for source or output drift; it does not repair
+                files.
+              </p>
+              <p class="small">
+                Developing Loadout? Use <code>mise run check</code>.
+                Architecture is described in the
+                <a href="reference.html#development">reference</a>.
+              </p>
+            </div>
+          </div>
+        </section>
+        <section id="walkthrough">
+          <div class="eyebrow">A five-minute orientation</div>
+          <h2>Browse. Configure. Review.</h2>
+          <p>
+            Try the built-in <strong>Project context</strong> kit for a complete
+            example. Looking around and editing a draft do not install anything.
+          </p>
+          <p class="small">
+            The application also offers a dismissible first-launch walkthrough.
+            Replay it with <code>--walkthrough</code> at launch, or
+            <kbd>?</kbd> in the TUI when no form is open. Viewing it does not
+            apply kits or change installation intent.
+          </p>
+          <ol class="walkthrough">
+            <li>
+              <h3>Find a kit</h3>
+              <p>
+                Start on Catalogs. Highlight Loadout to see its kits, then press
+                <kbd>Space</kbd> to browse. Highlight Project context to preview
+                its instructions, skill, and optional note.
+              </p>
+              <div class="terminal" aria-label="Conceptual catalog preview">
+                <span class="muted">Catalogs / Loadout</span><br /><span
+                  class="selected"
+                  >› Project context</span
+                ><br /><span class="muted">
+                  Questions → instructions + skill + optional file</span
+                >
+              </div>
+              <p class="small">
+                Conceptual illustration, not a terminal screenshot. Repo
+                discovers your project’s
+                <code>.loadout/kits/*.yaml</code> automatically.
+              </p>
+            </li>
+            <li>
+              <h3>Choose where it belongs</h3>
+              <p>
+                Press <kbd>Space</kbd> to configure. Start with Repository for
+                project-specific context. Answer the project-name question, then
+                decide whether deployment guidance and the optional note are
+                useful.
+              </p>
+              <div class="terminal">
+                <span class="muted">Install where?</span><br /><span
+                  class="repo"
+                  >● Repository</span
+                >
+                &nbsp; <span class="global">○ Global</span> &nbsp;
+                <span class="both">○ Both</span><br /><span class="muted"
+                  >What is this project called?</span
+                ><br />
+                My project
+              </div>
+              <p>
+                The preview changes with your answers; excluded fragments are
+                gray. An open kit keeps navigation inside its own form. Use the
+                explicit Cancel action to discard its edits.
+              </p>
+            </li>
+            <li>
+              <h3>Accept a draft, not a write</h3>
+              <p>
+                Choose Accept, or press <kbd>Esc</kbd>, to stage the kit.
+                Required questions must be answered first.
+                <kbd>Enter</kbd> finishes typing an answer without accepting the
+                whole kit.
+              </p>
+            </li>
+            <li>
+              <h3>Read the review</h3>
+              <p>
+                Switch to Review with <kbd>Tab</kbd>. Inspect the exact resolved
+                paths, generated text, diff, and any other affected
+                repositories. The default action is Keep editing.
+              </p>
+              <div class="terminal">
+                <span class="muted">Review / planned changes</span><br />+
+                instruction fragments<br />+ managed skill files<br /><br /><span
+                  class="selected"
+                  >● Keep editing</span
+                >
+                &nbsp; ○ Apply changes
+              </div>
+            </li>
+            <li>
+              <h3>Apply only when ready</h3>
+              <p>
+                Explicitly focus Apply changes, then press <kbd>Space</kbd>.
+                That is the final confirmation. Loadout saves intent and answers
+                even if there are no file changes. Start or refresh your agent
+                harness as its own discovery rules require.
+              </p>
+            </li>
+          </ol>
+          <details>
+            <summary>Keyboard field guide</summary>
+            <p>
+              Scope colors reinforce labels: Repository is blue, Global gold,
+              Both lavender, and Not installed gray. Instructions use sage,
+              skills lavender, and other files blue. Excluded content is gray;
+              labels and markers do not rely on color alone. Highlight a file in
+              Review to inspect its colored diff.
+            </p>
+            <p>
+              <kbd>↑</kbd>/<kbd>↓</kbd> or <kbd>j</kbd>/<kbd>k</kbd> move
+              between rows; lists wrap. <kbd>←</kbd>/<kbd>→</kbd> or
+              <kbd>h</kbd>/<kbd>l</kbd> focus horizontal options;
+              <kbd>Space</kbd> selects or toggles. Focus is distinct from
+              selected radio/check markers, and options wrap on narrow
+              terminals.
+            </p>
+            <p>
+              Landing on a text input starts typing; Vim keys and
+              <kbd>q</kbd> are then literal text. Up/Down can leave the input.
+              Text stays visible below its label; question help is muted and
+              italic. Accept/Cancel share one horizontal action row.
+            </p>
+            <p>
+              <kbd>Tab</kbd>/<kbd>Shift</kbd>+<kbd>Tab</kbd> cycle Catalogs,
+              Installed, Review, and Settings after an open form is finished.
+              <kbd>PgUp</kbd>/<kbd>PgDn</kbd> scroll details. Outside a kit, Esc
+              goes back or stops catalog input. <kbd>r</kbd> refreshes sources
+              and drift when no form is open.
+            </p>
+            <p>
+              Press <kbd>q</kbd> twice to exit: once to open confirmation, again
+              to exit. Esc stays; Space does not confirm exit.
+              <kbd>Ctrl</kbd>+<kbd>C</kbd> opens the same prompt.
+            </p>
+            <p>
+              Kit previews merge instruction fragments into one section; skills
+              show their names and supporting files. Review retains drafts when
+              you choose Keep editing, returns to Installed, and refreshes the
+              plan next time.
+            </p>
+          </details>
+        </section>
+        <section id="scope">
+          <div class="eyebrow">Intent is not a destination</div>
+          <h2>One kit. Two kinds of home.</h2>
+          <div class="cards">
+            <article class="card">
+              <h3 class="repo">Repository</h3>
+              <p>
+                Keep context in this project. Good for a team’s conventions and
+                project-specific answers.
+              </p>
+            </article>
+            <article class="card">
+              <h3 class="global">Global</h3>
+              <p>
+                Keep context in your user configuration, available across
+                projects that your harness discovers.
+              </p>
+            </article>
+            <article class="card">
+              <h3 class="both">Both</h3>
+              <p>
+                Retain both intentions, but materialize only the global copy
+                while it exists. Repository intent becomes a fallback.
+              </p>
+            </article>
+          </div>
+          <p>
+            Adding a global kit suppresses redundant copies in all known
+            repositories without forgetting their intent. Removing the global
+            kit restores those repository copies with each project’s saved
+            answers. Review includes every affected repository, not just this
+            session’s project. Tab transitions refresh scope saved by other
+            sessions.
+          </p>
+          <p>
+            Choose <strong>Repository</strong> to remove global intent but keep
+            this project’s fallback. <strong>Not installed</strong> clears
+            global intent and this project’s repository intent, not other
+            projects’ intent.
+          </p>
+          <div class="split">
+            <div>
+              <h3>Locations &amp; copies</h3>
+              <p>
+                Settings controls ordered repository/global instruction and
+                skill locations. Defaults cover Codex, Claude, and OpenCode,
+                including their shared repository instruction destination.
+                Explicit Codex and XDG configuration homes are respected.
+              </p>
+              <p>
+                Copy mode writes independent files. Link mode stores real
+                managed files in the first, primary location and links
+                individual managed files in later locations—not whole skill
+                roots.
+              </p>
+            </div>
+            <div>
+              <h3>Generated-file ignores</h3>
+              <p>
+                None is the default. Shared maintains a marked section in
+                <code>.gitignore</code>; Local uses Git’s private exclude file.
+                Rules cover exact managed repository files and links only.
+              </p>
+              <p>
+                Tracked files stay tracked. Loadout reports and skips
+                ineffective rules; it never untracks files or changes index
+                flags. Settings and rule changes still require Review and Apply.
+              </p>
+            </div>
+          </div>
+          <p>
+            <a href="reference.html#settings"
+              >Location, link, and ignore reference →</a
+            >
+          </p>
+        </section>
+        <section id="agent-workflow">
+          <div class="eyebrow">A helpful second pair of eyes</div>
+          <h2>Let an agent help you choose.</h2>
+          <p>
+            Give your agent the Loadout checkout and a concrete goal. Its
+            question tool can gather your answers; the CLI provides structured
+            discovery, planning, and guarded apply without driving the terminal
+            UI.
+          </p>
+          <pre><code>Help me configure Loadout for this repository.
+Run guide, then inspect --json from the Loadout checkout.
+Ask which harnesses I use, my project conventions, and whether each
+kit belongs in this repository or my global configuration.
+Inspect existing instruction and skill files before proposing changes.
+Prefer a small kit or plain instructions when that is enough.
+Show the exact plan, destinations, and conflicts; wait for my approval
+before any apply. Do not put secrets in saved answers.</code></pre>
+          <ol>
+            <li>
+              <strong>Discover:</strong> inspect the current command contract
+              and available kits; do not assume a published package exists.
+            </li>
+            <li>
+              <strong>Ask:</strong> agree on scope, destinations, and the
+              answers that control conditional content.
+            </li>
+            <li>
+              <strong>Preview:</strong> compare generated content and existing
+              files; explain external provenance and harness caveats.
+            </li>
+            <li>
+              <strong>Confirm:</strong> obtain approval of the actual current
+              plan, then apply through Loadout’s guarded workflow.
+            </li>
+          </ol>
+          <pre><code>mise exec -- bun src/cli.tsx guide
+mise exec -- bun src/cli.tsx inspect --json --repo /path/to/project
+mise exec -- bun src/cli.tsx plan --request request.json --json --repo /path/to/project
+# Only after the human approves this exact review token:
+mise exec -- bun src/cli.tsx apply --request request.json --review-token TOKEN --approve --json --repo /path/to/project</code></pre>
+          <p>
+            <strong>The agent must never self-confirm.</strong>
+            <code>--approve</code> attests to actual human approval of the exact
+            review token. Apply rebuilds the plan and rejects changed context; a
+            new token requires renewed review and approval. Registering external
+            catalogs needs separate consent.
+          </p>
+          <p>
+            <a href="reference.html#agent-workflow"
+              >Request schema, conditional answers, and review-token contract
+              →</a
+            >
+          </p>
+        </section>
+        <section id="context">
+          <div class="eyebrow">Know what you are counting</div>
+          <h2>Less standing prose.<br />Not a token-savings promise.</h2>
+          <p>
+            Moving a task procedure out of standing instructions and into a
+            skill changes <em>when</em> a harness may load its body. The
+            description still has a discovery cost. Invoking the skill loads
+            more content; reading its references loads more again.
+          </p>
+          <div class="table-wrap">
+            <table>
+              <caption>
+                Documented loading policies—not interchangeable runtimes
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Harness</th>
+                  <th scope="col">Discovery</th>
+                  <th scope="col">Activation &amp; references</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Codex</th>
+                  <td>
+                    Name, description, and path. Its initial skill list has a
+                    configurable context budget and may shorten descriptions or
+                    omit entries.
+                  </td>
+                  <td>
+                    Explicit <code>$skill</code> or implicit description
+                    matching loads full <code>SKILL.md</code>.
+                    <a href="https://developers.openai.com/codex/build-skills"
+                      >Source</a
+                    >
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Claude Code</th>
+                  <td>
+                    Descriptions allow relevance matching, subject to its
+                    listing budget and invocation controls.
+                  </td>
+                  <td>
+                    <code>/skill-name</code> or model invocation loads the body.
+                    <code>disable-model-invocation: true</code> makes invocation
+                    manual. Supporting files can be read as needed.
+                    <a href="https://code.claude.com/docs/en/skills">Source</a>
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">OpenCode</th>
+                  <td>
+                    Permitted, advertised skills list ID, name, and description
+                    at each model step.
+                  </td>
+                  <td>
+                    The <code>skill</code> tool loads the body without
+                    frontmatter; supporting contents are not automatic.
+                    <code>@skill-id</code> explicitly requests a skill.
+                    <a href="https://opencode.ai/v2/docs/skills">Source</a>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <caption>
+                Exact pinned upstream text · UTF-8 bytes / whitespace-separated
+                words / lines
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Source</th>
+                  <th scope="col">Full SKILL.md</th>
+                  <th scope="col">Body only</th>
+                  <th scope="col">Illustrative discovery</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">
+                    <a
+                      href="https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/skills/productivity/to-questionnaire/SKILL.md"
+                      >Matt Pocock · to-questionnaire</a
+                    ><br /><span class="small">MIT</span>
+                  </th>
+                  <td>2,904 / 470 / 54</td>
+                  <td>2,740 / 447 / 49</td>
+                  <td>106 / 17 / 2</td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    <a
+                      href="https://github.com/anthropics/skills/blob/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/frontend-design/SKILL.md"
+                      >Anthropic · frontend-design</a
+                    ><br /><span class="small">Apache-2.0</span>
+                  </th>
+                  <td>9,390 / 1,516 / 71</td>
+                  <td>9,103 / 1,477 / 66</td>
+                  <td>221 / 30 / 2</td>
+                </tr>
+                <tr>
+                  <th scope="row">
+                    <a
+                      href="https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/skills/ponytail/SKILL.md"
+                      >DietrichGebert · Ponytail</a
+                    ><br /><span class="small">MIT</span>
+                  </th>
+                  <td>3,496 / 592 / 52</td>
+                  <td>3,029 / 527 / 41</td>
+                  <td>377 / 56 / 3</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            <strong>Discovery here means exactly</strong>
+            <code>name + LF + parsed description + LF</code>. It is an
+            accounting definition, not a captured host prompt. Matt’s skill is
+            explicitly user-invoked upstream; preserving its policy does not
+            make the same policy work identically in every harness.
+          </p>
+          <div class="table-wrap">
+            <table>
+              <caption>
+                Assumed activation cases · same three full skill texts, not
+                measured runtime
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Case</th>
+                  <th scope="col">Included source text</th>
+                  <th scope="col">UTF-8 bytes</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Always inline</th>
+                  <td>All three complete SKILL.md files</td>
+                  <td>15,790</td>
+                </tr>
+                <tr>
+                  <th scope="row">Discovery only</th>
+                  <td>Three name-and-description strings</td>
+                  <td>704</td>
+                </tr>
+                <tr>
+                  <th scope="row">Questionnaire activated</th>
+                  <td>Discovery + full questionnaire (704 + 2,904)</td>
+                  <td>3,608</td>
+                </tr>
+                <tr>
+                  <th scope="row">All three activated</th>
+                  <td>Discovery + all full files (704 + 15,790)</td>
+                  <td>16,494</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            The last case exceeds the inline baseline: lazy loading is useful
+            when material stays unneeded, not a guarantee that every task costs
+            less. OpenCode loads the body without frontmatter; these activation
+            examples deliberately use <em>full-file</em> accounting rather than
+            pretending to model all hosts.
+          </p>
+          <p>
+            A genuine upstream instructions example,
+            <a
+              href="https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/AGENTS.md"
+              >Ponytail’s AGENTS.md</a
+            >, measures <strong>2,721 bytes / 473 words / 32 lines</strong>. It
+            is different text from its skill, not an equivalent-content
+            baseline: subtracting their sizes would not establish savings. This
+            comparison file is not installed by the curated kits.
+          </p>
+          <details open>
+            <summary>Methodology, exclusions, and reproducibility</summary>
+            <p>
+              Measurements use pinned upstream UTF-8 text retrieved 19 October
+              2026. Bytes use <code>Buffer.byteLength</code>; words are maximal
+              non-whitespace runs (<code>/\S+/gu</code>). Lines are LF-separated
+              logical lines, with no phantom empty line after a final LF; empty
+              text has zero lines. Unicode characters, also present in the raw
+              data, mean code points, not grapheme clusters.
+            </p>
+            <p>
+              Frontmatter includes delimiter lines and their LF. Body means
+              everything after the closing delimiter LF, including the following
+              blank line. Descriptions are parsed YAML scalars: Ponytail’s
+              folded description retains its trailing LF, so its discovery
+              string has three lines, not two.
+            </p>
+            <p>
+              Full-file counts exclude license files, SOURCE notices, and Matt’s
+              Codex UI/policy metadata; these installed supporting files have
+              separate records in the data. The selected directories contain no
+              required external supporting Markdown, scripts, or binaries. If
+              references or notices are read by a host, their contents must be
+              added. Do not confuse installed disk totals with prompt text.
+            </p>
+            <p>
+              Actual paths, wrappers, permissions, metadata budgets,
+              hidden/always-active policies, system prompts, tools, history,
+              truncation, and retained activations differ.
+              <strong>No tokenizer was used:</strong> bytes and words are not
+              runtime tokens, latency, cost, or a benchmark.
+            </p>
+            <p>
+              <a href="source-measurements.json" download
+                >Download measurement and provenance JSON</a
+              >
+              · Complete file inventory:
+              <code>catalog/external-sources.json</code> in the checkout. The
+              downloadable JSON and HTML tables are maintained static
+              presentations, not automatically generated by the measurement
+              command.
+            </p>
+            <ol>
+              <li>
+                Run
+                <code>mise exec -- bun catalog/external/measure.ts</code>
+                offline. It derives metrics from vendored text and regenerates
+                the canonical <code>catalog/external-sources.json</code>,
+                curated kit YAML, and SOURCE notices, without downloading or
+                executing upstream code.
+              </li>
+              <li>
+                Manually refresh <code>site/source-measurements.json</code> from
+                that canonical inventory, and update all HTML measurement
+                tables, assumed activation cases, totals, citations, and dated
+                references together.
+              </li>
+              <li>
+                Review the synchronized presentation against the pinned sources,
+                licenses, hashes, arithmetic, and methodology before sharing it.
+                The command does not update the site extract or HTML.
+              </li>
+            </ol>
+          </details>
+        </section>
+        <section id="subagents">
+          <div class="eyebrow">Native profiles, native rules</div>
+          <h2>A subagent is not just a skill.</h2>
+          <p>
+            A skill packages a workflow; a subagent is a harness-specific
+            assistant profile with its own invocation and context behavior.
+            Installing a definition does not launch it, guarantee delegation, or
+            make the same permission controls portable across harnesses.
+          </p>
+          <div class="cards">
+            <article class="card">
+              <h3>Codex</h3>
+              <p>
+                Follow Codex’s native agent configuration and delegation
+                support. Do not assume Claude frontmatter or OpenCode permission
+                rules translate directly.
+              </p>
+              <a href="https://developers.openai.com/codex/subagents"
+                >Native documentation ↗</a
+              >
+            </article>
+            <article class="card">
+              <h3>Claude Code</h3>
+              <p>
+                Subagents use native definitions and tool/permission policies.
+                Skills can also use a forked context; that is a Claude-specific
+                feature, not a portable skill guarantee.
+              </p>
+              <a href="https://code.claude.com/docs/en/sub-agents"
+                >Native documentation ↗</a
+              >
+            </article>
+            <article class="card">
+              <h3>OpenCode</h3>
+              <p>
+                Subagents run in fresh child sessions. Parent permissions
+                control launching; children use their own configured
+                permissions. Native profiles use <code>mode: subagent</code>.
+              </p>
+              <a href="https://opencode.ai/v2/docs/agents"
+                >Native documentation ↗</a
+              >
+            </article>
+          </div>
+          <p>
+            Loadout’s <code>type: agent</code> contribution serializes separate
+            native profiles for the selected harnesses. They participate in the
+            same scope, snapshot, review, conflict, and recovery lifecycle as
+            other managed outputs. Native agents are not cross-harness symlink
+            copies.
+          </p>
+          <p>
+            Omitted model/tool settings inherit host behavior, not a
+            least-privilege sandbox. Delegation may isolate a task’s working
+            context, but child prompts, repeated instructions, and returned
+            results still have costs; it is not free context or automatic token
+            savings.
+          </p>
+          <p>
+            <a href="reference.html#agents"
+              >Agent-output fields, native destinations, and an example →</a
+            >
+          </p>
+        </section>
+        <section id="author">
+          <div class="eyebrow">Share the recipe, not everyone’s answers</div>
+          <h2>Start with one YAML file.</h2>
+          <p>
+            Commit kit YAML directly under <code>.loadout/kits/</code>. The
+            automatic Repo catalog needs no index and no registration; each
+            teammate chooses kits and answers independently.
+          </p>
+          <pre><code>id: project-note
+name: Project note
+description: Add a short project reminder.
+questions:
+  - id: project-name
+    label: What is this project called?
+    type: input
+    default: My project
+    required: true
+outputs:
+  - type: instructions
+    content: |
+      You are working on {{project-name}}. Follow this repository's conventions.</code></pre>
+          <p>
+            Kits ask input, boolean, select, and multi-select questions.
+            Conditions include content declaratively; interpolation changes
+            content only, never paths. Kits do not run hooks, execute code, or
+            invoke subagents.
+          </p>
+          <div class="actions">
+            <a class="button" href="reference.html#kits"
+              >Full authoring contract</a
+            ><a class="button" href="reference.html#catalogs"
+              >Catalog examples</a
+            >
+          </div>
+          <p class="small">
+            Copyable checkout examples:
+            <code>catalog/kits/project-context.yaml</code>,
+            <code>examples/team-catalog/</code>, and
+            <code>examples/subagent-kit.yaml</code>. They stay local until a
+            future authorized publication.
+          </p>
+          <h3>External catalogs</h3>
+          <p>
+            An external catalog is a strict JSON index pointing at
+            self-contained kit YAML. Register a local path or HTTPS URL;
+            registration is a user-wide source reference, not an installation.
+          </p>
+          <pre><code>mise exec -- bun src/cli.tsx catalog add /path/to/catalog.json
+mise exec -- bun src/cli.tsx catalog list
+mise exec -- bun src/cli.tsx catalog remove /path/to/catalog.json</code></pre>
+          <p>
+            <a href="reference.html#catalogs"
+              >Catalog schema, source boundaries, and offline behavior →</a
+            >
+          </p>
+          <h3>Provenance is part of a useful kit</h3>
+          <p>
+            Before sharing an upstream skill, verify the author and repository,
+            pin a commit, inspect every supporting file, and confirm that its
+            license permits redistribution. Preserve notices and distinguish
+            original text from adaptations. Publicly readable does not mean
+            freely redistributable.
+          </p>
+          <p>
+            Review instructions as carefully as code: they can persuade an agent
+            to use tools even though Loadout never executes the kit. Ambiguous
+            source names are not enough to establish identity. Do not install
+            guessed content or imply an endorsement.
+          </p>
+          <p>
+            Curated selections include Matt Pocock’s questionnaire (MIT),
+            Anthropic’s frontend design (Apache-2.0), and DietrichGebert’s
+            Ponytail core skill (MIT). They include the complete selected skill
+            directories, licenses, and source notices—not entire upstream
+            repositories or Ponytail’s hooks/plugins. Matt’s Codex policy
+            metadata is preserved. Ponytail’s requested modes and session
+            persistence depend on the host and never override user constraints.
+          </p>
+          <p class="small">
+            Read
+            <a href="source-measurements.json">pinned commits and hashes</a>,
+            <a href="#context">source measurements</a>, and
+            <a href="reference.html#attribution">first-party attribution</a>.
+            Installing a kit does not run its skill; upstream authors do not
+            thereby endorse Loadout.
+          </p>
+        </section>
+        <section id="safety">
+          <div class="eyebrow">A review is a boundary</div>
+          <h2>Keep your work yours.</h2>
+          <div class="split">
+            <div>
+              <h3>Detect, don’t silently replace</h3>
+              <p>
+                Saved definitions and answers keep installed kits usable when
+                sources disappear or become invalid. A changed source never
+                silently updates your installation. Modified or missing managed
+                output is a separate conflict.
+              </p>
+              <p>
+                Use Installed → Use catalog update for an explicit update,
+                answer new or incompatible questions, then review and apply.
+                User instruction text outside managed blocks is preserved.
+              </p>
+            </div>
+            <div>
+              <h3>State is local, not secret storage</h3>
+              <p>
+                <code>~/.loadout/state.json</code> records registrations,
+                intent, answers, snapshots with source provenance, known
+                repositories, and managed-file records. Answers are plain text.
+                Never enter secrets.
+              </p>
+              <p>
+                Changing global scope can touch every known repository. An
+                inaccessible project or conflicting edit can block a safe apply.
+              </p>
+            </div>
+          </div>
+          <div class="callout">
+            <p>
+              <strong>Interrupted apply?</strong> Close other sessions and
+              verify no apply is running before manually removing only
+              <code>~/.loadout/lock</code>. Keep <code>journal.json</code>: the
+              next launch uses it for recovery. If files changed after
+              interruption, stop and inspect rather than overwriting them.
+            </p>
+          </div>
+          <p>
+            Apply checks concurrent edits and uses a write-ahead journal for
+            rollback. Atomic replacement preserves permission bits, not a
+            promise of extended attributes, ACLs, or hard-link relationships.
+            Recovery is not a backup.
+          </p>
+          <p>
+            <a href="reference.html#safety"
+              >Read the complete safety and recovery reference →</a
+            >
+          </p>
+        </section>
+        <section id="sources">
+          <div class="eyebrow">Inspect the evidence</div>
+          <h2>Sources, not slogans.</h2>
+          <ul class="sources">
+            <li>
+              Loadout checkout: <code>src/domain/kit.ts</code> (strict schemas),
+              <code>src/domain/subagents.ts</code> (native agents),
+              <code>src/domain/workflow.ts</code> (CLI protocol), and
+              <code>catalog/catalog.json</code> (built-in catalog). Checked-out
+              files are authoritative; published repository content may lag this
+              local work.
+            </li>
+            <li>
+              <a href="https://developers.openai.com/codex/build-skills"
+                >OpenAI: build skills</a
+              >,
+              <a href="https://developers.openai.com/codex/guides/agents-md"
+                >AGENTS.md discovery</a
+              >, and
+              <a href="https://developers.openai.com/codex/subagents"
+                >subagents</a
+              >.
+            </li>
+            <li>
+              <a href="https://code.claude.com/docs/en/skills"
+                >Claude Code: skills and invocation controls</a
+              >,
+              <a href="https://code.claude.com/docs/en/memory"
+                >instruction loading</a
+              >, and
+              <a href="https://code.claude.com/docs/en/sub-agents">subagents</a
+              >.
+            </li>
+            <li>
+              <a href="https://opencode.ai/v2/docs/skills"
+                >OpenCode: skills and loading</a
+              >,
+              <a href="https://opencode.ai/v2/docs/agents"
+                >agents and permissions</a
+              >, and
+              <a href="https://opencode.ai/v2/docs/instructions">instructions</a
+              >. These URLs refer to the harness documentation, not a Loadout
+              version.
+            </li>
+            <li>
+              <a href="https://agentskills.io/specification"
+                >Agent Skills specification</a
+              >. A shared file format does not imply identical runtime policies.
+            </li>
+          </ul>
+          <p class="small">
+            Policy summaries checked 19 October 2026. Upstream documentation can
+            change; consult the linked primary source for your installed
+            harness.
+          </p>
+        </section>
+      </main>
+    </div>
+    <footer>
+      <span>[ / ] Loadout · thoughtful context, explicit changes</span
+      ><span
+        ><a href="reference.html">Reference</a> ·
+        <a href="https://github.com/ZackarySantana/loadout/blob/main/LICENSE"
+          >MIT license</a
+        >
+        · Static, local, no tracking</span
+      >
+    </footer>
+  </body>
+</html>

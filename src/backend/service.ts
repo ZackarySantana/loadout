@@ -10,7 +10,7 @@ import {
 } from "node:fs/promises"
 import { dirname, join, relative, isAbsolute, resolve } from "node:path"
 import { hostname } from "node:os"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { outputSettingsSchema, type OutputSettings } from "../domain/settings"
 import {
   defaultOutputSettings,
@@ -50,6 +50,7 @@ import {
   type NodeSnapshot,
 } from "./files"
 import { renderState } from "./render"
+import { agentPath, agentRoots } from "./subagents"
 import { planOutputs } from "./outputs"
 import { emptyState, stateSchema, type State } from "./state"
 import {
@@ -294,7 +295,9 @@ export class LoadoutService {
   }
 
   settings(): OutputSettings {
-    return structuredClone(this.state.settings ?? this.defaults)
+    const settings = structuredClone(this.state.settings ?? this.defaults)
+    settings.agentLocations ??= structuredClone(this.defaults.agentLocations)
+    return settings
   }
   defaultSettings(): OutputSettings {
     return structuredClone(this.defaults)
@@ -514,6 +517,9 @@ export class LoadoutService {
     const effectiveSettings = structuredClone(
       candidateSettings ?? previousSettings,
     )
+    effectiveSettings.agentLocations ??= structuredClone(
+      previousSettings.agentLocations,
+    )
     // Validate repository lists even when no repository intent exists yet.
     resolveDestinations(effectiveSettings, this.home, [
       ...Object.keys(next.repositories),
@@ -628,6 +634,32 @@ export class LoadoutService {
       ),
     })
     return plan
+  }
+
+  /** Bind a cross-process CLI review to privately captured intent and file guards. */
+  reviewDigest(plan: Plan): string {
+    const data = this.plans.get(plan)
+    if (!data)
+      throw new Error("This review belongs to a different Loadout session")
+    return createHash("sha256")
+      .update(
+        canonical({
+          home: this.home,
+          repository: this.repository,
+          before: data.before,
+          state: data.state,
+          changes: data.changes,
+          sources: data.sources,
+          files: data.files,
+          materializedSources: [...data.materializedSources].sort(),
+          linkSources: [...data.linkSources].sort(),
+          ignore: data.ignore,
+          repositoryOutputs: [...data.repositoryOutputs]
+            .map(([root, paths]) => [root, [...paths].sort()])
+            .sort(([a], [b]) => String(a).localeCompare(String(b))),
+        }),
+      )
+      .digest("hex")
   }
 
   async apply(plan: Plan): Promise<void> {
@@ -782,13 +814,31 @@ export class LoadoutService {
       this.home,
       Object.keys(state.repositories),
     )
-    const explicitDestination = configured.some((group) =>
-      group.locations.some((location) =>
-        group.kind === "instructions"
-          ? path === location
-          : inside(location, path),
+    const nativeRoots = agentRoots(
+      state.settings ?? this.defaults,
+      this.home,
+      this.home,
+      true,
+    )
+    const nativeDestination = Object.values(state.global).some((config) =>
+      config.kit.outputs.some(
+        (output) =>
+          output.type === "agent" &&
+          output.harnesses.some(
+            (harness) =>
+              agentPath(nativeRoots[harness], output.name, harness) === path,
+          ),
       ),
     )
+    const explicitDestination =
+      nativeDestination ||
+      configured.some((group) =>
+        group.locations.some((location) =>
+          group.kind === "instructions"
+            ? path === location
+            : inside(location, path),
+        ),
+      )
     if (
       !isAbsolute(path) ||
       (!explicitDestination &&

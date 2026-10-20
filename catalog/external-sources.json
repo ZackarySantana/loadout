@@ -1,0 +1,313 @@
+{
+  "retrievalDate": "2026-10-19",
+  "methodology": {
+    "command": "bun catalog/external/measure.ts",
+    "operation": "Offline regeneration from vendored UTF-8 text only. Does not download, install, or execute upstream code. Regenerates the three external kit YAML files, SOURCE.md sidecars, and this measurement data.",
+    "units": "UTF-8 bytes use Buffer.byteLength; characters are Unicode code points ([...text].length), not UTF-16 units or grapheme clusters; words are maximal non-whitespace runs (/\\S+/gu); lines count LF-separated logical lines without a phantom empty line after a final LF. Empty text has zero lines.",
+    "separation": "Frontmatter includes both delimiter lines and their LF. Body is every character after the closing frontmatter delimiter LF, including the following blank line. Description is the parsed YAML scalar (folded for Ponytail), with no added newline. Discovery is exactly name + LF + parsed description + LF; not an observed host prompt format.",
+    "tokenization": "No tokenizer used. These are byte/character/word/line measurements, not token counts or measured runtime context savings.",
+    "illustrativeComparison": "An always-inline baseline can concatenate the exact same full SKILL.md files. An illustrative discovery-only state concatenates only discoveryNameAndDescription; activation then adds the selected full file (or body, if explicitly comparing body-only loading). Sum the appropriate fields. This is a conditional accounting illustration, not a benchmark: actual hosts may load more metadata, wrappers, license/support text, retain prior activations, or make skills always active.",
+    "licenseAndSupport": "Full-file skill measurements exclude license, source notices, and the optional Codex UI/policy metadata file. Their separate file records account for installed bytes. Do not compare installed disk totals to prompt text as if they were the same thing.",
+    "agentsComparison": "The Ponytail AGENTS.md is a genuine upstream always-on rules alternative, not byte-identical to SKILL.md. Its measurement is an independent real-world reference; differences are not savings from equivalent content."
+  },
+  "sources": [
+    {
+      "id": "external-matt-questionnaire",
+      "name": "Matt Pocock: discovery questionnaire",
+      "description": "Interview stakeholders through a focused Markdown questionnaire, using Matt Pocock's to-questionnaire skill.",
+      "author": "Matt Pocock",
+      "repo": "mattpocock/skills",
+      "commit": "5beb35b040e3de97e54fa9e386d7e42d15c295c2",
+      "directory": "mattpocock/to-questionnaire",
+      "upstreamDirectory": "skills/productivity/to-questionnaire",
+      "license": "MIT",
+      "licensePath": "LICENSE",
+      "rationale": "A complete, focused stakeholder-discovery workflow without the issue trackers, scripts, or sibling-skill dependencies of larger engineering bundles.",
+      "limitations": "Explicitly user-invoked upstream; disable-model-invocation and Codex policy metadata are preserved. Hosts differ in their support for these controls. The skill writes a questionnaire only when invoked; installing this kit does not run it.",
+      "citations": [
+        "https://www.aihero.dev/skills",
+        "https://github.com/mattpocock/skills"
+      ],
+      "retrievalDate": "2026-10-19",
+      "skillName": "to-questionnaire",
+      "skillDescription": "Turn a decision you can't fully answer into a questionnaire for someone else to fill in.",
+      "sourceUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/skills/productivity/to-questionnaire/SKILL.md",
+      "supportingResources": "All upstream files in this selected skill directory are included; these skills reference no required external supporting Markdown, scripts, or binaries. SOURCE.md and the MIT license sidecars are packaging additions where not present upstream.",
+      "measurements": {
+        "fullFile": {
+          "utf8Bytes": 2904,
+          "unicodeCodePoints": 2902,
+          "whitespaceSeparatedWords": 470,
+          "lines": 54
+        },
+        "frontmatterWithDelimiters": {
+          "utf8Bytes": 164,
+          "unicodeCodePoints": 164,
+          "whitespaceSeparatedWords": 23,
+          "lines": 5
+        },
+        "descriptionValue": {
+          "utf8Bytes": 88,
+          "unicodeCodePoints": 88,
+          "whitespaceSeparatedWords": 16,
+          "lines": 1
+        },
+        "discoveryNameAndDescription": {
+          "utf8Bytes": 106,
+          "unicodeCodePoints": 106,
+          "whitespaceSeparatedWords": 17,
+          "lines": 2
+        },
+        "body": {
+          "utf8Bytes": 2740,
+          "unicodeCodePoints": 2738,
+          "whitespaceSeparatedWords": 447,
+          "lines": 49
+        }
+      },
+      "files": [
+        {
+          "path": "catalog/external/mattpocock/to-questionnaire/LICENSE.txt",
+          "installedPath": "LICENSE.txt",
+          "upstreamPath": "LICENSE",
+          "sourceUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/LICENSE",
+          "sha256": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
+          "utf8Bytes": 1068,
+          "unicodeCodePoints": 1068,
+          "whitespaceSeparatedWords": 169,
+          "lines": 21
+        },
+        {
+          "path": "catalog/external/mattpocock/to-questionnaire/SKILL.md",
+          "installedPath": "SKILL.md",
+          "upstreamPath": "skills/productivity/to-questionnaire/SKILL.md",
+          "sourceUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/skills/productivity/to-questionnaire/SKILL.md",
+          "sha256": "b5eb929842ee0e93d867c5e906d183d350f2f2d149eaeaa86967d94d8eda1d3b",
+          "utf8Bytes": 2904,
+          "unicodeCodePoints": 2902,
+          "whitespaceSeparatedWords": 470,
+          "lines": 54
+        },
+        {
+          "path": "catalog/external/mattpocock/to-questionnaire/SOURCE.md",
+          "installedPath": "SOURCE.md",
+          "upstreamPath": null,
+          "sourceUrl": null,
+          "sha256": "ae585734e6696278d940d66d54eab6720f24e7db384cafb5436efdbb1c342495",
+          "utf8Bytes": 947,
+          "unicodeCodePoints": 947,
+          "whitespaceSeparatedWords": 101,
+          "lines": 14
+        },
+        {
+          "path": "catalog/external/mattpocock/to-questionnaire/agents/openai.yaml",
+          "installedPath": "agents/openai.yaml",
+          "upstreamPath": "skills/productivity/to-questionnaire/agents/openai.yaml",
+          "sourceUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/skills/productivity/to-questionnaire/agents/openai.yaml",
+          "sha256": "9e8a06c38c8842eea8d4922cb9d1ead8e3ace647bab259b943c994a1b4742bc2",
+          "utf8Bytes": 166,
+          "unicodeCodePoints": 166,
+          "whitespaceSeparatedWords": 17,
+          "lines": 5
+        }
+      ]
+    },
+    {
+      "id": "external-anthropic-design",
+      "name": "Anthropic: frontend design",
+      "description": "Plan and critique distinctive interfaces with Anthropic's frontend-design guidance; no bundled scripts or design assets.",
+      "author": "Anthropic",
+      "repo": "anthropics/skills",
+      "commit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+      "directory": "anthropic/frontend-design",
+      "upstreamDirectory": "skills/frontend-design",
+      "license": "Apache-2.0",
+      "licensePath": "skills/frontend-design/LICENSE.txt",
+      "rationale": "Self-contained interface-design planning, typography, copywriting, accessibility, and self-critique; no document-conversion binaries or scripts.",
+      "limitations": "Upstream describes its skills as educational demonstrations, not a guarantee of production behavior. Screenshots are optional and require host capabilities. Repository-wide third-party notices concern image/video/font components not present in this textual skill; none of those components are redistributed here.",
+      "citations": [
+        "https://github.com/anthropics/skills",
+        "https://anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills",
+        "https://support.claude.com/en/articles/12512176-what-are-skills"
+      ],
+      "retrievalDate": "2026-10-19",
+      "skillName": "frontend-design",
+      "skillDescription": "Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults.",
+      "sourceUrl": "https://github.com/anthropics/skills/blob/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/frontend-design/SKILL.md",
+      "supportingResources": "All upstream files in this selected skill directory are included; these skills reference no required external supporting Markdown, scripts, or binaries. SOURCE.md and the MIT license sidecars are packaging additions where not present upstream.",
+      "measurements": {
+        "fullFile": {
+          "utf8Bytes": 9390,
+          "unicodeCodePoints": 9363,
+          "whitespaceSeparatedWords": 1516,
+          "lines": 71
+        },
+        "frontmatterWithDelimiters": {
+          "utf8Bytes": 287,
+          "unicodeCodePoints": 287,
+          "whitespaceSeparatedWords": 39,
+          "lines": 5
+        },
+        "descriptionValue": {
+          "utf8Bytes": 204,
+          "unicodeCodePoints": 204,
+          "whitespaceSeparatedWords": 29,
+          "lines": 1
+        },
+        "discoveryNameAndDescription": {
+          "utf8Bytes": 221,
+          "unicodeCodePoints": 221,
+          "whitespaceSeparatedWords": 30,
+          "lines": 2
+        },
+        "body": {
+          "utf8Bytes": 9103,
+          "unicodeCodePoints": 9076,
+          "whitespaceSeparatedWords": 1477,
+          "lines": 66
+        }
+      },
+      "files": [
+        {
+          "path": "catalog/external/anthropic/frontend-design/LICENSE.txt",
+          "installedPath": "LICENSE.txt",
+          "upstreamPath": "skills/frontend-design/LICENSE.txt",
+          "sourceUrl": "https://github.com/anthropics/skills/blob/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/frontend-design/LICENSE.txt",
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+          "utf8Bytes": 10174,
+          "unicodeCodePoints": 10174,
+          "whitespaceSeparatedWords": 1413,
+          "lines": 177
+        },
+        {
+          "path": "catalog/external/anthropic/frontend-design/SKILL.md",
+          "installedPath": "SKILL.md",
+          "upstreamPath": "skills/frontend-design/SKILL.md",
+          "sourceUrl": "https://github.com/anthropics/skills/blob/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/frontend-design/SKILL.md",
+          "sha256": "d91970639e9f5c37682ac7ab60094d35f1c7c1f38d731bd56396563aee10c1d3",
+          "utf8Bytes": 9390,
+          "unicodeCodePoints": 9363,
+          "whitespaceSeparatedWords": 1516,
+          "lines": 71
+        },
+        {
+          "path": "catalog/external/anthropic/frontend-design/SOURCE.md",
+          "installedPath": "SOURCE.md",
+          "upstreamPath": null,
+          "sourceUrl": null,
+          "sha256": "c59c45d55ce4a7009f954553b1b34bdc20873fba2c47b437044987919c756381",
+          "utf8Bytes": 1008,
+          "unicodeCodePoints": 1008,
+          "whitespaceSeparatedWords": 102,
+          "lines": 14
+        }
+      ]
+    },
+    {
+      "id": "external-ponytail",
+      "name": "Ponytail: smallest complete change",
+      "description": "Use DietrichGebert's Ponytail skill for minimal, complete changes that preserve safety and existing project conventions.",
+      "author": "DietrichGebert",
+      "repo": "DietrichGebert/ponytail",
+      "commit": "09c434ab73ca43761c5d8b0c5d341926c2fba710",
+      "directory": "ponytail/ponytail",
+      "upstreamDirectory": "skills/ponytail",
+      "license": "MIT",
+      "licensePath": "LICENSE",
+      "rationale": "The user's spelling maps to a real upstream Ponytail project. Its core prompt is independently usable as a skill without lifecycle hooks, plugins, adapters, or scripts.",
+      "limitations": "Core skill only: no lifecycle hooks, automatic session activation, plugin commands, or other Ponytail skills. Once invoked, the text requests session persistence and lite/full/ultra modes; host behavior is not guaranteed. Its request for a small test never overrides explicit user constraints such as no new tests.",
+      "citations": [
+        "https://github.com/DietrichGebert/ponytail",
+        "https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/INSTALL.md"
+      ],
+      "retrievalDate": "2026-10-19",
+      "skillName": "ponytail",
+      "skillDescription": "Lazy senior dev mode: the smallest change that fully solves the task, and a reply a busy human understands in one read. Use on any coding task (writing, fixing, refactoring, reviewing, choosing dependencies) and when the user says \"ponytail\", \"be lazy\", \"simplest solution\", \"yagni\", or complains about over-engineering or bloat. Levels: lite, full (default), ultra.\n",
+      "sourceUrl": "https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/skills/ponytail/SKILL.md",
+      "supportingResources": "All upstream files in this selected skill directory are included; these skills reference no required external supporting Markdown, scripts, or binaries. SOURCE.md and the MIT license sidecars are packaging additions where not present upstream.",
+      "measurements": {
+        "fullFile": {
+          "utf8Bytes": 3496,
+          "unicodeCodePoints": 3496,
+          "whitespaceSeparatedWords": 592,
+          "lines": 52
+        },
+        "frontmatterWithDelimiters": {
+          "utf8Bytes": 467,
+          "unicodeCodePoints": 467,
+          "whitespaceSeparatedWords": 65,
+          "lines": 11
+        },
+        "descriptionValue": {
+          "utf8Bytes": 367,
+          "unicodeCodePoints": 367,
+          "whitespaceSeparatedWords": 55,
+          "lines": 1
+        },
+        "discoveryNameAndDescription": {
+          "utf8Bytes": 377,
+          "unicodeCodePoints": 377,
+          "whitespaceSeparatedWords": 56,
+          "lines": 3
+        },
+        "body": {
+          "utf8Bytes": 3029,
+          "unicodeCodePoints": 3029,
+          "whitespaceSeparatedWords": 527,
+          "lines": 41
+        }
+      },
+      "files": [
+        {
+          "path": "catalog/external/ponytail/ponytail/LICENSE.txt",
+          "installedPath": "LICENSE.txt",
+          "upstreamPath": "LICENSE",
+          "sourceUrl": "https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/LICENSE",
+          "sha256": "fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab",
+          "utf8Bytes": 1071,
+          "unicodeCodePoints": 1071,
+          "whitespaceSeparatedWords": 168,
+          "lines": 21
+        },
+        {
+          "path": "catalog/external/ponytail/ponytail/SKILL.md",
+          "installedPath": "SKILL.md",
+          "upstreamPath": "skills/ponytail/SKILL.md",
+          "sourceUrl": "https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/skills/ponytail/SKILL.md",
+          "sha256": "9badd22a32e19cb884e46dfa8d3aae82bb81dfa5484105b8b4f0262df823a509",
+          "utf8Bytes": 3496,
+          "unicodeCodePoints": 3496,
+          "whitespaceSeparatedWords": 592,
+          "lines": 52
+        },
+        {
+          "path": "catalog/external/ponytail/ponytail/SOURCE.md",
+          "installedPath": "SOURCE.md",
+          "upstreamPath": null,
+          "sourceUrl": null,
+          "sha256": "72c84d1d15a98130b51f1e845aa28c4a525a7ba8f89c8f7f505b2772b2a9064b",
+          "utf8Bytes": 1037,
+          "unicodeCodePoints": 1037,
+          "whitespaceSeparatedWords": 122,
+          "lines": 14
+        }
+      ]
+    }
+  ],
+  "instructionsComparison": {
+    "path": "catalog/external/ponytail/comparison/AGENTS.md",
+    "sourceUrl": "https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/AGENTS.md",
+    "commit": "09c434ab73ca43761c5d8b0c5d341926c2fba710",
+    "retrievalDate": "2026-10-19",
+    "license": "MIT",
+    "licensePath": "catalog/external/ponytail/comparison/LICENSE.txt",
+    "installedByKits": false,
+    "sha256": "b98b15e1d683ee205e124b52b8d330128593f4a87b545cf8185e2712cd1bb25f",
+    "measurements": {
+      "utf8Bytes": 2721,
+      "unicodeCodePoints": 2721,
+      "whitespaceSeparatedWords": 473,
+      "lines": 32
+    }
+  }
+}

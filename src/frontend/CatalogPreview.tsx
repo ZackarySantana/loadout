@@ -67,12 +67,15 @@ export function CatalogPreview(props: {
                 each={[...new Set(kit.outputs.map((output) => output.type))]}
               >
                 {(type) => (
-                  <span style={{ fg: color[type] }}>
+                  <span
+                    style={{ fg: color[type === "agent" ? "skill" : type] }}
+                  >
                     {
                       {
                         instructions: "Instructions",
                         skill: "Skills",
                         file: "Files",
+                        agent: "Agents",
                       }[type]
                     }{" "}
                   </span>

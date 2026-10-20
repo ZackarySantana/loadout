@@ -10,3 +10,6 @@ run = "npm run check"
 
 [tasks.build]
 run = "npm run build"
+
+[tasks.docs]
+run = "npm run docs"

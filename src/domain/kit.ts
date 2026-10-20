@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { agentFields } from "./subagents"
 
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]*$/)
 const value = z.union([z.string(), z.boolean()])
@@ -73,6 +74,13 @@ export const questionSchema = z.discriminatedUnion("type", [
 ])
 
 export const outputSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("agent"),
+      ...agentFields,
+      when: conditionSchema.optional(),
+    })
+    .strict(),
   z
     .object({
       type: z.literal("instructions"),

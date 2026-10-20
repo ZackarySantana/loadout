@@ -8,10 +8,11 @@
     "dev": "bun src/cli.tsx",
     "start": "bun src/cli.tsx",
     "build": "bun scripts/build.ts",
+    "docs": "bun scripts/docs.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "format": "prettier --write src test scripts docs catalog examples README.md package.json tsconfig.json",
-    "format:check": "prettier --check src test scripts docs catalog examples README.md package.json tsconfig.json",
+    "format": "prettier --write src test scripts site catalog examples README.md AGENTS.md package.json tsconfig.json",
+    "format:check": "prettier --check src test scripts site catalog examples README.md AGENTS.md package.json tsconfig.json",
     "check": "npm run typecheck && npm test && npm run format:check"
   },
   "license": "MIT",

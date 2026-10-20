@@ -8,6 +8,7 @@ import {
 import type { OutputSettings } from "../domain/settings"
 import type { State, Managed } from "./state"
 import { defaultOutputSettings, inside, resolveDestinations } from "./settings"
+import { agentPath, agentRoots, serializeAgent } from "./subagents"
 
 export function renderState(
   state: State,
@@ -41,6 +42,7 @@ export function renderState(
   const render = (config: ConfiguredKit, root: string, global: boolean) => {
     repository = global ? undefined : root
     const answers = validateAnswers(config.kit, config.answers)
+    const nativeRoots = agentRoots(settings, home, root, global)
     const destinations = (kind: "instructions" | "skills") =>
       groups.find(
         (group) =>
@@ -78,6 +80,32 @@ export function renderState(
               type: "file",
               content: text(content),
             })
+      } else if (output.type === "agent") {
+        for (const [harness, location] of Object.entries(nativeRoots)) {
+          if (
+            groups.some((group) =>
+              group.locations.some(
+                (path) =>
+                  path === location ||
+                  inside(path, location) ||
+                  inside(location, path),
+              ),
+            ) ||
+            Object.entries(nativeRoots).some(
+              ([other, path]) =>
+                other !== harness &&
+                (path === location ||
+                  inside(path, location) ||
+                  inside(location, path)),
+            )
+          )
+            throw new Error(`Overlapping native agent location: ${location}`)
+        }
+        for (const harness of output.harnesses)
+          add(agentPath(nativeRoots[harness], output.name, harness), {
+            type: "file",
+            content: serializeAgent(output, harness, text),
+          })
       } else {
         const path = join(root, output.path)
         if (
@@ -90,6 +118,12 @@ export function renderState(
             ".codex/AGENTS.md",
             ".claude/CLAUDE.md",
           ].includes(output.path) ||
+          Object.values(nativeRoots).some(
+            (location) =>
+              path === location ||
+              inside(location, path) ||
+              inside(path, location),
+          ) ||
           groups.some((group) =>
             group.locations.some(
               (location) =>

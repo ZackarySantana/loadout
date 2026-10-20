@@ -1,0 +1,81 @@
+{
+  "retrievalDate": "2026-10-19",
+  "sourceInventory": "catalog/external-sources.json in the Loadout checkout; this file is a static presentation extract",
+  "reproduce": "mise exec -- bun catalog/external/measure.ts",
+  "reproduceNotice": "This command regenerates the canonical catalog/external-sources.json, curated kit YAML, and SOURCE notices from vendored text. It does not update this static site extract or the HTML presentation.",
+  "extractMaintenance": "After regeneration, manually refresh this extract from catalog/external-sources.json and update all site HTML measurement tables, activation cases, totals, citations, and dated references together. Review pinned sources, licenses, hashes, arithmetic, and methodology before sharing.",
+  "methodology": {
+    "bytes": "Exact UTF-8 bytes, Buffer.byteLength; no tokenizer used.",
+    "words": "Maximal non-whitespace runs, /\\S+/gu.",
+    "lines": "LF-separated logical lines; no phantom empty line after a final LF; empty text is zero lines.",
+    "body": "Every character after closing frontmatter delimiter LF, including the following blank line.",
+    "discovery": "name + LF + parsed YAML description + LF; not an observed host prompt. Ponytail description retains its trailing LF.",
+    "exclusions": "Full skill counts exclude license, SOURCE notice, optional Codex policy metadata, host wrappers, paths, system prompts, tools, history and retained activations. Installed disk totals are not prompt totals.",
+    "limitations": "Assumed activation cases only; not runtime token counts, benchmarks, universal savings, or identical host loading policies. Selected skill directories contain no required external supporting Markdown/scripts/binaries. Complete supporting-file hashes are in the repository inventory."
+  },
+  "sources": [
+    {
+      "name": "Matt Pocock: to-questionnaire",
+      "repository": "mattpocock/skills",
+      "commit": "5beb35b040e3de97e54fa9e386d7e42d15c295c2",
+      "path": "skills/productivity/to-questionnaire/SKILL.md",
+      "sourceUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/skills/productivity/to-questionnaire/SKILL.md",
+      "rawUrl": "https://raw.githubusercontent.com/mattpocock/skills/5beb35b040e3de97e54fa9e386d7e42d15c295c2/skills/productivity/to-questionnaire/SKILL.md",
+      "sha256": "b5eb929842ee0e93d867c5e906d183d350f2f2d149eaeaa86967d94d8eda1d3b",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/LICENSE",
+      "description": "Turn a decision you can't fully answer into a questionnaire for someone else to fill in.",
+      "fullFile": { "utf8Bytes": 2904, "words": 470, "lines": 54 },
+      "body": { "utf8Bytes": 2740, "words": 447, "lines": 49 },
+      "discovery": { "utf8Bytes": 106, "words": 17, "lines": 2 }
+    },
+    {
+      "name": "Anthropic: frontend-design",
+      "repository": "anthropics/skills",
+      "commit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+      "path": "skills/frontend-design/SKILL.md",
+      "sourceUrl": "https://github.com/anthropics/skills/blob/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/frontend-design/SKILL.md",
+      "rawUrl": "https://raw.githubusercontent.com/anthropics/skills/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/frontend-design/SKILL.md",
+      "sha256": "d91970639e9f5c37682ac7ab60094d35f1c7c1f38d731bd56396563aee10c1d3",
+      "license": "Apache-2.0",
+      "licenseUrl": "https://github.com/anthropics/skills/blob/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/frontend-design/LICENSE.txt",
+      "description": "Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults.",
+      "fullFile": { "utf8Bytes": 9390, "words": 1516, "lines": 71 },
+      "body": { "utf8Bytes": 9103, "words": 1477, "lines": 66 },
+      "discovery": { "utf8Bytes": 221, "words": 30, "lines": 2 }
+    },
+    {
+      "name": "DietrichGebert: Ponytail",
+      "repository": "DietrichGebert/ponytail",
+      "commit": "09c434ab73ca43761c5d8b0c5d341926c2fba710",
+      "path": "skills/ponytail/SKILL.md",
+      "sourceUrl": "https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/skills/ponytail/SKILL.md",
+      "rawUrl": "https://raw.githubusercontent.com/DietrichGebert/ponytail/09c434ab73ca43761c5d8b0c5d341926c2fba710/skills/ponytail/SKILL.md",
+      "sha256": "9badd22a32e19cb884e46dfa8d3aae82bb81dfa5484105b8b4f0262df823a509",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/LICENSE",
+      "description": "Lazy senior dev mode: the smallest change that fully solves the task, and a reply a busy human understands in one read. Use on any coding task (writing, fixing, refactoring, reviewing, choosing dependencies) and when the user says \"ponytail\", \"be lazy\", \"simplest solution\", \"yagni\", or complains about over-engineering or bloat. Levels: lite, full (default), ultra.\n",
+      "fullFile": { "utf8Bytes": 3496, "words": 592, "lines": 52 },
+      "body": { "utf8Bytes": 3029, "words": 527, "lines": 41 },
+      "discovery": { "utf8Bytes": 377, "words": 56, "lines": 3 }
+    }
+  ],
+  "instructionsComparison": {
+    "sourceUrl": "https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/AGENTS.md",
+    "rawUrl": "https://raw.githubusercontent.com/DietrichGebert/ponytail/09c434ab73ca43761c5d8b0c5d341926c2fba710/AGENTS.md",
+    "commit": "09c434ab73ca43761c5d8b0c5d341926c2fba710",
+    "sha256": "b98b15e1d683ee205e124b52b8d330128593f4a87b545cf8185e2712cd1bb25f",
+    "license": "MIT",
+    "utf8Bytes": 2721,
+    "words": 473,
+    "lines": 32,
+    "installedByKits": false,
+    "limitation": "Different real upstream instructions, not byte-equivalent to the skill. Their size difference is not equivalent-content savings."
+  },
+  "assumedCasesUtf8Bytes": {
+    "allFullFilesInline": 15790,
+    "discoveryOnly": 704,
+    "discoveryPlusFullQuestionnaire": 3608,
+    "discoveryPlusAllFullFiles": 16494
+  }
+}

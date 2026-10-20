@@ -8,6 +8,14 @@ import { LoadoutService } from "./backend/service"
 import { ScreenModel } from "./frontend/model"
 import { App } from "./frontend/App"
 import { displayKitKey } from "./domain/catalog"
+import { readPreferences, dismissWalkthrough } from "./backend/preferences"
+import {
+  agentGuide,
+  applyWorkflow,
+  inspectWorkflow,
+  planWorkflow,
+  readWorkflowRequest,
+} from "./backend/agent-workflow"
 
 const plain = (value: string) =>
   value.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
@@ -19,16 +27,33 @@ async function main() {
     options: {
       repo: { type: "string" },
       help: { type: "boolean", short: "h" },
+      json: { type: "boolean" },
+      request: { type: "string" },
+      "review-token": { type: "string" },
+      approve: { type: "boolean" },
+      walkthrough: { type: "boolean" },
     },
   })
   if (values.help) {
     console.log(`Loadout · compose agent instructions and skills
 
-Usage: loadout [--repo <project>]
+Usage: loadout [--repo <project>] [--walkthrough]
        loadout catalog list
        loadout catalog add <catalog.json path or HTTPS URL>
        loadout catalog remove <registered source>
-       loadout status
+        loadout status
+        loadout guide
+        loadout inspect --json [--request FILE]
+        loadout plan --request FILE --json
+        loadout apply --request FILE --review-token SHA256 --approve --json
+
+Agent workflow: guide and inspect first; ask human preferences and visible kit questions.
+Plan prints exact before/after files, links and warnings without applying.
+Apply rebuilds and requires the unchanged review token plus explicit human approval.
+--approve attests to approval of that exact review; agents must never self-confirm.
+Requests are bounded JSON; see guide and inspect.protocol. No --yes shortcut.
+Use --repo PATH with any command. External registration requires separate consent.
+--walkthrough replays the interactive welcome guide; ? replays it in the TUI.
 
 Tab switches pages. Up/Down or j/k navigate; Left/Right or h/l navigate options.
 Text questions start editing on focus; Vim keys then type normally.
@@ -39,10 +64,73 @@ Registration is only for external catalogs and installs no kits.
 Status is read-only; a nonzero exit code means drift or catalog issues were found.`)
     return
   }
+  const command = positionals[0]
+  if (values.walkthrough && positionals.length)
+    throw new Error(
+      "--walkthrough is only for interactive startup without a command",
+    )
+  if (command === "guide" && positionals.length === 1) {
+    if (
+      values.request ||
+      values.json ||
+      values["review-token"] ||
+      values.approve
+    )
+      throw new Error(
+        "guide takes only --repo (optional); use inspect --json for the protocol",
+      )
+    console.log(agentGuide)
+    return
+  }
+  const machine =
+    command === "inspect" || command === "plan" || command === "apply"
+  if (machine) {
+    if (positionals.length !== 1 || !values.json)
+      throw new Error(
+        "Use --json and no positional arguments for inspect, plan or apply",
+      )
+    if (command !== "inspect" && !values.request)
+      throw new Error("Supply --request FILE")
+    if (
+      command === "apply"
+        ? !values.approve || !values["review-token"]
+        : values.approve || values["review-token"]
+    )
+      throw new Error(
+        "Only apply accepts (and requires) --approve and --review-token SHA256 after human review",
+      )
+  } else if (
+    values.json ||
+    values.request ||
+    values["review-token"] ||
+    values.approve
+  ) {
+    throw new Error(
+      "Agent workflow options require inspect, plan or apply; use guide",
+    )
+  }
+  if (!positionals.length && (!process.stdin.isTTY || !process.stdout.isTTY))
+    throw new Error(
+      "The TUI requires an interactive terminal. Use guide or inspect --json for agent-assisted setup.",
+    )
+  // Parse requests before opening the service: malformed input cannot trigger recovery.
+  const request = values.request
+    ? await readWorkflowRequest(values.request)
+    : undefined
   const service = await LoadoutService.open({
     home: homedir(),
     repository: resolve(values.repo ?? process.cwd()),
   })
+  if (machine) {
+    const result =
+      command === "inspect"
+        ? await inspectWorkflow(service, request)
+        : command === "plan"
+          ? (await planWorkflow(service, request!)).review
+          : await applyWorkflow(service, request!, values["review-token"]!)
+    console.log(JSON.stringify(result, null, 2))
+    return
+  }
   if (positionals[0] === "status" && positionals.length === 1) {
     const { drift, errors } = await service.status()
     const kits = drift.kits.filter((kit) => kit.status !== "current")
@@ -103,25 +191,32 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
       )
     return
   }
-  if (!process.stdin.isTTY || !process.stdout.isTTY)
-    throw new Error(
-      "The TUI requires an interactive terminal. Use --help for CLI commands.",
-    )
   const model = new ScreenModel(service)
   await model.initialize()
+  const preferences = await readPreferences(service.home)
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
     screenMode: "alternate-screen",
   })
   await render(
-    () => <App model={model} onExit={() => renderer.destroy()} />,
+    () => (
+      <App
+        model={model}
+        onExit={() => renderer.destroy()}
+        walkthrough={values.walkthrough || !preferences.walkthroughSeen}
+        onWalkthroughDismiss={() => dismissWalkthrough(service.home)}
+      />
+    ),
     renderer,
   )
 }
 
 main().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error)
   console.error(
-    `Loadout: ${error instanceof Error ? error.message : String(error)}`,
+    process.argv.includes("--json")
+      ? JSON.stringify({ error: message })
+      : plain(`Loadout: ${message}`),
   )
   process.exitCode = 1
 })
