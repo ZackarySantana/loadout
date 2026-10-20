@@ -1,4 +1,5 @@
 import type { Scope } from "../domain/kit"
+import type { AgentHarness } from "../domain/subagents"
 
 /** Shared semantic colors: the same meaning keeps its color across both panes. */
 export const theme = {
@@ -20,6 +21,13 @@ export const theme = {
   skill: "#c4ace0",
   file: "#98c7e6",
 } as const
+
+/** Muted harness identities, independent of contribution and installation scope. */
+export const harnessColors = {
+  codex: "#8fb8ac",
+  claude: "#cea58c",
+  opencode: "#a6aed0",
+} as const satisfies Record<AgentHarness, string>
 
 export const scopeColor = (scope: Scope): string =>
   scope === "none" ? theme.excluded : theme[scope]

@@ -20,7 +20,7 @@ import {
   type LoadedKit,
   type Scope,
 } from "../domain/kit"
-import { theme as color } from "./theme"
+import { theme as color, harnessColors } from "./theme"
 import { displayKitKey } from "../domain/catalog"
 import type { AgentHarness } from "../domain/subagents"
 
@@ -86,7 +86,7 @@ interface Contribution {
   label: string
   accent: string
   included: boolean
-  metadata?: { label: string; value: string }[]
+  metadata?: AgentMetadata[]
   files: {
     path: string
     content: string
@@ -95,6 +95,12 @@ interface Contribution {
   }[]
   nested: boolean
   instructions: boolean
+}
+
+interface AgentMetadata {
+  label: string
+  harness?: AgentHarness
+  values: { text: string; harness: AgentHarness }[]
 }
 
 interface HeadingToken {
@@ -397,12 +403,13 @@ export function KitPreview(props: KitPreviewProps) {
           instructions: false,
         })
       } else if (output.type === "agent") {
-        const metadata = [
+        const metadata: AgentMetadata[] = [
           {
             label: "Harnesses",
-            value: output.harnesses
-              .map((harness) => harnessLabels[harness])
-              .join(" · "),
+            values: output.harnesses.map((harness) => ({
+              text: harnessLabels[harness],
+              harness,
+            })),
           },
         ]
         for (const harness of output.harnesses) {
@@ -410,12 +417,16 @@ export function KitPreview(props: KitPreviewProps) {
           if (options?.model)
             metadata.push({
               label: `${harnessLabels[harness]} model`,
-              value: options.model,
+              harness,
+              values: [{ text: options.model, harness }],
             })
           if (harness === "claude" && output.options?.claude?.tools)
             metadata.push({
               label: "Claude Code tools",
-              value: output.options.claude.tools.join(" · "),
+              harness,
+              values: [
+                { text: output.options.claude.tools.join(" · "), harness },
+              ],
             })
         }
         sections.push({
@@ -532,12 +543,41 @@ export function KitPreview(props: KitPreviewProps) {
                       >
                         <span
                           style={{
-                            fg: card().included ? color.muted : color.excluded,
+                            fg: !card().included
+                              ? color.excluded
+                              : field().harness
+                                ? harnessColors[field().harness!]
+                                : color.muted,
                           }}
                         >
                           {`${field().label}: `}
                         </span>
-                        {safeText(field().value)}
+                        <Index each={field().values}>
+                          {(value, index) => (
+                            <>
+                              <Show when={index > 0}>
+                                <span
+                                  style={{
+                                    fg: card().included
+                                      ? color.muted
+                                      : color.excluded,
+                                  }}
+                                >
+                                  {" · "}
+                                </span>
+                              </Show>
+                              <span
+                                style={{
+                                  fg: card().included
+                                    ? harnessColors[value().harness]
+                                    : color.excluded,
+                                }}
+                              >
+                                {safeText(value().text)}
+                              </span>
+                            </>
+                          )}
+                        </Index>
                       </text>
                     )}
                   </Index>
