@@ -701,7 +701,7 @@ export class ScreenModel {
       this.editing = { kind: "catalog" }
       this.cursor += 1
       this.message =
-        "Enter an external catalog path or HTTPS URL. Repo kits are discovered automatically; no registration is needed."
+        "Enter an external catalog path or HTTPS URL."
     } else if (row.kind === "health") {
       this.page = 1
       this.cursor = 0
