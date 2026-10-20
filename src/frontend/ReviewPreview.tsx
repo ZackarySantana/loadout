@@ -3,6 +3,7 @@ import { diffLines } from "diff"
 import type { DriftReport, Plan, Selection } from "../backend/service"
 import { sourceLabels } from "./DriftPreview"
 import { scopeColor, theme } from "./theme"
+import { displayKitKey } from "../domain/catalog"
 
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
@@ -244,7 +245,7 @@ export function ReviewPreview(props: ReviewPreviewProps) {
           >
             {(kit) => (
               <text fg={theme.warning} wrapMode="word" flexShrink={0}>
-                {safeText(kit.key)}: {sourceLabels[kit.status]}
+                {safeText(displayKitKey(kit.key))}: {sourceLabels[kit.status]}
               </text>
             )}
           </For>

@@ -1,8 +1,9 @@
 import { realpath } from "node:fs/promises"
+import { join } from "node:path"
 import type { CatalogOrigin, LoadedKit, Scope } from "../domain/kit"
 import {
   builtin,
-  loadSubscriptions,
+  loadRepositoryListing,
   message,
   type CatalogListing,
 } from "./catalogs"
@@ -46,11 +47,16 @@ export async function sourceKit(
   const origin = item.origin
   if (origin?.scope === "repository") {
     const repository = origin.repository!
+    if (origin.source !== join(repository, ".loadout/kits"))
+      return {
+        status: "subscription-missing",
+        reason: `Repository catalog indexes and subscriptions are no longer used. The saved snapshot remains available: ${origin.source}`,
+      }
     let pending = cache.get(repository)
     if (!pending) {
       pending = (async () => {
         await realpath(repository)
-        return loadSubscriptions(globalSources, repository)
+        return loadRepositoryListing(repository)
       })()
       cache.set(repository, pending)
     }
@@ -67,19 +73,16 @@ export async function sourceKit(
   if (origin) {
     const subscribed =
       origin.source === builtin ||
-      listing.subscriptions.some(
-        (s) => s.source === origin.source && s.scope === origin.scope,
-      )
+      (origin.scope === "repository"
+        ? listing.catalogs.some(
+            (catalog) =>
+              catalog.kind === "repo" && catalog.source === origin.source,
+          )
+        : globalSources.includes(origin.source))
     if (!subscribed)
       return {
-        status:
-          listing.repositoryError && origin.scope === "repository"
-            ? "catalog-unavailable"
-            : "subscription-missing",
-        reason:
-          listing.repositoryError && origin.scope === "repository"
-            ? listing.repositoryError
-            : `Original ${origin.scope} subscription is no longer present: ${origin.source}`,
+        status: "subscription-missing",
+        reason: `Original ${origin.scope} source is no longer present: ${origin.source}`,
       }
     const failure = listing.failures.get(origin.source)
     if (failure) return { status: "catalog-unavailable", reason: failure }
@@ -101,6 +104,11 @@ export async function sourceKit(
         reason: "Saved kit has no provenance and no matching current catalog",
       }
   }
+  if (origin?.scope === "repository" && origin.file) {
+    const unavailable = listing.repoInventory.get(origin.file)
+    if (unavailable?.reason)
+      return { status: "kit-unavailable", reason: unavailable.reason }
+  }
   const latest = catalog.kits.find((kit) => kit.key === item.key)
   if (!latest) {
     const unavailable = catalog.unavailableKits?.find(
@@ -113,8 +121,12 @@ export async function sourceKit(
           reason: "Kit is no longer listed by its catalog",
         }
   }
-  // A coalesced listing may prefer repository metadata; retain the snapshot's actual scope/origin.
-  const current = origin ? { ...latest, origin } : latest
+  const current = origin
+    ? {
+        ...latest,
+        origin: origin.scope === "repository" ? latest.origin : origin,
+      }
+    : latest
   return canonical(item.kit) === canonical(latest.kit)
     ? {
         status: "current",

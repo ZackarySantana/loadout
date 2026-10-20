@@ -6,6 +6,7 @@ import type {
   KitDriftStatus,
 } from "../backend/service"
 import { theme } from "./theme"
+import { displayKitKey } from "../domain/catalog"
 
 const safe = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
@@ -112,7 +113,8 @@ export function DriftPreview(props: {
                   {(kit) => (
                     <box flexDirection="column" flexShrink={0} marginBottom={1}>
                       <text fg={theme.warning} wrapMode="word" flexShrink={0}>
-                        {safe(kit.key)} · {sourceLabels[kit.status]}
+                        {safe(displayKitKey(kit.key))} ·{" "}
+                        {sourceLabels[kit.status]}
                       </text>
                       <text fg={theme.text} wrapMode="word" flexShrink={0}>
                         {safe(kit.reason)}

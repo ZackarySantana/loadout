@@ -150,6 +150,7 @@ test("built CLI navigates bundled kits and updates a live answer in a real PTY o
   }
   try {
     await waitFor("show the bundled catalog", () => text().includes("built-in"))
+    await send("\u001b[B")
     await send(" ")
     await waitFor(
       "browse bundled kits",
@@ -231,19 +232,18 @@ test("built CLI navigates bundled kits and updates a live answer in a real PTY o
   }
 }, 30000)
 
-test("CLI catalog scope follows the repository and status reports source/output drift without writing", async () => {
+test("CLI catalogs follow the repository and status reports source/output drift without writing", async () => {
   const cli = await bundle()
   const root = await mkdtemp("/tmp/opencode/loadout-cli-status-")
   try {
     const home = join(root, "home"),
       repository = join(root, "repo-a"),
       other = join(root, "repo-b")
-    const team = join(repository, "team")
+    const team = join(repository, ".loadout/kits")
     await Promise.all(
       [home, team, other].map((path) => mkdir(path, { recursive: true })),
     )
-    const source = join(team, "catalog.json"),
-      kitPath = join(team, "context.yaml")
+    const kitPath = join(team, "context.yaml")
     const globalSource = join(root, "global.json")
     const kit = (content: string) => ({
       id: "context",
@@ -251,16 +251,6 @@ test("CLI catalog scope follows the repository and status reports source/output 
       outputs: [{ type: "file", path: "context.txt", content }],
     })
     await writeFile(kitPath, stringify(kit("Baseline team context.\n")))
-    await writeFile(
-      source,
-      JSON.stringify({
-        id: "cli-team",
-        name: "Local CLI team",
-        kits: [
-          { id: "context", name: "CLI team context", source: "context.yaml" },
-        ],
-      }),
-    )
     await writeFile(
       globalSource,
       JSON.stringify({
@@ -283,37 +273,25 @@ test("CLI catalog scope follows the repository and status reports source/output 
       ])
       return { code, text: stdout + stderr }
     }
-    const subscribed = await run(["catalog", "add", source])
-    expect(subscribed.code).toBe(0)
-    expect(subscribed.text).toContain("for repository")
-    const references = join(repository, ".loadout/catalogs.json")
-    expect(JSON.parse(await readFile(references, "utf8"))).toEqual({
-      catalogs: ["team/catalog.json"],
-    })
-    expect((await run(["catalog", "list"])).text).toContain(
-      "Local CLI team (repository)",
-    )
+    expect((await run(["catalog", "list"])).text).toContain("Repo (automatic)")
     const otherCatalogs = await run(["catalog", "list"], other)
     expect(otherCatalogs.code).toBe(0)
-    expect(otherCatalogs.text).not.toContain("Local CLI team")
-    expect(
-      (await run(["catalog", "add", globalSource, "--scope", "global"])).code,
-    ).toBe(0)
+    expect(otherCatalogs.text).not.toContain(team)
+    expect((await run(["catalog", "add", globalSource])).code).toBe(0)
     expect((await run(["catalog", "list"], other)).text).toContain(
-      "Global CLI catalog (global)",
+      "Global CLI catalog (registered)",
     )
     expect(await Bun.file(join(repository, "context.txt")).exists()).toBe(false)
     const service = await LoadoutService.open({ home, repository })
     const item = (await service.catalogs()).catalogs.find(
-      (catalog) => catalog.id === "cli-team",
+      (catalog) => catalog.kind === "repo",
     )!.kits[0]!
     await service.apply(
       await service.plan([{ item, scope: "repository", answers: {} }]),
     )
     const output = join(repository, "context.txt"),
       state = join(home, ".loadout/state.json")
-    const stateBefore = await readFile(state, "utf8"),
-      refsBefore = await readFile(references, "utf8")
+    const stateBefore = await readFile(state, "utf8")
     const healthy = await run(["status"])
     expect(healthy.code).toBe(0)
     expect(healthy.text).toContain("No drift detected.")
@@ -322,9 +300,7 @@ test("CLI catalog scope follows the repository and status reports source/output 
     await writeFile(output, "Locally edited context.\n")
     const changed = await run(["status"])
     expect(changed.code).toBe(1)
-    expect(changed.text).toContain(
-      "Kit cli-team/context [repository] · changed",
-    )
+    expect(changed.text).toContain("Kit repo/context [repository] · changed")
     expect(changed.text).toContain(`File ${output} · modified`)
     expect(await readFile(output, "utf8")).toBe("Locally edited context.\n")
     expect(await readFile(state, "utf8")).toBe(stateBefore)
@@ -332,11 +308,10 @@ test("CLI catalog scope follows the repository and status reports source/output 
     await rm(kitPath)
     const missing = await run(["status"])
     expect(missing.code).toBe(1)
-    expect(missing.text).toContain("kit-unavailable")
+    expect(missing.text).toContain("kit-missing")
     expect(missing.text).toContain(`File ${output} · missing`)
     expect(await Bun.file(output).exists()).toBe(false)
     expect(await readFile(state, "utf8")).toBe(stateBefore)
-    expect(await readFile(references, "utf8")).toBe(refsBefore)
     const reopened = await LoadoutService.open({ home, repository })
     expect(reopened.installed()[0]?.kit.outputs[0]).toMatchObject({
       content: "Baseline team context.\n",

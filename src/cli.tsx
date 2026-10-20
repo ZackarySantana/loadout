@@ -7,14 +7,10 @@ import { render } from "@opentui/solid"
 import { LoadoutService } from "./backend/service"
 import { ScreenModel } from "./frontend/model"
 import { App } from "./frontend/App"
+import { displayKitKey } from "./domain/catalog"
 
 const plain = (value: string) =>
   value.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
-function catalogScope(value: string | undefined): "repository" | "global" {
-  if (value === undefined || value === "repository") return "repository"
-  if (value === "global") return "global"
-  throw new Error("Catalog scope must be repository or global")
-}
 
 async function main() {
   const { values, positionals } = parseArgs({
@@ -22,7 +18,6 @@ async function main() {
     allowPositionals: true,
     options: {
       repo: { type: "string" },
-      scope: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   })
@@ -31,16 +26,16 @@ async function main() {
 
 Usage: loadout [--repo <project>]
        loadout catalog list
-       loadout catalog add <catalog.json path or HTTPS URL> [--scope repository|global]
-       loadout catalog remove <registered source> [--scope repository|global]
+       loadout catalog add <catalog.json path or HTTPS URL>
+       loadout catalog remove <registered source>
        loadout status
 
 Tab switches pages. Up/Down or j/k navigate; Left/Right or h/l navigate options.
 Text questions start editing on focus; Vim keys then type normally.
 Space selects. Esc accepts an open kit; otherwise it goes back. Press q twice to exit.
 Kit changes are written only after review and explicit confirmation.
-Repository catalog subscriptions are shared through .loadout/catalogs.json.
-.loadout/catalog.json is discovered automatically. Catalog registration installs no kits.
+Repo kits are discovered automatically from .loadout/kits/*.yaml; no repo catalog index or registration is needed.
+Registration is only for external catalogs and installs no kits.
 Status is read-only; a nonzero exit code means drift or catalog issues were found.`)
     return
   }
@@ -49,8 +44,6 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
     repository: resolve(values.repo ?? process.cwd()),
   })
   if (positionals[0] === "status" && positionals.length === 1) {
-    if (values.scope)
-      throw new Error("--scope applies only to catalog add/remove")
     const { drift, errors } = await service.status()
     const kits = drift.kits.filter((kit) => kit.status !== "current")
     const files = drift.files.filter((file) => file.status !== "current")
@@ -58,7 +51,9 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
       console.log("No drift detected.")
     for (const kit of kits)
       console.log(
-        plain(`Kit ${kit.key} [${kit.scope}] · ${kit.status}\n  ${kit.reason}`),
+        plain(
+          `Kit ${displayKitKey(kit.key)} [${kit.scope}] · ${kit.status}\n  ${kit.reason}`,
+        ),
       )
     for (const file of files)
       console.log(plain(`File ${file.path} · ${file.status}\n  ${file.reason}`))
@@ -78,11 +73,10 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
       positionals[2] &&
       positionals.length === 3
     ) {
-      const scope = catalogScope(values.scope)
-      const catalog = await service.register(positionals[2], scope)
+      const catalog = await service.register(positionals[2])
       console.log(
         plain(
-          `Subscribed to ${catalog.name} for ${scope} (${catalog.kits.length} available kits)`,
+          `Registered ${catalog.name} (${catalog.kits.length} available kits)`,
         ),
       )
       for (const issue of catalog.issues ?? [])
@@ -92,16 +86,14 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
       positionals[2] &&
       positionals.length === 3
     ) {
-      await service.unregister(positionals[2], catalogScope(values.scope))
+      await service.unregister(positionals[2])
       console.log("Catalog unregistered. Installed kit snapshots are retained.")
     } else if (positionals[1] === "list" && positionals.length === 2) {
-      if (values.scope)
-        throw new Error("--scope applies only to catalog add/remove")
       const { catalogs, errors } = await service.catalogs()
       for (const catalog of catalogs)
         console.log(
           plain(
-            `${catalog.name} (${catalog.permanent ? "built-in" : catalog.subscriptionScope === "both" ? "repository + global" : (catalog.subscriptionScope ?? "global")})\n  ${catalog.source}`,
+            `${catalog.name} (${catalog.kind === "repo" ? "automatic" : catalog.permanent ? "built-in" : "registered"})\n  ${catalog.source}`,
           ),
         )
       for (const error of errors) console.error(plain(error))
@@ -111,8 +103,6 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
       )
     return
   }
-  if (values.scope)
-    throw new Error("--scope applies only to catalog add/remove")
   if (!process.stdin.isTTY || !process.stdout.isTTY)
     throw new Error(
       "The TUI requires an interactive terminal. Use --help for CLI commands.",

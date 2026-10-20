@@ -1,17 +1,18 @@
-import { lstat, readFile, realpath, stat } from "node:fs/promises"
+import { readFile, readdir, realpath, stat } from "node:fs/promises"
 import { dirname, resolve, relative, isAbsolute, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { parseDocument } from "yaml"
-import { z } from "zod"
 import {
   catalogSchema,
   kitSchema,
   type Catalog,
   type CatalogOrigin,
+  type Kit,
+  type LoadedKit,
 } from "../domain/kit"
-import { assertSafePath, readOptionalBytes } from "./files"
+import { repositoryCatalogId } from "../domain/catalog"
+import { assertSafeDirectory } from "./files"
 
-// The bundled entry point lives one directory below the catalog assets.
 declare const LOADOUT_BUNDLED: boolean
 export const builtin = fileURLToPath(
   new URL(
@@ -59,6 +60,13 @@ async function readSource(source: string): Promise<string> {
   return text
 }
 
+function parseKit(text: string): Kit {
+  const doc = parseDocument(text, { uniqueKeys: true })
+  if (doc.errors.length)
+    throw new Error(doc.errors.map((error) => error.message).join("\n"))
+  return kitSchema.parse(doc.toJS({ maxAliasCount: 20 }))
+}
+
 export async function normalizeSource(
   source: string,
   cwd: string,
@@ -66,6 +74,11 @@ export async function normalizeSource(
   if (source.startsWith("https://")) return new URL(source).href
   if (/^[a-z]+:/i.test(source)) throw new Error("Use a local path or HTTPS URL")
   return realpath(resolve(cwd, source))
+}
+
+function within(root: string, path: string): boolean {
+  const rel = relative(root, path)
+  return rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel)
 }
 
 async function kitSource(
@@ -83,10 +96,13 @@ async function kitSource(
   }
   const base = await realpath(dirname(catalogSource))
   const path = await realpath(resolve(base, reference))
-  const rel = relative(base, path)
-  if (rel.startsWith("..") || isAbsolute(rel))
+  if (!within(base, path))
     throw new Error("Kit references must stay within the catalog directory")
   return path
+}
+
+export function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 export async function loadCatalog(
@@ -95,17 +111,18 @@ export async function loadCatalog(
   origin?: CatalogOrigin,
 ): Promise<Catalog> {
   const catalog = catalogSchema.parse(JSON.parse(await readSource(source)))
-  if (!permanent && catalog.id === "loadout")
-    throw new Error("The Loadout catalog ID is reserved")
+  if (
+    !permanent &&
+    (catalog.id === "loadout" || /^repo-[a-f0-9]{64}$/.test(catalog.id))
+  )
+    throw new Error("The Loadout and automatic Repo catalog IDs are reserved")
   const unavailableKits: NonNullable<Catalog["unavailableKits"]> = []
   const results = await Promise.all(
     catalog.kits.map(async (entry) => {
       try {
-        const text = await readSource(await kitSource(source, entry.source))
-        const doc = parseDocument(text, { uniqueKeys: true })
-        if (doc.errors.length)
-          throw new Error(doc.errors.map((e) => e.message).join("\n"))
-        const kit = kitSchema.parse(doc.toJS({ maxAliasCount: 20 }))
+        const kit = parseKit(
+          await readSource(await kitSource(source, entry.source)),
+        )
         if (kit.id !== entry.id)
           throw new Error(
             `Kit ID mismatch: expected ${entry.id}, got ${kit.id}`,
@@ -133,207 +150,157 @@ export async function loadCatalog(
   return {
     id: catalog.id,
     name: catalog.name,
-    description: catalog.description,
     kits: results.filter((item) => item !== undefined),
     unavailableKits,
     issues: unavailableKits.map((item) => `${item.key}: ${item.reason}`),
     source,
     permanent,
+    kind: permanent ? "builtin" : "external",
   }
 }
 
-export async function loadCatalogs(
-  sources: string[],
-): Promise<{ catalogs: Catalog[]; errors: string[] }> {
-  const { catalogs, errors } = await loadSubscriptions(sources, undefined)
-  return { catalogs, errors }
-}
-
-export const repositoryManifestSchema = z
-  .object({ catalogs: z.array(z.string().min(1)) })
-  .strict()
-export function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-function within(root: string, path: string): boolean {
-  const rel = relative(root, path)
-  return rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel)
-}
-
-/** Normalize without requiring the final file to exist, so missing subscriptions can be removed. */
-export async function repositorySource(
-  source: string,
-  repository: string,
-  mustExist = true,
-): Promise<string> {
-  if (source.startsWith("https://")) return new URL(source).href
-  if (/^[a-z]+:/i.test(source)) throw new Error("Use a local path or HTTPS URL")
-  const path = resolve(repository, source)
-  if (!within(repository, path))
-    throw new Error("Repository catalogs must stay inside the checkout")
-  let existing = path
-  while (true) {
-    try {
-      const actual = await realpath(existing)
-      if (!within(repository, actual))
-        throw new Error(
-          "Repository catalog symlinks must stay inside the checkout",
-        )
-      if (mustExist) return await realpath(path)
-      // Preserve the lexical spelling for missing references; canonicalize existing files.
-      try {
-        return await realpath(path)
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-        return path
-      }
-    } catch (error) {
-      if (
-        (error as NodeJS.ErrnoException).code !== "ENOENT" ||
-        mustExist ||
-        existing === repository
-      )
-        throw error
-      // Do not walk past dangling symlinks: their eventual destination cannot be trusted.
-      const stat = await lstat(existing).catch(
-        (error: NodeJS.ErrnoException) => {
-          if (error.code !== "ENOENT") throw error
-          return null
-        },
-      )
-      if (stat?.isSymbolicLink())
-        throw new Error(
-          `Cannot resolve repository catalog symlink: ${existing}`,
-        )
-      existing = dirname(existing)
-    }
-  }
-}
-
-export async function readRepositoryManifest(
-  repository: string,
-): Promise<{ catalogs: string[] }> {
-  return (await readRepositoryManifestSnapshot(repository)).manifest
-}
-
-export async function readRepositoryManifestSnapshot(
-  repository: string,
-): Promise<{
-  manifest: { catalogs: string[] }
-  raw: Buffer | null
-}> {
-  const path = join(repository, ".loadout/catalogs.json")
-  await assertSafePath(path)
-  const raw = await readOptionalBytes(path)
-  const manifest =
-    raw === null
-      ? { catalogs: [] }
-      : repositoryManifestSchema.parse(JSON.parse(raw.toString("utf8")))
-  for (const source of manifest.catalogs) {
-    if (
-      !source.startsWith("https://") &&
-      (isAbsolute(source) || source.includes("\\"))
-    )
-      throw new Error("Shared catalog paths must be relative to the repository")
-  }
-  return { manifest, raw }
-}
-
-export interface Subscription {
-  source: string
-  scope: "repository" | "global"
-  repository?: string
-  automatic?: boolean
-  shared?: boolean
+export interface RepoFile {
+  key?: string
+  reason?: string
 }
 export interface CatalogListing {
   catalogs: Catalog[]
   errors: string[]
-  subscriptions: Subscription[]
   failures: Map<string, string>
-  repositoryError?: string
+  repoInventory: Map<string, RepoFile>
 }
 
-export async function loadSubscriptions(
+/** Flat live directory discovery. No project index or subscription file is consulted. */
+export async function loadRepositoryCatalog(repository: string): Promise<{
+  catalog: Catalog
+  inventory: Map<string, RepoFile>
+  failure?: string
+}> {
+  const source = join(repository, ".loadout/kits")
+  const id = repositoryCatalogId(repository)
+  const catalog: Catalog = {
+    id,
+    name: "Repo",
+    source,
+    permanent: true,
+    automatic: true,
+    kind: "repo",
+    kits: [],
+    unavailableKits: [],
+    issues: [],
+  }
+  const inventory = new Map<string, RepoFile>()
+  let files: string[]
+  try {
+    await assertSafeDirectory(source)
+    files = (await readdir(source))
+      .filter((file) => /\.ya?ml$/i.test(file))
+      .sort()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      return { catalog, inventory }
+    const failure = message(error)
+    catalog.issues!.push(failure)
+    return { catalog, inventory, failure }
+  }
+  const candidates: { file: string; item: LoadedKit }[] = []
+  for (const file of files) {
+    try {
+      if (file.includes("\\"))
+        throw new Error("Repo kit filenames must not contain backslashes")
+      const path = await realpath(join(source, file))
+      if (!within(source, path) || !within(repository, path))
+        throw new Error(
+          "Repo kit symlinks must stay within .loadout/kits and the checkout",
+        )
+      const kit = parseKit(await readSource(path))
+      const key = `${id}/${kit.id}`
+      inventory.set(file, { key })
+      candidates.push({
+        file,
+        item: {
+          key,
+          kit,
+          origin: {
+            catalogId: id,
+            source,
+            scope: "repository",
+            repository,
+            file,
+          },
+        },
+      })
+    } catch (error) {
+      const reason = message(error)
+      inventory.set(file, { reason })
+      catalog.unavailableKits!.push({ name: file, source: file, reason })
+      catalog.issues!.push(`${file}: ${reason}`)
+    }
+  }
+  const counts = new Map<string, number>()
+  for (const { item } of candidates)
+    counts.set(item.key, (counts.get(item.key) ?? 0) + 1)
+  for (const { file, item } of candidates) {
+    if (counts.get(item.key)! > 1) {
+      const reason = `Duplicate Repo kit ID: ${item.kit.id}; resolve all conflicting files before selecting this kit`
+      inventory.set(file, { key: item.key, reason })
+      catalog.unavailableKits!.push({
+        key: item.key,
+        id: item.kit.id,
+        name: item.kit.name,
+        source: file,
+        reason,
+      })
+      catalog.issues!.push(`${file}: ${reason}`)
+    } else catalog.kits.push(item)
+  }
+  return { catalog, inventory }
+}
+
+export async function loadCatalogListing(
   globalSources: string[],
   repository?: string,
 ): Promise<CatalogListing> {
-  const subscriptions: Subscription[] = globalSources.map((source) => ({
-    source,
-    scope: "global",
-  }))
-  const errors: string[] = []
-  let repositoryError: string | undefined
-  if (repository) {
-    const conventional = join(repository, ".loadout/catalog.json")
-    try {
-      await lstat(conventional)
-      subscriptions.push({
-        source: await repositorySource(conventional, repository, false),
-        scope: "repository",
-        repository,
-        automatic: true,
-      })
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-        errors.push(`${conventional}: ${message(error)}`)
-    }
-    try {
-      const manifest = await readRepositoryManifest(repository)
-      for (const reference of manifest.catalogs) {
-        try {
-          subscriptions.push({
-            source: await repositorySource(reference, repository, false),
-            scope: "repository",
-            repository,
-            shared: true,
-          })
-        } catch (error) {
-          errors.push(`${reference}: ${message(error)}`)
-        }
-      }
-    } catch (error) {
-      repositoryError = `${join(repository, ".loadout/catalogs.json")}: ${message(error)}`
-      errors.push(repositoryError)
-    }
-  }
   const catalogs: Catalog[] = []
+  const errors: string[] = []
   const failures = new Map<string, string>()
+  let repoInventory = new Map<string, RepoFile>()
+  if (repository) {
+    const result = await loadRepositoryCatalog(repository)
+    catalogs.push(result.catalog)
+    repoInventory = result.inventory
+    if (result.failure) failures.set(result.catalog.source, result.failure)
+    errors.push(
+      ...(result.catalog.issues ?? []).map(
+        (issue) => `${result.catalog.source}: ${issue}`,
+      ),
+    )
+  }
   try {
-    catalogs.push({
-      ...(await loadCatalog(builtin, true, {
-        source: builtin,
-        scope: "global",
-        catalogId: "loadout",
-      })),
-      subscriptionScope: "global",
-      automatic: true,
+    const catalog = await loadCatalog(builtin, true, {
+      source: builtin,
+      scope: "global",
+      catalogId: "loadout",
     })
+    catalogs.push({ ...catalog, automatic: true })
+    errors.push(
+      ...(catalog.issues ?? []).map((issue) => `${builtin}: ${issue}`),
+    )
   } catch (error) {
     failures.set(builtin, message(error))
     errors.push(`${builtin}: ${message(error)}`)
   }
-  for (const source of new Set(subscriptions.map((s) => s.source))) {
-    const entries = subscriptions.filter((s) => s.source === source)
-    const repo = entries.find((s) => s.scope === "repository")
-    const global = entries.some((s) => s.scope === "global")
-    const origin = repo ?? entries[0]!
+  for (const source of new Set(globalSources)) {
     try {
       const catalog = await loadCatalog(source, false, {
         source,
-        scope: origin.scope,
-        repository: origin.repository,
+        scope: "global",
       })
       if (catalogs.some((c) => c.id === catalog.id))
         throw new Error(
           `Conflicting catalog ID ${catalog.id} from different sources; refusing ${source}`,
         )
-      catalogs.push({
-        ...catalog,
-        subscriptionScope: repo && global ? "both" : origin.scope,
-        automatic: entries.some((s) => s.automatic),
-        shared: entries.some((s) => s.shared),
-      })
+      catalogs.push(catalog)
       errors.push(
         ...(catalog.issues ?? []).map((issue) => `${source}: ${issue}`),
       )
@@ -342,5 +309,28 @@ export async function loadSubscriptions(
       errors.push(`${source}: ${message(error)}`)
     }
   }
-  return { catalogs, errors, subscriptions, failures, repositoryError }
+  return { catalogs, errors, failures, repoInventory }
+}
+
+/** Origin checks outside the active checkout need only its automatic directory inventory. */
+export async function loadRepositoryListing(
+  repository: string,
+): Promise<CatalogListing> {
+  const { catalog, inventory, failure } =
+    await loadRepositoryCatalog(repository)
+  return {
+    catalogs: [catalog],
+    errors: (catalog.issues ?? []).map(
+      (issue) => `${catalog.source}: ${issue}`,
+    ),
+    failures: failure ? new Map([[catalog.source, failure]]) : new Map(),
+    repoInventory: inventory,
+  }
+}
+
+export async function loadCatalogs(
+  sources: string[],
+): Promise<{ catalogs: Catalog[]; errors: string[] }> {
+  const { catalogs, errors } = await loadCatalogListing(sources)
+  return { catalogs, errors }
 }

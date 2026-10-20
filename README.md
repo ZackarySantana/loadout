@@ -26,7 +26,7 @@ Dependencies are local to the project. OpenTUI’s Solid integration runs on Bun
 ## Choose, review, apply
 
 - **Catalogs** starts with the permanent Loadout catalog. Highlight a catalog to preview its kits in separate cards with descriptions and contribution badges; **Space** opens it.
-- Team catalogs in `.loadout/catalog.json` are discovered for the current project. Additional repository subscriptions live in the shareable `.loadout/catalogs.json`; global subscriptions remain available explicitly.
+- **Repo** automatically discovers kit YAML files in `.loadout/kits/`. No repo catalog index or registration is needed. External catalogs can still be registered separately.
 - Kit entries are spaced apart, with muted italic descriptions beneath their names. Highlight one to preview its contributions as Markdown sections with titled separators. Instructions share one combined section, with disabled fragments shown in gray. Answers update in place as you type. **Space** expands configuration directly beneath the entry.
 - Use **↑ / ↓** or **j / k** between rows, **← / →** or **h / l** to focus horizontal options, and **Space** to select or toggle. Options wrap on narrow screens; focus highlighting is separate from the selected radio/check markers. Landing on a text answer starts typing automatically; Vim keys then enter text instead of navigating. **↑ / ↓** still move between questions. **Enter** finishes only the input; **Esc** accepts/stages the whole kit, including while typing. Required-answer errors keep the form open. Choose **Accept** to stage or **Cancel** to discard the edit; these actions share one horizontal row.
 - An open kit keeps navigation inside its form. Accept or cancel it to return to the kit list; other kits cannot receive focus while you are configuring it.
@@ -51,19 +51,19 @@ Instructions go to project-root `AGENTS.md` and `CLAUDE.md`, or globally to `~/.
 
 ## Catalogs and kits
 
-Commit `.loadout/catalog.json` and its kit YAML files to make a team catalog available in a project without a user-wide import. Members choose their own kits and answers. See the [copyable team example](examples/team-catalog/).
+Commit kit YAML files directly under `.loadout/kits/` to share them through the automatic Repo catalog. Members choose their own kits and answers. No catalog JSON is needed for Repo. See the [copyable team example](examples/team-catalog/).
 
-Subscribe to a local `catalog.json` or HTTPS URL using the Catalogs page, or:
+Register an external `catalog.json` by local path or HTTPS URL using the Catalogs page, or:
 
 ```sh
 mise exec -- bun src/cli.tsx catalog add tools/context/catalog.json
-mise exec -- bun src/cli.tsx catalog add /path/to/personal/catalog.json --scope global
+mise exec -- bun src/cli.tsx catalog add /path/to/personal/catalog.json
 mise exec -- bun src/cli.tsx catalog list
-mise exec -- bun src/cli.tsx catalog remove tools/context/catalog.json --scope repository
+mise exec -- bun src/cli.tsx catalog remove tools/context/catalog.json
 mise exec -- bun src/cli.tsx status
 ```
 
-Repository subscription is the default. Its source references are stored relative to the project in `.loadout/catalogs.json`, so teammates can use different checkout locations. Repository local paths must stay inside the checkout; use explicit global subscriptions for user-specific paths elsewhere. Subscription availability and a kit's installation scope are separate choices. Registration edits subscription metadata immediately; it never installs kit files.
+Repo reads the project's `.loadout/kits/*.yaml` files directly, including their names and descriptions. Catalog JSON has no descriptions; descriptions live only in kit YAML. External catalog registrations are user-wide references and never apply any kit by themselves. Repository / Global / Both remains a separate choice for applying a selected kit.
 
 Catalogs and kits remain live sources. If an entry is removed or becomes invalid, healthy siblings stay available and saved installations remain usable from Installed. Source changes are reported, not silently adopted. Explicit updates keep compatible answers, reset incompatible choices to the new defaults, and ask any new required questions before review. The source is checked again before applying a new definition. There are no catalog versions or revision histories.
 
@@ -73,7 +73,7 @@ See [catalog authoring](docs/catalogs.md) and [kit authoring](docs/kits.md). Kit
 
 ## Safety and state
 
-Loadout stores global catalog registrations, individual installation intent, configured kit snapshots with source provenance, known repository paths, and managed-file records in `~/.loadout/state.json`. Project catalog definitions and subscriptions can be shared through Git; installation choices and answers remain individual. Answers are stored as plain text: do not enter secrets. Do not commit credentials in project subscription URLs. This implementation does not migrate v1 state.
+Loadout stores external catalog registrations, individual installation intent, configured kit snapshots with source provenance, known repository paths, and managed-file records in `~/.loadout/state.json`. Project kit YAML can be shared through Git; installation choices and answers remain individual. Answers are stored as plain text: do not enter secrets. This implementation does not migrate v1 state.
 
 Existing instructions outside Loadout’s marked blocks are preserved. Existing unrelated files and externally edited managed content block changes rather than being overwritten. Review is read-only; apply checks for concurrent state/file edits and uses a write-ahead journal for rollback. Keep known repositories accessible when changing global scope; an inaccessible or conflicted repository can block a safe apply.
 

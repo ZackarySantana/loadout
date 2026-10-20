@@ -24,10 +24,8 @@ import {
 import {
   builtin,
   loadCatalog,
-  loadSubscriptions,
+  loadCatalogListing,
   normalizeSource,
-  readRepositoryManifestSnapshot,
-  repositorySource,
   type CatalogListing,
 } from "./catalogs"
 import { canonical, inspectDrift, sourceKit, type DriftReport } from "./drift"
@@ -174,7 +172,7 @@ export class LoadoutService {
   }
 
   async catalogs(): Promise<{ catalogs: Catalog[]; errors: string[] }> {
-    const { catalogs, errors } = await loadSubscriptions(
+    const { catalogs, errors } = await loadCatalogListing(
       this.state.catalogs,
       this.repository,
     )
@@ -187,7 +185,7 @@ export class LoadoutService {
     drift: DriftReport
   }> {
     await this.refresh()
-    const listing = await loadSubscriptions(
+    const listing = await loadCatalogListing(
       this.state.catalogs,
       this.repository,
     )
@@ -231,17 +229,17 @@ export class LoadoutService {
 
   async register(
     source: string,
-    scope: "repository" | "global" = "repository",
+    scope: "repository" | "global" = "global",
   ): Promise<Catalog> {
     z.enum(["repository", "global"]).parse(scope)
-    const normalized =
-      scope === "repository"
-        ? await repositorySource(source, this.repository)
-        : await normalizeSource(source, this.repository)
+    if (scope !== "global")
+      throw new Error(
+        "Repo is automatic: add kit YAML files to .loadout/kits/. External catalogs can only be registered globally.",
+      )
+    const normalized = await normalizeSource(source, this.repository)
     const catalog = await loadCatalog(normalized, false, {
       source: normalized,
-      scope,
-      repository: scope === "repository" ? this.repository : undefined,
+      scope: "global",
     })
     await this.locked(async () => {
       await this.reload()
@@ -254,40 +252,16 @@ export class LoadoutService {
         throw new Error(
           `Conflicting catalog ID from different sources: ${catalog.id}`,
         )
-      if (scope === "repository") {
-        if (
-          normalized === join(this.repository, ".loadout/catalog.json") ||
-          existing.catalogs.some((c) => c.source === normalized && c.automatic)
-        )
-          throw new Error(
-            "This catalog is discovered automatically; no registration is needed",
-          )
-        await this.editRepositoryManifest(async (sources) => {
-          for (const reference of sources) {
-            if (
-              (await repositorySource(reference, this.repository, false)) ===
-              normalized
-            )
-              throw new Error(
-                `Catalog already registered in repository: ${catalog.id}`,
-              )
-          }
-          sources.push(
-            normalized.startsWith("https://")
-              ? normalized
-              : relative(this.repository, normalized),
-          )
-          return sources
-        })
-      } else {
-        if (this.state.catalogs.includes(normalized))
-          throw new Error(`Catalog already registered globally: ${catalog.id}`)
-        this.state.catalogs.push(normalized)
-        await atomicWrite(
-          this.statePath,
-          JSON.stringify(this.state, null, 2) + "\n",
-        )
-      }
+      if (this.state.catalogs.includes(normalized))
+        throw new Error(`Catalog already registered globally: ${catalog.id}`)
+      const next = structuredClone(this.state)
+      next.catalogs.push(normalized)
+      await atomicWrite(
+        this.statePath,
+        JSON.stringify(next, null, 2) + "\n",
+        undefined,
+        this.raw === null ? null : Buffer.from(this.raw),
+      )
       await this.reload()
     })
     return (
@@ -298,9 +272,13 @@ export class LoadoutService {
 
   async unregister(
     source: string,
-    scope: "repository" | "global" = "repository",
+    scope: "repository" | "global" = "global",
   ): Promise<void> {
     z.enum(["repository", "global"]).parse(scope)
+    if (scope !== "global")
+      throw new Error(
+        "Repo is automatic: remove or rename kit YAML files in .loadout/kits/. External catalogs can only be unregistered globally.",
+      )
     // Lexical resolution deliberately works even after the catalog was deleted.
     const lexical = source.startsWith("https://")
       ? new URL(source).href
@@ -309,103 +287,29 @@ export class LoadoutService {
       await this.reload()
       if (lexical === builtin)
         throw new Error("The built-in Loadout catalog is permanent")
-      if (scope === "repository") {
-        let normalized = lexical
-        try {
-          normalized = await repositorySource(source, this.repository, false)
-        } catch {
-          /* Missing or unsafe subscriptions can be removed lexically. */
-        }
-        let conventional = join(this.repository, ".loadout/catalog.json")
-        try {
-          conventional = await repositorySource(conventional, this.repository)
-        } catch {
-          /* The lexical conventional path is still reserved when missing. */
-        }
-        if (
-          lexical === join(this.repository, ".loadout/catalog.json") ||
-          conventional === normalized
-        )
-          throw new Error(
-            "The conventional catalog is discovered automatically; remove or rename .loadout/catalog.json to stop sharing it",
-          )
-        await this.editRepositoryManifest(async (sources) => {
-          let found = false
-          const remaining: string[] = []
-          for (const reference of sources) {
-            const path = reference.startsWith("https://")
-              ? new URL(reference).href
-              : resolve(this.repository, reference)
-            let matches = path === lexical
-            if (!matches) {
-              try {
-                matches =
-                  (await repositorySource(
-                    reference,
-                    this.repository,
-                    false,
-                  )) ===
-                  (await repositorySource(source, this.repository, false))
-              } catch {
-                /* Missing/unsafe references can still be removed by their stored spelling. */
-              }
-            }
-            if (matches) found = true
-            else remaining.push(reference)
-          }
-          if (!found)
-            throw new Error("Catalog is not registered in this repository")
-          return remaining
-        })
-      } else {
-        let normalized = lexical
-        try {
-          normalized = await normalizeSource(source, this.repository)
-        } catch {
-          /* Missing global source. */
-        }
-        const sources = this.state.catalogs.filter(
-          (s) => s !== normalized && s !== lexical,
-        )
-        if (sources.length === this.state.catalogs.length)
-          throw new Error(
-            "Catalog is not registered globally; Loadout is permanent",
-          )
-        this.state.catalogs = sources
-        await atomicWrite(
-          this.statePath,
-          JSON.stringify(this.state, null, 2) + "\n",
-        )
+      let normalized = lexical
+      try {
+        normalized = await normalizeSource(source, this.repository)
+      } catch {
+        /* Missing global source. */
       }
+      const sources = this.state.catalogs.filter(
+        (s) => s !== normalized && s !== lexical,
+      )
+      if (sources.length === this.state.catalogs.length)
+        throw new Error(
+          "Catalog is not registered globally; Repo is automatic and Loadout is permanent",
+        )
+      const next = structuredClone(this.state)
+      next.catalogs = sources
+      await atomicWrite(
+        this.statePath,
+        JSON.stringify(next, null, 2) + "\n",
+        undefined,
+        this.raw === null ? null : Buffer.from(this.raw),
+      )
       await this.reload()
     })
-  }
-
-  private async editRepositoryManifest(
-    edit: (sources: string[]) => Promise<string[]>,
-  ): Promise<void> {
-    const path = join(this.repository, ".loadout/catalogs.json")
-    const lock = `${path}.lock`
-    await assertSafePath(path)
-    await assertSafePath(lock)
-    await mkdir(dirname(path), { recursive: true })
-    const token = randomUUID()
-    await writeFile(lock, token, { flag: "wx", mode: 0o600 })
-    try {
-      const { manifest, raw } = await readRepositoryManifestSnapshot(
-        this.repository,
-      )
-      const catalogs = await edit([...manifest.catalogs])
-      await atomicWrite(
-        path,
-        JSON.stringify({ catalogs }, null, 2) + "\n",
-        undefined,
-        raw,
-      )
-    } finally {
-      await assertSafePath(lock)
-      if ((await readOptional(lock)) === token) await unlink(lock)
-    }
   }
 
   async plan(selections: Selection[]): Promise<Plan> {
@@ -460,7 +364,7 @@ export class LoadoutService {
             previous.global[item.key] ??
             previous.repositories[this.repository]?.[item.key]
           )?.origin
-          listing ??= await loadSubscriptions(
+          listing ??= await loadCatalogListing(
             previous.catalogs,
             this.repository,
           )
@@ -535,7 +439,7 @@ export class LoadoutService {
           "Selections changed in another session. Review again before applying.",
         )
       if (data.sources.length) {
-        const listing = await loadSubscriptions(
+        const listing = await loadCatalogListing(
           this.state.catalogs,
           this.repository,
         )

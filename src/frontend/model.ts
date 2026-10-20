@@ -88,7 +88,6 @@ export class ScreenModel {
   editing?: { kind: "catalog" } | { kind: "question"; id: string }
   registering = false
   source = ""
-  registrationScope: "repository" | "global" = "repository"
   private optionFocus = new Map<string, number>()
   private listeners = new Set<() => void>()
 
@@ -344,8 +343,8 @@ export class ScreenModel {
       if (this.catalog) {
         const rows: Row[] = [
           ...this.kitRows(this.catalog.kits, true),
-          ...(this.catalog.unavailableKits ?? []).map((kit): Row => ({
-            id: `unavailable:${kit.key}`,
+          ...(this.catalog.unavailableKits ?? []).map((kit, index): Row => ({
+            id: `unavailable:${this.catalog!.id}:${index}`,
             kind: "heading",
             label: `! ${kit.name}: ${kit.reason}`,
             catalog: this.catalog,
@@ -365,7 +364,7 @@ export class ScreenModel {
       const rows: Row[] = this.catalogs.map((catalog) => ({
         id: `catalog:${catalog.id}`,
         kind: "catalog",
-        label: `${catalog.permanent ? "◆" : "◇"} ${catalog.name}  ·  ${catalog.kits.length} kits${catalog.permanent ? "  ·  built-in" : `  ·  ${catalog.subscriptionScope === "both" ? "repository + global" : (catalog.subscriptionScope ?? "global")}`}`,
+        label: `${catalog.permanent ? "◆" : "◇"} ${catalog.name}  ·  ${catalog.kits.length} kits${catalog.kind === "repo" ? "  ·  automatic" : catalog.permanent ? "  ·  built-in" : "  ·  registered"}`,
         catalog,
       }))
       if (this.issueCount())
@@ -377,36 +376,13 @@ export class ScreenModel {
       rows.push({
         id: "register",
         kind: "register",
-        label: "+ Register a catalog",
+        label: "+ Register an external catalog",
       })
       if (this.registering) {
         rows.push({
-          id: "catalog-scope",
-          kind: "scope",
-          label: "Catalog available in",
-          indent: true,
-          choices: [
-            {
-              value: "repository",
-              label: "Repository",
-              selected: this.registrationScope === "repository",
-              description:
-                "Share a live source reference through this project's .loadout/catalogs.json. No kits are installed.",
-            },
-            {
-              value: "global",
-              label: "Global",
-              selected: this.registrationScope === "global",
-              description:
-                "Make this source available in all your projects. No kits are installed.",
-            },
-          ],
-          focusedOptionIndex: this.optionFocus.get("catalog-scope") ?? 0,
-        })
-        rows.push({
           id: "source",
           kind: "source",
-          label: "Catalog JSON path or HTTPS URL",
+          label: "External catalog JSON path or HTTPS URL",
           indent: true,
         })
       }
@@ -500,7 +476,7 @@ export class ScreenModel {
       row.kind !== "heading" &&
       (!this.form ||
         (row.item?.key === this.form.item.key && row.kind !== "kit")) &&
-      (!this.registering || row.id === "catalog-scope" || row.kind === "source")
+      (!this.registering || row.kind === "source")
         ? [index]
         : [],
     )
@@ -626,10 +602,7 @@ export class ScreenModel {
   async finishInput(): Promise<void> {
     if (this.editing?.kind === "catalog") {
       await this.run(async () => {
-        const catalog = await this.backend.register(
-          this.source.trim(),
-          this.registrationScope,
-        )
+        const catalog = await this.backend.register(this.source.trim())
         this.registering = false
         this.editing = undefined
         this.source = ""
@@ -640,7 +613,8 @@ export class ScreenModel {
             (item) => item.id === catalog.id && item.source === catalog.source,
           ),
         )
-        this.message = `Catalog subscribed for ${this.registrationScope}. No kit files were installed.`
+        this.message =
+          "External catalog registered. No kit files were installed."
       })
     } else {
       this.editing = undefined
@@ -672,10 +646,6 @@ export class ScreenModel {
       this.cursor = this.rows().findIndex((row) => row.id === "scope")
       this.message =
         "↑↓/jk questions · ←→/hl options · Space selects/toggles · Esc accepts · Cancel discards"
-    } else if (row.id === "catalog-scope") {
-      this.optionFocus.set(row.id, row.focusedOptionIndex ?? 0)
-      this.registrationScope = row.choices![row.focusedOptionIndex ?? 0]!
-        .value as "repository" | "global"
     } else if (row.kind === "scope" && this.form) {
       this.optionFocus.set(row.id, row.focusedOptionIndex ?? 0)
       this.form.scope = row.choices![row.focusedOptionIndex ?? 0]!
@@ -728,12 +698,10 @@ export class ScreenModel {
       return
     } else if (row.kind === "register") {
       this.registering = true
-      this.editing = undefined
-      this.registrationScope = "repository"
-      this.optionFocus.delete("catalog-scope")
+      this.editing = { kind: "catalog" }
       this.cursor += 1
       this.message =
-        "Choose catalog availability, then enter its path or HTTPS URL. Enter subscribes; no kit is installed."
+        "Enter an external catalog path or HTTPS URL. Repo kits are discovered automatically; no registration is needed."
     } else if (row.kind === "health") {
       this.page = 1
       this.cursor = 0

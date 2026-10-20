@@ -17,14 +17,22 @@ export async function readOptionalBytes(path: string): Promise<Buffer | null> {
 
 // Refuse symlinks in every existing path component, including files being deleted.
 export async function assertSafePath(path: string): Promise<void> {
+  return assertPath(path, false)
+}
+
+export async function assertSafeDirectory(path: string): Promise<void> {
+  return assertPath(path, true)
+}
+
+async function assertPath(path: string, directory: boolean): Promise<void> {
   let current = resolve(path)
   while (current !== parse(current).root) {
     try {
       const stat = await lstat(current)
       if (stat.isSymbolicLink()) throw new Error(`Refusing symlink: ${current}`)
-      if (current === resolve(path) && !stat.isFile())
+      if (current === resolve(path) && !directory && !stat.isFile())
         throw new Error(`Not a regular file: ${current}`)
-      if (current !== resolve(path) && !stat.isDirectory())
+      if ((directory || current !== resolve(path)) && !stat.isDirectory())
         throw new Error(`Not a directory: ${current}`)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error

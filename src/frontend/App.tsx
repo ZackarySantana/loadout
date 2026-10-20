@@ -619,7 +619,7 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
         {editing()?.kind === "question"
           ? "Type an answer · ↑↓ questions · Enter finish input · Esc accept kit"
           : editing()?.kind === "catalog"
-            ? "Type a catalog path or URL · ↑↓ availability · Enter subscribe · Esc stop editing"
+            ? "Type an external catalog path or URL · Enter register · Esc stop editing"
             : formOpen()
               ? "↑↓/jk questions · ←→/hl options · Space select/toggle · Esc accept kit · Cancel discards"
               : "↑↓/jk rows · ←→/hl options · Space select · Tab pages · r refresh · Esc back · PgUp/PgDn details · q q quit"}

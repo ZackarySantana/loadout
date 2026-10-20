@@ -676,33 +676,29 @@ describe("backend integration flows", () => {
     expect(builtin.permanent).toBe(true)
     expect(builtin.kits.length).toBeGreaterThan(0)
     const source = await catalogFixture(join(repository, "catalog"))
-    const registered = await service.register("catalog/catalog.json", "global")
+    const registered = await service.register("catalog/catalog.json")
     expect(registered.source).toBe(source)
     expect(registered.permanent).toBe(false)
     expect(registered.kits.map((item) => item.key)).toEqual(["team/guide"])
-    await expect(service.register(source, "global")).rejects.toThrow(
-      /already registered/,
-    )
+    await expect(service.register(source)).rejects.toThrow(/already registered/)
     const reopened = await open()
     expect(
-      (await reopened.catalogs()).catalogs.map((catalog) => catalog.id),
-    ).toEqual(["loadout", "team"])
+      (await reopened.catalogs()).catalogs.map((catalog) => catalog.name),
+    ).toEqual(["Repo", "Loadout", "Team"])
     await configure(reopened, registered.kits[0]!, "repository", {
       project: "From catalog",
     })
     expect(await text(join(repository, "context/guide.txt"))).toBe(
       "From catalog\n",
     )
-    await reopened.unregister(source, "global")
+    await reopened.unregister(source)
     const after = await open()
     expect(
-      (await after.catalogs()).catalogs.map((catalog) => catalog.id),
-    ).toEqual(["loadout"])
+      (await after.catalogs()).catalogs.map((catalog) => catalog.name),
+    ).toEqual(["Repo", "Loadout"])
     expect(after.configuration("team/guide").scope).toBe("repository")
     const before = await snapshot(root)
-    await expect(after.unregister(builtin.source, "global")).rejects.toThrow(
-      /permanent/,
-    )
+    await expect(after.unregister(builtin.source)).rejects.toThrow(/permanent/)
     expect(await snapshot(root)).toEqual(before)
   })
 
@@ -732,7 +728,7 @@ describe("backend integration flows", () => {
       JSON.stringify({ ...document, kits: "not an array" }),
     ]) {
       await put(source, invalidCatalog)
-      await expect(service.register(source, "global")).rejects.toThrow()
+      await expect(service.register(source)).rejects.toThrow()
       expect(await text(join(root, "home/.loadout/state.json"))).toBe(before)
     }
 
@@ -765,7 +761,7 @@ describe("backend integration flows", () => {
       // Reject escaped assets before reading them, not after parsing their valid YAML.
       const reads = spyOn(filesystem, "readFile")
       try {
-        const registered = await service.register(source, "global")
+        const registered = await service.register(source)
         expect(registered.kits.map((item) => item.key)).toEqual([
           "team/healthy",
         ])
@@ -811,13 +807,13 @@ describe("backend integration flows", () => {
       } finally {
         reads.mockRestore()
       }
-      await service.unregister(source, "global")
+      await service.unregister(source)
     }
 
     await rm(join(directory, "guide.yaml"))
     await put(join(directory, "guide.yaml"), validKit)
     await put(source, validCatalog)
-    const restored = await service.register(source, "global")
+    const restored = await service.register(source)
     await configure(
       service,
       restored.kits.find((item) => item.key === "team/guide")!,
@@ -852,7 +848,7 @@ describe("backend integration flows", () => {
       answers: { project: "Saved" },
     })
     expect(await text(join(repository, "context/guide.txt"))).toBe("Saved\n")
-    await service.unregister(source, "global")
+    await service.unregister(source)
     expect((await (await open()).catalogs()).errors).toEqual([])
   })
 

@@ -21,6 +21,7 @@ import {
   type Scope,
 } from "../domain/kit"
 import { theme as color } from "./theme"
+import { displayKitKey } from "../domain/catalog"
 
 // Preserve line breaks and tabs, but never pass terminal controls through.
 const safeText = (text: string) =>
@@ -426,7 +427,7 @@ export function KitPreview(props: KitPreviewProps) {
         <b>{safeText(props.item.kit.name)}</b>
         <span
           style={{ fg: color.muted }}
-        >{` * ${safeText(props.item.key)}`}</span>
+        >{` * ${safeText(displayKitKey(props.item.key))}`}</span>
       </text>
       <Show when={props.item.kit.description}>
         <Content content={props.item.kit.description} markdown included />

@@ -185,10 +185,6 @@ async function fixture(
     JSON.stringify({
       id: "fixture",
       name: "Local team catalog",
-      description: Array.from(
-        { length: 40 },
-        (_, i) => `Catalog preview paragraph ${i + 1}.`,
-      ).join("\n\n"),
       kits: [
         ...(neighbors
           ? [{ id: "before", name: "Before neighbor", source: "before.yaml" }]
@@ -201,7 +197,7 @@ async function fixture(
     }),
   )
   const service = await LoadoutService.open({ home, repository })
-  if (register) await service.register(source, "global")
+  if (register) await service.register(source)
   const model = new ScreenModel(service)
   await model.initialize()
   let exits = 0
@@ -636,6 +632,7 @@ describe("rendered keyboard workflows", () => {
 
   test("registers a catalog through the inline path input, including spaces, and persists it", async () => {
     const ui = await fixture(false)
+    await ui.go("catalog:loadout")
     expect(ui.frame()).toContain("◆ Loadout")
     const catalogCards = ["Greenfield", "No em dashes"].map((name) => {
       const title = descendants(ui.setup.renderer.root).find(
@@ -695,21 +692,18 @@ describe("rendered keyboard workflows", () => {
     ).toBe(true)
     expect(ui.frame()).toContain("write files.")
     await ui.select("register")
-    expect(ui.model.selected()?.id).toBe("catalog-scope")
-    expect(ui.model.selected()?.choices?.[0]?.selected).toBe(true)
-    await ui.choose("catalog-scope", "global")
     await ui.go("source")
-    expect(ui.frame()).toContain("Catalog JSON path or HTTPS URL")
+    expect(ui.frame()).toContain("External catalog JSON path or HTTPS URL")
     expect(ui.input("source").focused).toBe(true)
     await ui.setup.mockInput.typeText(ui.source)
     await ui.setup.flush()
     expect(ui.model.source).toBe(ui.source)
     await ui.press("RETURN")
     await ui.setup.waitFor(() =>
-      ui.model.message.startsWith("Catalog subscribed for global."),
+      ui.model.message.startsWith("External catalog registered."),
     )
     expect(ui.frame()).toContain("Local team catalog")
-    expect(ui.frame()).toContain("Catalog subscribed for global.")
+    expect(ui.frame()).toContain("External catalog registered.")
     await ui.press(" ")
     expect(ui.frame()).toContain("Catalogs / Local team catalog")
     expect(ui.frame()).toContain("Team context")
@@ -719,12 +713,7 @@ describe("rendered keyboard workflows", () => {
     })
     expect(
       (await reopened.catalogs()).catalogs.map((catalog) => catalog.id),
-    ).toEqual(["loadout", "fixture"])
-    expect(
-      (await reopened.catalogs()).catalogs.find(
-        (catalog) => catalog.id === "fixture",
-      )?.subscriptionScope,
-    ).toBe("global")
+    ).toEqual([ui.model.catalogs[0]!.id, "loadout", "fixture"])
     expect(await Bun.file(join(ui.repository, "AGENTS.md")).exists()).toBe(
       false,
     )
@@ -786,7 +775,7 @@ describe("rendered keyboard workflows", () => {
     expect(ui.service.installed()).toEqual([])
   })
 
-  test("scrolls details and keeps inline selection visible after a narrow resize", async () => {
+  test("keeps inline selection visible after a narrow resize", async () => {
     const ui = await fixture()
     const checkHeader = (width: number) => {
       const logo = ui.setup.renderer.root.findDescendantById("loadout-wordmark")
@@ -873,15 +862,6 @@ describe("rendered keyboard workflows", () => {
       expect(available).toBeGreaterThan(width - 8)
     }
     checkColumns(110)
-    await ui.go("catalog:fixture")
-    expect(ui.frame()).toContain("Catalog preview paragraph 1.")
-    expect(ui.frame()).not.toContain("Catalog preview paragraph 40.")
-    ui.setup.mockInput.pressKey("\u001b[6~")
-    await ui.setup.flush()
-    expect(ui.frame()).not.toContain("Catalog preview paragraph 1.")
-    ui.setup.mockInput.pressKey("\u001b[5~")
-    await ui.setup.flush()
-    expect(ui.frame()).toContain("Catalog preview paragraph 1.")
     await ui.openKit()
     ui.setup.resize(64, 18)
     await ui.setup.flush()
@@ -981,11 +961,12 @@ describe("rendered keyboard workflows", () => {
 
   test("wraps lists but locks navigation and previews inside the active kit on Catalogs and Installed", async () => {
     const ui = await fixture(true, false, true)
-    expect(ui.model.selected()?.id).toBe("catalog:loadout")
+    const firstCatalog = ui.model.rows()[0]!.id
+    expect(ui.model.selected()?.id).toBe(firstCatalog)
     await ui.press("k")
     expect(ui.model.selected()?.id).toBe("register")
     await ui.press("j")
-    expect(ui.model.selected()?.id).toBe("catalog:loadout")
+    expect(ui.model.selected()?.id).toBe(firstCatalog)
     await ui.select("catalog:fixture")
     expect(ui.model.selected()?.id).toBe("kit:fixture/before")
     const kitRows = ["before", "team", "after"].map((id) =>
@@ -1237,10 +1218,9 @@ describe("rendered keyboard workflows", () => {
     const ui = await fixture(false)
     ui.setup.resize(150, 80)
     await ui.setup.flush()
-    const directory = join(ui.repository, ".loadout")
-    await mkdir(directory)
+    const directory = join(ui.repository, ".loadout/kits")
+    await mkdir(directory, { recursive: true })
     const kitPath = join(directory, "context.yaml")
-    const catalogPath = join(directory, "catalog.json")
     const agents = join(ui.repository, "AGENTS.md")
     const output = join(ui.repository, "context.txt")
     const state = join(ui.home, ".loadout/state.json")
@@ -1284,19 +1264,15 @@ describe("rendered keyboard workflows", () => {
       ],
     })
     await writeFile(kitPath, stringify(definition(false)))
-    await writeFile(
-      catalogPath,
-      JSON.stringify({
-        id: "team-repo",
-        name: "Project catalog",
-        kits: [{ id: "context", name: "Project team", source: "context.yaml" }],
-      }),
-    )
     await writeFile(agents, "Keep project notes.\n")
     await ui.press("r")
-    expect(ui.frame()).toContain("Project catalog")
-    await ui.select("catalog:team-repo")
-    await ui.select("kit:team-repo/context")
+    expect(ui.frame()).toContain("Repo")
+    const repoCatalog = ui.model.catalogs.find(
+      (catalog) => catalog.name === "Repo",
+    )!
+    const key = repoCatalog.kits.find((item) => item.kit.id === "context")!.key
+    await ui.select(`catalog:${repoCatalog.id}`)
+    await ui.select(`kit:${key}`)
     await ui.answer("project", "Phoenix team")
     await ui.choose("question:mode", "legacy")
     await ui.press("ESCAPE")
@@ -1314,10 +1290,9 @@ describe("rendered keyboard workflows", () => {
       repository: ui.repository,
     })
     expect(
-      reopened.installed().find((item) => item.key === "team-repo/context")
-        ?.origin,
+      reopened.installed().find((item) => item.key === key)?.origin,
     ).toMatchObject({
-      source: catalogPath,
+      source: directory,
       scope: "repository",
       repository: ui.repository,
     })
@@ -1329,7 +1304,7 @@ describe("rendered keyboard workflows", () => {
     await ui.press("TAB")
     expect(ui.model.page).toBe(1)
     await ui.press("r")
-    await ui.go("kit:team-repo/context")
+    await ui.go(`kit:${key}`)
     expect(ui.frame()).toContain("Source changed")
     expect(ui.frame()).toContain("saved definition")
     expect(await readFile(output, "utf8")).toBe(originalOutput)
@@ -1341,7 +1316,7 @@ describe("rendered keyboard workflows", () => {
       ui.model.form?.item.kit.questions.map((question) => question.id),
     ).toEqual(["project", "mode"])
     expect(ui.frame()).toContain("Use catalog update")
-    await ui.select("update:team-repo/context")
+    await ui.select(`update:${key}`)
     expect(ui.frame()).toContain("Previewing catalog update")
     expect(ui.input("question:project").value).toBe("Phoenix team")
     expect(ui.model.form?.answers.mode).toBe("modern")
@@ -1363,10 +1338,9 @@ describe("rendered keyboard workflows", () => {
     await reviewAndApply()
     const updatedOutput = await readFile(output, "utf8")
     expect(updatedOutput).toBe("Updated Phoenix team / modern / Ada team\n")
-    expect(
-      ui.model.drift.kits.find((kit) => kit.key === "team-repo/context")
-        ?.status,
-    ).toBe("current")
+    expect(ui.model.drift.kits.find((kit) => kit.key === key)?.status).toBe(
+      "current",
+    )
     await ui.press("TAB")
     await ui.press("TAB")
     const savedState = await readFile(state, "utf8")
@@ -1391,8 +1365,8 @@ describe("rendered keyboard workflows", () => {
     ).toBe(true)
     await rm(kitPath)
     await ui.press("r")
-    await ui.go("kit:team-repo/context")
-    expect(ui.frame()).toContain("Kit source unavailable")
+    await ui.go(`kit:${key}`)
+    expect(ui.frame()).toContain("Kit removed from catalog")
     expect(
       descendants(ui.setup.renderer.root).some(
         (node) =>
@@ -1409,7 +1383,7 @@ describe("rendered keyboard workflows", () => {
     await reviewAndApply()
     expect(await Bun.file(output).exists()).toBe(false)
     expect(await readFile(agents, "utf8")).toBe("Keep project notes.\n")
-    expect(ui.service.configuration("team-repo/context").scope).toBe("none")
+    expect(ui.service.configuration(key).scope).toBe("none")
   }, 15000)
 
   test("keeps an Installed edit usable when another session uninstalls its kit during a catalog-update refresh", async () => {

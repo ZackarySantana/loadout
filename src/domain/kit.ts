@@ -153,13 +153,11 @@ export const catalogSchema = z
   .object({
     id,
     name: z.string().min(1),
-    description: z.string().default(""),
     kits: z.array(
       z
         .object({
           id,
           name: z.string().min(1),
-          description: z.string().default(""),
           source: z.string().min(1),
         })
         .strict(),
@@ -183,6 +181,7 @@ export const catalogOriginSchema = z
     source: z.string().min(1),
     scope: z.enum(["repository", "global"]),
     repository: z.string().min(1).optional(),
+    file: relativePath.optional(),
   })
   .strict()
   .refine(
@@ -204,18 +203,15 @@ export interface LoadedKit {
 export interface Catalog {
   id: string
   name: string
-  description: string
   source: string
   permanent: boolean
   kits: LoadedKit[]
-  subscriptionScope?: "repository" | "global" | "both"
+  kind?: "repo" | "builtin" | "external"
   automatic?: boolean
-  shared?: boolean
   unavailableKits?: {
-    key: string
-    id: string
+    key?: string
+    id?: string
     name: string
-    description: string
     source: string
     reason: string
   }[]

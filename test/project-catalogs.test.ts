@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import {
   cp,
   lstat,
@@ -11,10 +11,9 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises"
-import { dirname, join, relative } from "node:path"
+import { basename, dirname, join, relative } from "node:path"
 import { stringify } from "yaml"
 import { LoadoutService } from "../src/backend/service"
-import * as catalogSources from "../src/backend/catalogs"
 import {
   kitSchema,
   type Answers,
@@ -107,6 +106,14 @@ function guide(id = "guide", prefix = "Saved"): Kit {
 }
 
 async function catalog(directory: string, id = "team", kits = [guide()]) {
+  if (basename(directory) === ".loadout") {
+    await Promise.all(
+      kits.map((kit) =>
+        put(join(directory, "kits", `${kit.id}.yaml`), stringify(kit)),
+      ),
+    )
+    return join(directory, "kits")
+  }
   const source = join(directory, "catalog.json")
   await Promise.all(
     kits.map((kit) => put(join(directory, `${kit.id}.yaml`), stringify(kit))),
@@ -137,11 +144,11 @@ async function select(
 
 async function available(
   service: LoadoutService,
-  key = "team/guide",
+  key?: string,
 ): Promise<LoadedKit> {
   const item = (await service.catalogs()).catalogs
     .flatMap((catalog) => catalog.kits)
-    .find((item) => item.key === key)
+    .find((item) => (key ? item.key === key : item.kit.id === "guide"))
   expect(item).toBeDefined()
   return item!
 }
@@ -158,126 +165,37 @@ function reverseKeys(value: unknown): unknown {
 }
 
 describe("shared project catalogs and drift", () => {
-  test("registration preserves an editor's concurrent manifest changes, releases its lock after refusal, and succeeds on fresh retry", async () => {
-    const { root, home, repository, open } = await fixture()
-    await catalog(join(repository, "shared"), "team")
-    await catalog(join(repository, "candidate"), "candidate")
-    await catalog(join(repository, "editor"), "editor")
-    const service = await open()
-    await service.register("shared/catalog.json")
-    await select(service, await available(service), "repository", {
-      project: "Unchanged",
-    })
-    const manifest = join(repository, ".loadout/catalogs.json")
-    const editorBytes =
-      '{\n  "catalogs": ["shared/catalog.json", "editor/catalog.json"]\n}\n'
-    const before = await snapshot(root)
-    const stateBefore = await text(join(home, ".loadout/state.json"))
-    const originalNormalize = catalogSources.repositorySource
-    let injected = false
-    // Call through real normalization, injecting precisely inside the locked
-    // read/edit/write interval. Editors/Git do not participate in Loadout's lock.
-    const normalize = spyOn(
-      catalogSources,
-      "repositorySource",
-    ).mockImplementation(async (source, repo, mustExist = true) => {
-      const normalized = await originalNormalize(source, repo, mustExist)
-      if (
-        !injected &&
-        source === "shared/catalog.json" &&
-        repo === repository &&
-        (await text(`${manifest}.lock`)) !== null
-      ) {
-        injected = true
-        await put(manifest, editorBytes)
-      }
-      return normalized
-    })
-    try {
-      await expect(service.register("candidate/catalog.json")).rejects.toThrow(
-        /changed while editing; concurrent edits were preserved/i,
-      )
-      expect(injected).toBe(true)
-    } finally {
-      normalize.mockRestore()
-    }
-    expect(await text(manifest)).toBe(editorBytes)
-    expect(await snapshot(root)).toEqual({
-      ...before,
-      [relative(root, manifest)]: {
-        content: editorBytes,
-        mode: (await lstat(manifest)).mode & 0o7777,
-      },
-    })
-    expect(await text(join(home, ".loadout/state.json"))).toBe(stateBefore)
-    expect(await text(`${manifest}.lock`)).toBeNull()
-    expect(await text(join(home, ".loadout/lock"))).toBeNull()
-    expect(await text(join(repository, "context/guide.txt"))).toBe(
-      "Saved: Unchanged\n",
-    )
-    await service.register("candidate/catalog.json")
-    expect(JSON.parse((await text(manifest))!)).toEqual({
-      catalogs: [
-        "shared/catalog.json",
-        "editor/catalog.json",
-        "candidate/catalog.json",
-      ],
-    })
-    const listing = await service.catalogs()
-    expect(listing.errors).toEqual([])
-    expect(listing.catalogs.map((catalog) => catalog.id)).toEqual(
-      expect.arrayContaining(["team", "editor", "candidate"]),
-    )
-    expect(service.installed().map((item) => item.key)).toEqual(["team/guide"])
-    expect(await text(join(home, ".loadout/state.json"))).toBe(stateBefore)
-  })
-
-  test("committed auto-discovery and portable subscriptions work in independent clones without auto-installing or leaking into other projects", async () => {
-    const {
-      root,
-      home,
-      otherHome,
-      repository,
-      otherRepository,
-      unrelated,
-      open,
-    } = await fixture()
+  test("committed kits work in independent clones without auto-installing or leaking into other projects", async () => {
+    const { home, otherHome, repository, otherRepository, unrelated, open } =
+      await fixture()
     await catalog(join(repository, ".loadout"), "team")
-    await catalog(join(repository, "tools/context"), "tools", [guide("checks")])
     const first = await open()
     expect(
       (await first.catalogs()).catalogs.find(
-        (catalog) => catalog.id === "team",
+        (catalog) => catalog.name === "Repo",
       ),
-    ).toMatchObject({ automatic: true, subscriptionScope: "repository" })
+    ).toMatchObject({ automatic: true, kind: "repo" })
     expect(first.installed()).toEqual([])
     expect(await text(join(repository, "AGENTS.md"))).toBeNull()
-    await first.register("tools/context/catalog.json")
-    const manifest = (await text(join(repository, ".loadout/catalogs.json")))!
-    expect(JSON.parse(manifest)).toEqual({
-      catalogs: ["tools/context/catalog.json"],
-    })
-    expect(manifest).not.toContain(root)
     // Copy only committed source material, not managed output or a user's home state.
     await cp(join(repository, ".loadout"), join(otherRepository, ".loadout"), {
-      recursive: true,
-    })
-    await cp(join(repository, "tools"), join(otherRepository, "tools"), {
       recursive: true,
     })
     const second = await open(otherRepository, otherHome)
     for (const service of [first, second]) {
       const listing = await service.catalogs()
       expect(listing.errors).toEqual([])
-      expect(listing.catalogs.map((catalog) => catalog.id)).toEqual(
-        expect.arrayContaining(["loadout", "team", "tools"]),
+      expect(listing.catalogs.map((catalog) => catalog.name)).toEqual(
+        expect.arrayContaining(["Loadout", "Repo"]),
       )
       expect(service.installed()).toEqual([])
     }
     await select(first, await available(first), "repository", {
       project: "Member A",
     })
-    expect(second.configuration("team/guide").scope).toBe("none")
+    expect(second.configuration((await available(second)).key).scope).toBe(
+      "none",
+    )
     expect(await text(join(otherRepository, "context/guide.txt"))).toBeNull()
     await select(second, await available(second), "repository", {
       project: "Member B",
@@ -289,10 +207,10 @@ describe("shared project catalogs and drift", () => {
       "Saved: Member B\n",
     )
     expect(
-      (await (await open(unrelated)).catalogs()).catalogs.map(
-        (catalog) => catalog.id,
+      (await (await open(unrelated)).catalogs()).catalogs.flatMap((catalog) =>
+        catalog.kits.map((item) => item.key),
       ),
-    ).not.toContain("team")
+    ).not.toContain((await available(first)).key)
     expect(
       JSON.parse((await text(join(home, ".loadout/state.json")))!).catalogs,
     ).toEqual([])
@@ -300,34 +218,6 @@ describe("shared project catalogs and drift", () => {
       JSON.parse((await text(join(otherHome, ".loadout/state.json")))!)
         .catalogs,
     ).toEqual([])
-    // Sharing the same source globally coalesces its listing, not its members' selections.
-    const source = join(repository, "tools/context/catalog.json")
-    await first.register(source, "global")
-    const tools = (await first.catalogs()).catalogs.filter(
-      (catalog) => catalog.id === "tools",
-    )
-    expect(tools).toHaveLength(1)
-    expect(tools[0]!.subscriptionScope).toBe("both")
-    expect(
-      (await (await open(unrelated)).catalogs()).catalogs.find(
-        (catalog) => catalog.id === "tools",
-      )?.subscriptionScope,
-    ).toBe("global")
-    await first.unregister(source)
-    expect(
-      JSON.parse((await text(join(repository, ".loadout/catalogs.json")))!),
-    ).toEqual({ catalogs: [] })
-    expect(
-      (await first.catalogs()).catalogs.find(
-        (catalog) => catalog.id === "tools",
-      )?.subscriptionScope,
-    ).toBe("global")
-    await first.unregister(source, "global")
-    expect(
-      (await (await open(unrelated)).catalogs()).catalogs.map(
-        (catalog) => catalog.id,
-      ),
-    ).not.toContain("tools")
   })
 
   test("upstream question and output changes remain an explicit reviewed update, with source changes during review rejected", async () => {
@@ -350,7 +240,7 @@ describe("shared project catalogs and drift", () => {
     const stateBefore = await text(statePath)
     // YAML/object mapping order is not a semantic definition change.
     await put(
-      join(repository, ".loadout/guide.yaml"),
+      join(repository, ".loadout/kits/guide.yaml"),
       stringify(reverseKeys(original)),
     )
     expect(
@@ -367,7 +257,10 @@ describe("shared project catalogs and drift", () => {
       },
       { id: "owner", label: "Owner", type: "input", required: true },
     )
-    await put(join(repository, ".loadout/guide.yaml"), stringify(latestKit))
+    await put(
+      join(repository, ".loadout/kits/guide.yaml"),
+      stringify(latestKit),
+    )
     const beforeStatus = await snapshot(root)
     const status = await service.status()
     const drift = status.drift.kits.find((kit) => kit.key === saved.key)!
@@ -411,7 +304,10 @@ describe("shared project catalogs and drift", () => {
       ...latestKit,
       description: "Pulled again after review",
     }
-    await put(join(repository, ".loadout/guide.yaml"), stringify(changedAgain))
+    await put(
+      join(repository, ".loadout/kits/guide.yaml"),
+      stringify(changedAgain),
+    )
     const afterPull = await snapshot(root)
     await expect(service.apply(review)).rejects.toThrow(
       /source changed since review/i,
@@ -513,9 +409,6 @@ describe("shared project catalogs and drift", () => {
     await rm(source)
     await service.unregister("shared/catalog.json")
     expect(
-      JSON.parse((await text(join(repository, ".loadout/catalogs.json")))!),
-    ).toEqual({ catalogs: [] })
-    expect(
       (await service.status()).drift.kits.find((kit) => kit.key === saved.key)
         ?.status,
     ).toBe("subscription-missing")
@@ -607,77 +500,7 @@ describe("shared project catalogs and drift", () => {
     )
   })
 
-  test("unsafe and invalid repository metadata warn without hiding built-in/global catalogs, losing snapshots, or clobbering invalid shared configuration", async () => {
-    const { root, repository, open } = await fixture()
-    const outsideSource = await catalog(join(root, "outside"), "global-team")
-    const source = await catalog(join(repository, "shared"), "team")
-    const service = await open()
-    await service.register(outsideSource, "global")
-    await service.register("shared/catalog.json")
-    await select(service, await available(service), "repository", {
-      project: "Keep",
-    })
-    const saved = service.installed()[0]!
-    const manifest = join(repository, ".loadout/catalogs.json")
-    const validManifest = (await text(manifest))!
-    await symlink(join(root, "outside"), join(repository, "linked-outside"))
-    const malformed = [
-      "{invalid JSON",
-      JSON.stringify({ catalogs: [], unexpected: true }),
-      JSON.stringify({ catalogs: "shared/catalog.json" }),
-    ]
-    for (const content of malformed) {
-      await put(manifest, content)
-      const before = await snapshot(root)
-      const status = await service.status()
-      expect(status.errors.join("\n")).toContain("catalogs.json")
-      expect(status.catalogs.map((catalog) => catalog.id)).toEqual(
-        expect.arrayContaining(["loadout", "global-team"]),
-      )
-      expect(service.installed()).toEqual([saved])
-      await expect(service.register(source)).rejects.toThrow()
-      expect(await snapshot(root)).toEqual(before)
-      expect(await text(manifest)).toBe(content)
-    }
-    for (const reference of [
-      "../outside/catalog.json",
-      "linked-outside/catalog.json",
-      outsideSource,
-    ]) {
-      await put(manifest, JSON.stringify({ catalogs: [reference] }))
-      const before = await snapshot(root)
-      const status = await service.status()
-      expect(status.errors.length).toBeGreaterThan(0)
-      expect(status.catalogs.map((catalog) => catalog.id)).toEqual(
-        expect.arrayContaining(["loadout", "global-team"]),
-      )
-      await expect(service.register(reference)).rejects.toThrow(
-        /checkout|relative/,
-      )
-      expect(await snapshot(root)).toEqual(before)
-    }
-    await put(manifest, validManifest)
-    const externalManifest = join(root, "external-manifest.json")
-    await put(externalManifest, validManifest)
-    await rm(manifest)
-    await symlink(externalManifest, manifest)
-    const beforeLink = await snapshot(root)
-    expect((await service.status()).errors.join("\n")).toContain("symlink")
-    await expect(service.register(source)).rejects.toThrow(/symlink/)
-    expect(await snapshot(root)).toEqual(beforeLink)
-    await rm(manifest)
-    await put(manifest, validManifest)
-    expect(
-      (await service.status()).drift.kits.find((kit) => kit.key === saved.key)
-        ?.status,
-    ).toBe("current")
-    expect(service.configuration(saved.key)).toEqual({
-      scope: "repository",
-      answers: { project: "Keep" },
-    })
-  })
-
-  test("global snapshots keep their repository-A provenance in repository B with the same catalog ID, and both restores A offline", async () => {
+  test("global snapshots keep their repository-A provenance in repository B, and both restores A offline", async () => {
     const { home, repository, otherRepository, open } = await fixture()
     const sourceA = await catalog(join(repository, ".loadout"), "team", [
       guide("guide", "From A"),
@@ -698,7 +521,7 @@ describe("shared project catalogs and drift", () => {
       origin: { source: sourceA, repository },
     })
     await put(
-      join(repository, ".loadout/guide.yaml"),
+      join(repository, ".loadout/kits/guide.yaml"),
       stringify(guide("guide", "Changed A")),
     )
     const changed = (await b.status()).drift.kits.find(
@@ -710,11 +533,11 @@ describe("shared project catalogs and drift", () => {
     expect(b.installed()).toEqual([originalA])
     expect(await text(join(home, "context/guide.txt"))).toBe("From A: Alpha\n")
     // Leave the catalog subscribed but take A's YAML offline. B must not fill the gap.
-    await rm(join(repository, ".loadout/guide.yaml"))
+    await rm(join(repository, ".loadout/kits/guide.yaml"))
     const offline = (await b.status()).drift.kits.find(
       (kit) => kit.key === originalA.key,
     )!
-    expect(offline.status).toBe("kit-unavailable")
+    expect(offline.status).toBe("kit-missing")
     expect(offline.latest).toBeUndefined()
     await select(b, b.installed()[0]!, "none")
     await a.refresh()
@@ -731,15 +554,14 @@ describe("shared project catalogs and drift", () => {
     expect(
       (await a.status()).drift.kits.find((kit) => kit.key === originalA.key)
         ?.status,
-    ).toBe("kit-unavailable")
+    ).toBe("kit-missing")
   })
 
   test("a missing globally registered source can be unregistered without discarding its installed offline snapshot", async () => {
     const { root, home, repository, unrelated, open } = await fixture()
     const source = await catalog(join(root, "personal-catalog"), "personal")
     const service = await open()
-    await expect(service.register(source)).rejects.toThrow(/checkout/)
-    await service.register(source, "global")
+    await service.register(source)
     await select(
       service,
       await available(service, "personal/guide"),
@@ -758,7 +580,7 @@ describe("shared project catalogs and drift", () => {
       )?.status,
     ).toBe("catalog-unavailable")
     expect(await snapshot(root)).toEqual(before)
-    await anotherProject.unregister(source, "global")
+    await anotherProject.unregister(source)
     expect(
       JSON.parse((await text(join(home, ".loadout/state.json")))!).catalogs,
     ).toEqual([])

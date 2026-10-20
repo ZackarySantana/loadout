@@ -1,6 +1,6 @@
 import { For, Show } from "solid-js"
 import type { Catalog } from "../domain/kit"
-import { scopeColor, theme as color } from "./theme"
+import { theme as color } from "./theme"
 
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
@@ -22,32 +22,22 @@ export function CatalogPreview(props: {
       flexShrink={0}
       gap={1}
     >
-      <text fg={color.text} wrapMode="word" flexShrink={0}>
-        {safeText(props.catalog.description)}
-      </text>
       <text fg={color.muted} wrapMode="word" flexShrink={0}>
-        {props.catalog.permanent ? "Built into Loadout." : safeText(source())}
+        {props.catalog.kind === "builtin"
+          ? "Built into Loadout."
+          : safeText(source())}
       </text>
-      <Show when={!props.catalog.permanent}>
+      <Show when={props.catalog.kind !== "builtin"}>
         <text
-          fg={scopeColor(props.catalog.subscriptionScope ?? "global")}
+          fg={props.catalog.kind === "repo" ? color.repository : color.global}
           wrapMode="word"
           flexShrink={0}
         >
-          {props.catalog.subscriptionScope === "both"
-            ? "Repository + global catalog"
-            : props.catalog.subscriptionScope === "repository"
-              ? "Repository catalog"
-              : "Global catalog"}
+          {props.catalog.kind === "repo" ? "Repo catalog" : "External catalog"}
         </text>
-        <Show when={props.catalog.automatic}>
+        <Show when={props.catalog.kind === "repo"}>
           <text fg={color.muted} wrapMode="word" flexShrink={0}>
-            Discovered from this project's .loadout/catalog.json.
-          </text>
-        </Show>
-        <Show when={props.catalog.shared}>
-          <text fg={color.muted} wrapMode="word" flexShrink={0}>
-            Live subscription shared through .loadout/catalogs.json.
+            Kits are discovered from this project's .loadout/kits/.
           </text>
         </Show>
       </Show>
