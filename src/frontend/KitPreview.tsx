@@ -100,7 +100,7 @@ interface Contribution {
 interface AgentMetadata {
   label: string
   harness?: AgentHarness
-  values: { text: string; harness: AgentHarness }[]
+  values: { text: string; harness?: AgentHarness }[]
 }
 
 interface HeadingToken {
@@ -424,9 +424,7 @@ export function KitPreview(props: KitPreviewProps) {
             metadata.push({
               label: "Claude Code tools",
               harness,
-              values: [
-                { text: output.options.claude.tools.join(" · "), harness },
-              ],
+              values: [{ text: output.options.claude.tools.join(" · ") }],
             })
         }
         sections.push({
@@ -568,9 +566,11 @@ export function KitPreview(props: KitPreviewProps) {
                               </Show>
                               <span
                                 style={{
-                                  fg: card().included
-                                    ? harnessColors[value().harness]
-                                    : color.excluded,
+                                  fg: !card().included
+                                    ? color.excluded
+                                    : value().harness
+                                      ? harnessColors[value().harness!]
+                                      : color.muted,
                                 }}
                               >
                                 {safeText(value().text)}
