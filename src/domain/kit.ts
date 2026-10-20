@@ -224,6 +224,11 @@ export interface Catalog {
   kits: LoadedKit[]
   kind?: "repo" | "builtin" | "external" | "remote"
   hydration?: "deferred" | "partial" | "loaded"
+  cache?: {
+    status: "cached" | "fresh" | "stale"
+    checkedAt: string
+    reason?: string
+  }
   automatic?: boolean
   unavailableKits?: {
     key?: string

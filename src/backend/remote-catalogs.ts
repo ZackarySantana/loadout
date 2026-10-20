@@ -13,11 +13,22 @@ import {
   remoteSkillsSourceSchema,
   type RemoteSkillsSource,
 } from "../domain/catalog-source"
+import {
+  cachedCatalog,
+  gitBlobHash,
+  readRemoteCache,
+  writeRemoteCache,
+  type RemoteCacheRecord,
+} from "./remote-cache"
 
 export interface CatalogLoadOptions {
   hydrateSources?: string[]
   installed?: LoadedKit[]
   forceRefresh?: boolean
+  cacheDirectory?: string
+  purpose?: "browse" | "validate"
+  cachedOnly?: boolean
+  signal?: AbortSignal
 }
 
 const defaults: RemoteSkillsSource[] = [
@@ -173,11 +184,28 @@ function acquireRequest(signal: AbortSignal): Promise<() => void> {
     signal.addEventListener("abort", waiting.abort, { once: true })
   })
 }
-const cache = new Map<
-  string,
-  { at: number; value: Promise<Buffer>; size?: number }
->()
-function cached(
+async function awaitRequest(
+  request: Promise<Buffer>,
+  signal: AbortSignal,
+): Promise<Buffer> {
+  signal.throwIfAborted()
+  let abort: (() => void) | undefined
+  try {
+    return await Promise.race([
+      request,
+      new Promise<never>((_, reject) => {
+        abort = () => reject(signal.reason)
+        signal.addEventListener("abort", abort, { once: true })
+      }),
+    ])
+  } finally {
+    if (abort) signal.removeEventListener("abort", abort)
+  }
+}
+// Never share in-flight work across operations: its abort/budget ownership is
+// private. Only completed buffers are shared; pending deduplication stays local.
+const cache = new Map<string, { at: number; bytes: Buffer }>()
+async function cached(
   key: string,
   fresh: boolean,
   action: () => Promise<Buffer>,
@@ -185,30 +213,20 @@ function cached(
   for (const [key, entry] of cache)
     if (Date.now() - entry.at >= ttl) cache.delete(key)
   const saved = cache.get(key)
-  if (!fresh && saved && Date.now() - saved.at < ttl) return saved.value
+  if (!fresh && saved && Date.now() - saved.at < ttl) return saved.bytes
+  const bytes = await action()
   if (cache.size >= 128) cache.delete(cache.keys().next().value!)
-  const value = action()
-  cache.set(key, { at: Date.now(), value })
-  void value.then(
-    (bytes) => {
-      const entry = cache.get(key)
-      if (entry?.value !== value) return
-      entry.size = bytes.length
-      let size = [...cache.values()].reduce(
-        (sum, item) => sum + (item.size ?? 0),
-        0,
-      )
-      for (const [oldKey, old] of cache) {
-        if (size <= 64 * 1024 * 1024) break
-        size -= old.size ?? 0
-        cache.delete(oldKey)
-      }
-    },
-    () => {
-      if (cache.get(key)?.value === value) cache.delete(key)
-    },
+  cache.set(key, { at: Date.now(), bytes })
+  let size = [...cache.values()].reduce(
+    (sum, item) => sum + item.bytes.length,
+    0,
   )
-  return value
+  for (const [oldKey, old] of cache) {
+    if (size <= 64 * 1024 * 1024) break
+    size -= old.bytes.length
+    cache.delete(oldKey)
+  }
+  return bytes
 }
 const treeSchema = z.object({
   truncated: z.boolean(),
@@ -300,6 +318,142 @@ export async function loadRemoteCatalog(
   origin?: CatalogOrigin,
   options: CatalogLoadOptions = {},
 ): Promise<Catalog> {
+  options.signal?.throwIfAborted()
+  descriptor = remoteSkillsSourceSchema.parse(descriptor)
+  let saved = await readRemoteCache(
+    options.cacheDirectory,
+    source,
+    descriptor,
+    options.signal,
+  )
+  // Recompute adapter content identity before presenting cached inventory. Apply
+  // still rebuilds from fresh upstream tree proof and verified immutable blobs.
+  if (saved) {
+    try {
+      let catalogBytes = 0
+      const outputNames = new Set<string>()
+      for (const item of saved.catalog.kits) {
+        options.signal?.throwIfAborted()
+        const files: Record<string, Uint8Array> = Object.create(null)
+        let kitBytes = 0
+        let fileCount = 0
+        for (const output of item.kit.outputs) {
+          if (output.type !== "skill") throw new Error("Invalid cached output")
+          if (outputNames.has(output.name))
+            throw new Error("Conflicting cached skill names")
+          outputNames.add(output.name)
+          assertPortableTargets(Object.keys(output.files))
+          const path = item.origin.remote!.skillPaths!.find(
+            (path) => skillDirectoryName(path, descriptor.repo) === output.name,
+          )!
+          for (const [name, content] of Object.entries(output.files)) {
+            if (!safePath(name)) throw new Error("Unsafe cached resource path")
+            const bytes = Buffer.from(content)
+            if (
+              text(bytes) !== content ||
+              saved.blobs[gitBlobHash(bytes)] !== bytes.toString("base64")
+            )
+              throw new Error("Invalid cached resource bytes")
+            kitBytes += bytes.length
+            catalogBytes += bytes.length
+            if (
+              ++fileCount > maxFiles ||
+              bytes.length > maxFile ||
+              kitBytes > maxKit ||
+              catalogBytes > maxCatalog
+            )
+              throw new Error("Oversized cached skill inventory")
+            files[`${path}/${name}`] = bytes
+          }
+          const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(
+            output.files["SKILL.md"]!,
+          )
+          if (!match) throw new Error("Invalid cached skill metadata")
+          const doc = parseDocument(match[1]!, { uniqueKeys: true })
+          const meta = doc.toJS({ maxAliasCount: 20 })
+          if (
+            doc.errors.length ||
+            meta?.name !== output.name ||
+            typeof meta.description !== "string" ||
+            !meta.description ||
+            (output === item.kit.outputs[0] &&
+              item.kit.description !== meta.description)
+          )
+            throw new Error("Invalid cached skill metadata")
+        }
+        if (
+          contentHash(files, {
+            id: item.kit.id,
+            name: item.kit.name,
+            outputs: item.kit.outputs.map((output) => ({
+              name: output.type === "skill" ? output.name : "",
+            })),
+          }) !== item.origin.contentHash
+        ) {
+          throw new Error("Cached content hash mismatch")
+        }
+      }
+    } catch {
+      options.signal?.throwIfAborted()
+      saved = undefined
+    }
+  }
+  const browse =
+    options.hydrateSources === undefined ||
+    options.hydrateSources.includes(source)
+  const installed = options.installed?.some(
+    (item) => item.origin?.source === source,
+  )
+  const age = saved ? Date.now() - Date.parse(saved.checkedAt) : Infinity
+  options.signal?.throwIfAborted()
+  if (
+    options.cachedOnly &&
+    (options.forceRefresh || options.purpose !== "browse")
+  )
+    throw new Error(
+      "Cached-only inventory is for browsing, not source validation",
+    )
+  if (options.cachedOnly)
+    return saved
+      ? cachedCatalog(saved, permanent, age < 5 * 60_000 ? "cached" : "stale")
+      : remoteCatalogHeader(source, descriptor, permanent)
+  if (
+    saved &&
+    ((!browse && !installed) ||
+      (!options.forceRefresh &&
+        options.purpose === "browse" &&
+        (!browse || age < 5 * 60_000)))
+  )
+    return cachedCatalog(
+      saved,
+      permanent,
+      age < 5 * 60_000 ? "cached" : "stale",
+    )
+  try {
+    return await buildRemoteCatalog(
+      source,
+      descriptor,
+      permanent,
+      origin,
+      options,
+      saved,
+    )
+  } catch (error) {
+    options.signal?.throwIfAborted()
+    if (saved && options.purpose === "browse" && !options.forceRefresh)
+      return cachedCatalog(saved, permanent, "stale", reason(error))
+    throw error
+  }
+}
+
+async function buildRemoteCatalog(
+  source: string,
+  descriptor: RemoteSkillsSource,
+  permanent: boolean,
+  origin: CatalogOrigin | undefined,
+  options: CatalogLoadOptions,
+  saved?: RemoteCacheRecord,
+): Promise<Catalog> {
   descriptor = remoteSkillsSourceSchema.parse(descriptor)
   const catalog = remoteCatalogHeader(source, descriptor, permanent)
   const browse =
@@ -311,11 +465,18 @@ export async function loadRemoteCatalog(
       item.key.startsWith(`${descriptor.id}/`),
   )
   if (!browse && !installed.length) return catalog
-  const fresh = options.forceRefresh ?? false
-  const signal = AbortSignal.timeout(90_000)
+  const fresh =
+    options.forceRefresh ||
+    options.purpose === "validate" ||
+    options.purpose === undefined
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, AbortSignal.timeout(90_000)])
+    : AbortSignal.timeout(90_000)
   // Per-operation deduplication also applies when bypassing the shared TTL cache.
   const pending = new Map<string, Promise<Buffer>>()
   let downloaded = 0
+  let transientFailure = false
+  const blobs: Record<string, string> = Object.create(null)
   let received = 0
   let catalogBudgetError: Error | undefined
   const exhaustBudget = () =>
@@ -329,6 +490,7 @@ export async function loadRemoteCatalog(
   }
   let requests = 0
   const get = async (url: string, limit: number): Promise<Buffer> => {
+    signal.throwIfAborted()
     // Exhaustion is permanent for this operation, including cached/pending reads.
     assertBudget()
     const parsed = new URL(url)
@@ -395,7 +557,14 @@ export async function loadRemoteCatalog(
       })
       pending.set(url, request)
     }
-    const bytes = await request
+    let bytes: Buffer
+    try {
+      bytes = await awaitRequest(request, signal)
+    } catch (error) {
+      transientFailure = true
+      throw error
+    }
+    signal.throwIfAborted()
     if (catalogBudgetError) throw catalogBudgetError
     if (bytes.length > limit)
       throw new Error(`Remote file exceeds ${limit} bytes`)
@@ -405,22 +574,48 @@ export async function loadRemoteCatalog(
   }
   const api = `https://api.github.com/repos/${descriptor.repo}`
   const commit = z
-    .object({
-      sha: z.string().regex(/^[a-f0-9]{40}$/),
-      commit: z.object({
-        committer: z.object({ date: z.string().datetime({ offset: true }) }),
+    .array(
+      z.object({
+        sha: z.string().regex(/^[a-f0-9]{40}$/),
+        commit: z.object({
+          committer: z.object({ date: z.string().datetime({ offset: true }) }),
+        }),
       }),
-    })
+    )
+    .length(1)
     .parse(
       JSON.parse(
         text(
           await get(
-            `${api}/commits/${encodeURIComponent(descriptor.ref ?? "HEAD")}`,
+            `${api}/commits?per_page=1${descriptor.ref ? `&sha=${encodeURIComponent(descriptor.ref)}` : ""}`,
             maxFile,
           ),
         ),
       ),
+    )[0]!
+  // Browse can trust an unchanged, freshly checked commit as a validator. Content
+  // identity remains the file-byte hash. Validate mode always rebuilds below.
+  if (
+    saved &&
+    saved.commit === commit.sha &&
+    options.purpose === "browse" &&
+    !options.forceRefresh
+  ) {
+    const { integrity: _, ...record } = saved
+    signal.throwIfAborted()
+    record.checkedAt = new Date().toISOString()
+    const warning = await writeRemoteCache(
+      options.cacheDirectory,
+      record,
+      signal,
     )
+    return cachedCatalog(
+      { ...record, integrity: saved.integrity },
+      permanent,
+      "cached",
+      warning,
+    )
+  }
   const tree = treeSchema.parse(
     JSON.parse(
       text(
@@ -540,6 +735,7 @@ export async function loadRemoteCatalog(
       installed.some((item) => item.kit.id === choice.id),
     )
   for (const choice of choices) {
+    signal.throwIfAborted()
     const key = `${descriptor.id}/${choice.id}`
     try {
       if (counts.get(choice.id)! > 1)
@@ -637,12 +833,38 @@ export async function loadRemoteCatalog(
         for (let start = 0; start < selected.length; start += 6) {
           const results = await Promise.allSettled(
             selected.slice(start, start + 6).map(async ({ entry, target }) => {
-              const bytes = await get(
-                `https://raw.githubusercontent.com/${descriptor.repo}/${commit.sha}/${encodePath(entry.path)}`,
-                maxFile,
+              signal.throwIfAborted()
+              assertBudget()
+              const stored = saved?.blobs[entry.sha]
+              let bytes: Buffer | undefined =
+                stored === undefined ? undefined : Buffer.from(stored, "base64")
+              // A fresh tree is the authority for immutable blob reuse, including
+              // forced validation. A cached tree/catalog is never that authority.
+              if (
+                bytes &&
+                (bytes.length !== entry.size ||
+                  gitBlobHash(bytes) !== entry.sha)
               )
-              if (bytes.length !== entry.size)
-                throw new Error(`GitHub content size mismatch: ${entry.path}`)
+                bytes = undefined
+              if (bytes) {
+                if (downloaded + bytes.length > maxCatalog)
+                  throw exhaustBudget()
+                downloaded += bytes.length
+              } else
+                bytes = await get(
+                  `https://raw.githubusercontent.com/${descriptor.repo}/${commit.sha}/${encodePath(entry.path)}`,
+                  maxFile,
+                )
+              if (
+                bytes.length !== entry.size ||
+                gitBlobHash(bytes) !== entry.sha
+              ) {
+                transientFailure = true
+                throw new Error(
+                  `GitHub content checksum/size mismatch: ${entry.path}`,
+                )
+              }
+              blobs[entry.sha] = bytes.toString("base64")
               try {
                 return { target, bytes, content: text(bytes) }
               } catch (error) {
@@ -717,6 +939,7 @@ export async function loadRemoteCatalog(
         },
       })
     } catch (error) {
+      signal.throwIfAborted()
       const failure = reason(error)
       catalog.unavailableKits!.push({
         key,
@@ -729,5 +952,51 @@ export async function loadRemoteCatalog(
     }
   }
   catalog.hydration = browse ? "loaded" : "partial"
+  signal.throwIfAborted()
+  const checkedAt = new Date().toISOString()
+  transientFailure ||= !!catalogBudgetError || requests > 1500 || signal.aborted
+  if (transientFailure) {
+    if (saved && options.purpose === "browse" && !options.forceRefresh)
+      return cachedCatalog(
+        saved,
+        permanent,
+        "stale",
+        "Upstream refresh was incomplete; showing the last complete cached inventory",
+      )
+    catalog.cache = {
+      status: "stale",
+      checkedAt,
+      reason: "Upstream refresh was incomplete; this result was not persisted",
+    }
+  } else {
+    catalog.cache = { status: "fresh", checkedAt }
+    if (browse) {
+      const { cache: _, ...snapshot } = catalog
+      const warning = await writeRemoteCache(
+        options.cacheDirectory,
+        {
+          kind: "remote-skills-cache",
+          source,
+          descriptor,
+          commit: commit.sha,
+          checkedAt,
+          catalog: {
+            ...snapshot,
+            kind: "remote",
+            hydration: "loaded",
+            kits: snapshot.kits.map((item) => ({
+              ...item,
+              origin: item.origin!,
+            })),
+            unavailableKits: snapshot.unavailableKits ?? [],
+            issues: snapshot.issues ?? [],
+          },
+          blobs,
+        },
+        signal,
+      )
+      if (warning) catalog.cache.reason = warning
+    }
+  }
   return catalog
 }

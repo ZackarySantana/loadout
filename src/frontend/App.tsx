@@ -20,6 +20,7 @@ import { DriftPreview, SourceNotice, sourceLabels } from "./DriftPreview"
 import { theme as color, scopeColor } from "./theme"
 import type { Scope } from "../domain/kit"
 import { UpdatePreview } from "./UpdatePreview"
+import { catalogCacheLabel } from "./cache-label"
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
 const rowDescription = (row: Row) =>
@@ -59,7 +60,10 @@ export function App(props: {
   const [guideMessage, setGuideMessage] = createSignal("")
   const [savingGuidePreference, setSavingGuidePreference] = createSignal(false)
   const unsubscribe = model.subscribe(() => update((value) => value + 1))
-  onCleanup(unsubscribe)
+  onCleanup(() => {
+    unsubscribe()
+    model.cancelCatalogRefresh()
+  })
   const dimensions = useTerminalDimensions()
   const tabLines = createMemo(() => {
     if (dimensions().width >= 54) return 1
@@ -216,7 +220,7 @@ export function App(props: {
     revision()
     return model.page === 0
       ? model.catalog
-        ? `Catalogs / ${model.catalog.name}`
+        ? `Catalogs / ${model.catalog.name}${model.catalog.cache ? ` · ${catalogCacheLabel(model.catalog.cache)}` : ""}`
         : "Catalogs"
       : (pages[model.page] ?? "Loadout")
   })
@@ -271,6 +275,7 @@ export function App(props: {
     info?.scrollTo(0)
   })
   const exit = () => {
+    model.cancelCatalogRefresh()
     setExitPrompt(true)
   }
   const rowColor = (row: Row, focused: boolean): string => {

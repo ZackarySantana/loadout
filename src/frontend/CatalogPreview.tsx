@@ -1,6 +1,7 @@
 import { For, Show } from "solid-js"
 import type { Catalog } from "../domain/kit"
 import { theme as color } from "./theme"
+import { catalogCacheLabel } from "./cache-label"
 
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
@@ -44,6 +45,31 @@ export function CatalogPreview(props: {
             Kits from ./.loadout/kits
           </text>
         </Show>
+      </Show>
+      <Show when={props.catalog.cache}>
+        {(cache) => (
+          <box flexDirection="column" flexShrink={0}>
+            <text
+              fg={cache().status === "stale" ? color.warning : color.muted}
+              wrapMode="word"
+              flexShrink={0}
+            >
+              {catalogCacheLabel(cache())}
+            </text>
+            <Show when={cache().checkedAt}>
+              <text fg={color.muted} wrapMode="word" flexShrink={0}>
+                Checked · {safeText(cache().checkedAt)}
+              </text>
+            </Show>
+            <Show when={cache().reason}>
+              {(reason) => (
+                <text fg={color.warning} wrapMode="word" flexShrink={0}>
+                  {safeText(reason())}
+                </text>
+              )}
+            </Show>
+          </box>
+        )}
       </Show>
       <text fg={color.sage} flexShrink={0}>
         {props.catalog.hydration === "deferred" ||

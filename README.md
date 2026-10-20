@@ -27,6 +27,8 @@ While browsing a catalog, **Search kits** filters names, IDs, and descriptions; 
 
 Matt Pocock, Anthropic, and Ponytail have separate remote catalogs: browse a catalog to load its upstream skill directories, without requiring upstream catalog JSON. They are not vendored Loadout kits. Updates use file-content hashes, not commit IDs or dates; Review keeps installed content by default and asks before adopting an update. See [remote sources](site/reference.html#catalogs) and [update safety](site/reference.html#drift).
 
+Remote inventories are cached across launches. A previously loaded catalog opens immediately while a lightweight upstream check runs in the background when due; unchanged files are reused rather than downloaded again. Cache status is shown separately from installation state. Review and Apply still validate current upstream content before accepting an update.
+
 ## Read the docs locally
 
 Open [`site/index.html`](site/index.html) directly in your browser—no build or server required. Or serve with the existing Bun runtime:
@@ -47,7 +49,7 @@ mise exec -- bun src/cli.tsx guide
 
 The agent discovers available kits, asks your preferences and configuration questions, and prepares a plan. You approve the exact review token before apply; the agent must never self-approve. See the [question-driven workflow and approval contract](site/reference.html#agent-workflow).
 
-Initial inspection lists lazy catalog headers. To explore one explicitly, use `mise exec -- bun src/cli.tsx inspect --json --catalog matt-pocock --repo /path/to/project`. An unloaded catalog is not an empty catalog.
+Initial inspection shows cached inventory where available and lazy headers otherwise. To explore one explicitly, use `mise exec -- bun src/cli.tsx inspect --json --catalog matt-pocock --repo /path/to/project`; add `--fresh` for a live check. An unloaded catalog is not an empty catalog. Planning and applying catalog-selected content always use fresh validation.
 
 ## Develop
 

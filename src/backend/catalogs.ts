@@ -13,6 +13,7 @@ import {
 import { repositoryCatalogId } from "../domain/catalog"
 import { assertSafeDirectory } from "./files"
 import { remoteSkillsSourceSchema } from "../domain/catalog-source"
+import { readRemoteCacheForSource } from "./remote-cache"
 import {
   contentHash,
   defaultRemoteDescriptor,
@@ -35,14 +36,20 @@ export const builtin = fileURLToPath(
 )
 const maxSize = 2_000_000
 
-async function readSource(source: string): Promise<string> {
+async function readSource(
+  source: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  signal?.throwIfAborted()
   if (source.startsWith("https://")) {
     const url = new URL(source)
     if (url.username || url.password || url.hash)
       throw new Error("Source URLs must not contain credentials or fragments")
     const response = await fetch(source, {
       cache: "no-store",
-      signal: AbortSignal.timeout(15_000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
+        : AbortSignal.timeout(15_000),
       redirect: "error",
     })
     if (!response.ok)
@@ -52,6 +59,7 @@ async function readSource(source: string): Promise<string> {
     let length = 0
     try {
       while (true) {
+        signal?.throwIfAborted()
         const { done, value } = await reader.read()
         if (done) break
         length += value.length
@@ -69,12 +77,14 @@ async function readSource(source: string): Promise<string> {
   if (/^[a-z]+:/i.test(source))
     throw new Error("Catalog sources must be local paths or HTTPS URLs")
   const info = await stat(source)
+  signal?.throwIfAborted()
   if (!info.isFile()) throw new Error(`Source is not a regular file: ${source}`)
   if (info.size > maxSize) throw new Error(`Source is too large: ${source}`)
   const text = new TextDecoder("utf-8", {
     fatal: true,
     ignoreBOM: true,
   }).decode(await readFile(source))
+  signal?.throwIfAborted()
   if (Buffer.byteLength(text) > maxSize)
     throw new Error(`Source is too large: ${source}`)
   return text
@@ -137,6 +147,7 @@ export async function loadCatalog(
   origin?: CatalogOrigin,
   options?: CatalogLoadOptions,
 ): Promise<Catalog> {
+  options?.signal?.throwIfAborted()
   const remote = async (
     descriptor: ReturnType<typeof remoteSkillsSourceSchema.parse>,
   ) => {
@@ -149,7 +160,56 @@ export async function loadCatalog(
   }
   const direct = githubSource(source)
   if (direct) return remote(direct)
-  const parsed: unknown = JSON.parse(await readSource(source))
+  let parsed: unknown
+  // Registered HTTPS descriptors can be opened offline without fetching their
+  // definition first. This is presentation only: validation always reads it live.
+  const saved =
+    source.startsWith("https://") &&
+    options?.purpose === "browse" &&
+    !options.forceRefresh
+      ? await readRemoteCacheForSource(
+          options.cacheDirectory,
+          source,
+          options.signal,
+        )
+      : undefined
+  if (
+    saved &&
+    (options?.cachedOnly ||
+      Date.now() - Date.parse(saved.checkedAt) < 5 * 60_000)
+  )
+    return remote(saved.descriptor)
+  try {
+    parsed = JSON.parse(await readSource(source, options?.signal))
+    if (saved) {
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        "type" in parsed &&
+        parsed.type === "remote-skills"
+      )
+        remoteSkillsSourceSchema.parse(parsed)
+      else catalogSchema.parse(parsed)
+    }
+  } catch (error) {
+    options?.signal?.throwIfAborted()
+    if (!saved || options?.purpose !== "browse" || options.forceRefresh)
+      throw error
+    const catalog = await loadRemoteCatalog(
+      source,
+      saved.descriptor,
+      permanent,
+      origin,
+      { ...options, cachedOnly: true },
+    )
+    if (catalog.hydration !== "loaded") throw error
+    catalog.cache = {
+      status: "stale",
+      checkedAt: saved.checkedAt,
+      reason: `Remote descriptor could not be refreshed: ${message(error)}`,
+    }
+    return catalog
+  }
   if (
     parsed &&
     typeof parsed === "object" &&
@@ -168,7 +228,10 @@ export async function loadCatalog(
   const results = await Promise.all(
     catalog.kits.map(async (entry) => {
       try {
-        const raw = await readSource(await kitSource(source, entry.source))
+        const raw = await readSource(
+          await kitSource(source, entry.source),
+          options?.signal,
+        )
         const kit = parseKit(raw)
         if (kit.id !== entry.id)
           throw new Error(
@@ -186,6 +249,7 @@ export async function loadCatalog(
             : undefined,
         }
       } catch (error) {
+        options?.signal?.throwIfAborted()
         unavailableKits.push({
           ...entry,
           key: `${catalog.id}/${entry.id}`,
@@ -224,11 +288,15 @@ export interface CatalogListing {
 }
 
 /** Flat live directory discovery. No project index or subscription file is consulted. */
-export async function loadRepositoryCatalog(repository: string): Promise<{
+export async function loadRepositoryCatalog(
+  repository: string,
+  signal?: AbortSignal,
+): Promise<{
   catalog: Catalog
   inventory: Map<string, RepoFile>
   failure?: string
 }> {
+  signal?.throwIfAborted()
   const source = join(repository, ".loadout/kits")
   const id = repositoryCatalogId(repository)
   const catalog: Catalog = {
@@ -250,6 +318,7 @@ export async function loadRepositoryCatalog(repository: string): Promise<{
       .filter((file) => /\.ya?ml$/i.test(file))
       .sort()
   } catch (error) {
+    signal?.throwIfAborted()
     if ((error as NodeJS.ErrnoException).code === "ENOENT")
       return { catalog, inventory }
     const failure = message(error)
@@ -258,6 +327,7 @@ export async function loadRepositoryCatalog(repository: string): Promise<{
   }
   const candidates: { file: string; item: LoadedKit }[] = []
   for (const file of files) {
+    signal?.throwIfAborted()
     try {
       if (file.includes("\\"))
         throw new Error("Repo kit filenames must not contain backslashes")
@@ -266,7 +336,7 @@ export async function loadRepositoryCatalog(repository: string): Promise<{
         throw new Error(
           "Repo kit symlinks must stay within .loadout/kits and the checkout",
         )
-      const raw = await readSource(path)
+      const raw = await readSource(path, signal)
       const kit = parseKit(raw)
       const key = `${id}/${kit.id}`
       inventory.set(file, { key })
@@ -286,6 +356,7 @@ export async function loadRepositoryCatalog(repository: string): Promise<{
         },
       })
     } catch (error) {
+      signal?.throwIfAborted()
       const reason = message(error)
       inventory.set(file, { reason })
       catalog.unavailableKits!.push({ name: file, source: file, reason })
@@ -317,12 +388,13 @@ export async function loadCatalogListing(
   repository?: string,
   options: CatalogLoadOptions = {},
 ): Promise<CatalogListing> {
+  options.signal?.throwIfAborted()
   const catalogs: Catalog[] = []
   const errors: string[] = []
   const failures = new Map<string, string>()
   let repoInventory = new Map<string, RepoFile>()
   if (repository) {
-    const result = await loadRepositoryCatalog(repository)
+    const result = await loadRepositoryCatalog(repository, options.signal)
     catalogs.push(result.catalog)
     repoInventory = result.inventory
     if (result.failure) failures.set(result.catalog.source, result.failure)
@@ -333,20 +405,28 @@ export async function loadCatalogListing(
     )
   }
   try {
-    const catalog = await loadCatalog(builtin, true, {
-      source: builtin,
-      scope: "global",
-      catalogId: "loadout",
-    })
+    options.signal?.throwIfAborted()
+    const catalog = await loadCatalog(
+      builtin,
+      true,
+      {
+        source: builtin,
+        scope: "global",
+        catalogId: "loadout",
+      },
+      options,
+    )
     catalogs.push({ ...catalog, automatic: true })
     errors.push(
       ...(catalog.issues ?? []).map((issue) => `${builtin}: ${issue}`),
     )
   } catch (error) {
+    options.signal?.throwIfAborted()
     failures.set(builtin, message(error))
     errors.push(`${builtin}: ${message(error)}`)
   }
   for (const source of defaultRemoteSources) {
+    options.signal?.throwIfAborted()
     try {
       const catalog = await loadCatalog(
         source,
@@ -359,6 +439,7 @@ export async function loadCatalogListing(
         ...(catalog.issues ?? []).map((issue) => `${source}: ${issue}`),
       )
     } catch (error) {
+      options.signal?.throwIfAborted()
       // Retain a browseable header even when an installed remote source is offline.
       const descriptor = defaultRemoteDescriptor(source)!
       catalogs.push({
@@ -377,6 +458,7 @@ export async function loadCatalogListing(
     }
   }
   for (const source of new Set(globalSources)) {
+    options.signal?.throwIfAborted()
     if (defaultRemoteSources.includes(source)) continue
     try {
       const catalog = await loadCatalog(
@@ -397,6 +479,7 @@ export async function loadCatalogListing(
         ...(catalog.issues ?? []).map((issue) => `${source}: ${issue}`),
       )
     } catch (error) {
+      options.signal?.throwIfAborted()
       failures.set(source, message(error))
       errors.push(`${source}: ${message(error)}`)
     }

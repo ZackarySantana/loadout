@@ -30,6 +30,7 @@ async function main() {
       json: { type: "boolean" },
       request: { type: "string" },
       catalog: { type: "string" },
+      fresh: { type: "boolean" },
       "review-token": { type: "string" },
       approve: { type: "boolean" },
       walkthrough: { type: "boolean" },
@@ -44,12 +45,14 @@ Usage: loadout [--repo <project>] [--walkthrough]
        loadout catalog remove <registered source>
         loadout status
         loadout guide
-        loadout inspect --json [--request FILE] [--catalog SOURCE_OR_ID]
+        loadout inspect --json [--fresh] [--request FILE] [--catalog SOURCE_OR_ID]
         loadout plan --request FILE --json
         loadout apply --request FILE --review-token SHA256 --approve --json
 
 Agent workflow: guide and inspect first; ask human preferences and visible kit questions.
 Remote catalog headers are lazy; inspect --catalog SOURCE_OR_ID discovers their full inventory.
+Discovery may use cached inventory; inspect --fresh checks browsed/installed sources live.
+Status and catalog-selected plan/apply perform live checks automatically.
 Plan prints exact before/after files, links and warnings without applying.
 Apply rebuilds and requires the unchanged review token plus explicit human approval.
 --approve attests to approval of that exact review; agents must never self-confirm.
@@ -63,10 +66,15 @@ Space selects. Esc accepts an open kit; otherwise it goes back. Press q twice to
 Kit and settings changes are written only after review and explicit confirmation.
 Repo kits are discovered automatically from .loadout/kits/*.yaml; no repo catalog index or registration is needed.
 Registration is only for external catalogs and installs no kits.
+Discovery/status may write derived remote caches, not installation intent.
 Status is read-only; a nonzero exit code means drift or catalog issues were found.`)
     return
   }
   const command = positionals[0]
+  if (values.fresh !== undefined && command !== "inspect")
+    throw new Error(
+      "--fresh is only supported by inspect; status, plan and apply check live automatically",
+    )
   if (
     values.catalog !== undefined &&
     (command !== "inspect" || !values.catalog.trim())
@@ -153,7 +161,9 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
   if (machine) {
     const result =
       command === "inspect"
-        ? await inspectWorkflow(service, request, values.catalog)
+        ? await inspectWorkflow(service, request, values.catalog, {
+            fresh: values.fresh,
+          })
         : command === "plan"
           ? (await planWorkflow(service, request!)).review
           : await applyWorkflow(service, request!, values["review-token"]!)
@@ -161,7 +171,7 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
     return
   }
   if (positionals[0] === "status" && positionals.length === 1) {
-    const { drift, errors } = await service.status()
+    const { drift, errors } = await service.status({ fresh: true })
     const kits = drift.kits.filter((kit) => kit.status !== "current")
     const files = drift.files.filter((file) => file.status !== "current")
     if (!kits.length && !files.length && !errors.length)

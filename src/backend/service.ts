@@ -229,6 +229,7 @@ export class LoadoutService {
   readonly repository: string
   private readonly directory: string
   private readonly statePath: string
+  private readonly cacheDirectory: string
   private state: State = emptyState()
   private raw: string | null = null
   private plans = new WeakMap<Plan, PlanData>()
@@ -243,6 +244,12 @@ export class LoadoutService {
     this.repository = repository
     this.directory = join(home, ".loadout")
     this.statePath = join(this.directory, "state.json")
+    const cacheHome = environment.XDG_CACHE_HOME
+    this.cacheDirectory = join(
+      cacheHome && isAbsolute(cacheHome) ? cacheHome : join(home, ".cache"),
+      "loadout",
+      "catalogs",
+    )
     this.defaults = defaultOutputSettings(home, environment)
   }
 
@@ -282,15 +289,22 @@ export class LoadoutService {
     const { catalogs, errors } = await loadCatalogListing(
       this.state.catalogs,
       this.repository,
+      {
+        cacheDirectory: this.cacheDirectory,
+        purpose: "browse",
+        cachedOnly: true,
+      },
     )
     return { catalogs, errors }
   }
 
   async browseCatalog(
     source: string,
-    options?: { fresh?: boolean },
+    options?: { fresh?: boolean; signal?: AbortSignal },
   ): Promise<Catalog> {
+    options?.signal?.throwIfAborted()
     await this.refresh()
+    options?.signal?.throwIfAborted()
     if (
       ![
         builtin,
@@ -307,6 +321,9 @@ export class LoadoutService {
         hydrateSources: [source],
         installed: this.installed(),
         forceRefresh: options?.fresh,
+        cacheDirectory: this.cacheDirectory,
+        purpose: "browse",
+        signal: options?.signal,
       },
     )
     const catalog = listing.catalogs.find(
@@ -328,7 +345,12 @@ export class LoadoutService {
     const listing = await loadCatalogListing(
       this.state.catalogs,
       this.repository,
-      { installed: this.installed(), forceRefresh: options?.fresh },
+      {
+        installed: this.installed(),
+        forceRefresh: options?.fresh,
+        cacheDirectory: this.cacheDirectory,
+        purpose: options?.fresh ? "validate" : "browse",
+      },
     )
     const drift = await inspectDrift(this.state, this.repository, listing)
     return structuredClone({
@@ -394,7 +416,12 @@ export class LoadoutService {
       normalized,
       false,
       { source: normalized, scope: "global" },
-      { hydrateSources: [] },
+      {
+        hydrateSources: [],
+        cacheDirectory: this.cacheDirectory,
+        purpose: "browse",
+        cachedOnly: true,
+      },
     )
     await this.locked(async () => {
       await this.reload()
@@ -520,6 +547,8 @@ export class LoadoutService {
           ).values(),
         ],
         forceRefresh: true,
+        cacheDirectory: this.cacheDirectory,
+        purpose: "validate",
       },
     )
     const drift = await inspectDrift(previous, this.repository, listing)
@@ -794,7 +823,12 @@ export class LoadoutService {
         const listing = await loadCatalogListing(
           this.state.catalogs,
           this.repository,
-          { installed: data.sources, forceRefresh: true },
+          {
+            installed: data.sources,
+            forceRefresh: true,
+            cacheDirectory: this.cacheDirectory,
+            purpose: "validate",
+          },
         )
         const cache = new Map<string, Promise<CatalogListing>>([
           [this.repository, Promise.resolve(listing)],

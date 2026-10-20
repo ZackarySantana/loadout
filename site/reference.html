@@ -186,11 +186,12 @@ mise exec -- bun src/cli.tsx catalog add https://github.com/owner/repo/tree/main
             <p>
               The default source IDs are <code>matt-pocock</code>,
               <code>anthropic</code>, and <code>ponytail</code>. Their headers
-              load lazily: launch/status never fetch unused defaults. Browse a
-              catalog for bounded inventory discovery; installed checks inspect
-              only selected skill sets. Deferred or partial inventory has no
-              known full count; do not interpret an available subset as the
-              entire catalog.
+              load lazily when no local inventory is cached: launch/status never
+              fetch unused defaults. Previously loaded inventory is available
+              from disk across launches. Browse a catalog for bounded inventory
+              discovery; installed checks inspect only selected skill sets.
+              Deferred or partial inventory has no known full count; do not
+              interpret an available subset as the entire catalog.
             </p>
             <p>
               Remote fetching is bounded HTTPS data retrieval with bounded
@@ -210,6 +211,48 @@ mise exec -- bun src/cli.tsx catalog add https://github.com/owner/repo/tree/main
               These placeholders are never interpreted as Loadout answers.
               Scripts remain UTF-8 data; preserving their bytes does not execute
               them or authorize a harness to run them.
+            </p>
+          </details>
+          <details open>
+            <summary>Fast remote browsing cache</summary>
+            <p>
+              Previously loaded remote catalogs open from a persistent local
+              inventory without waiting for a network request. You can search
+              and browse while a background source check runs when due. A
+              recently checked browse cache is reused for five minutes; after
+              that, a compact upstream commit-metadata request checks whether
+              the source has moved. If unchanged, skill files are not downloaded
+              again. If it changed, current tree entries identify which resource
+              bytes can be reused and which must be fetched.
+            </p>
+            <p>
+              Commit and blob IDs are cache validators, not kit-update identity.
+              Update identity remains the SHA-256 hash of actual paths, bytes,
+              and definition semantics. Review, Plan, and Apply authenticate
+              current upstream metadata and tree entries independently of the
+              cached inventory. Reused resource bytes are verified against the
+              current upstream blob identity before their content hashes are
+              recomputed; a cached catalog's own claimed hash cannot authorize
+              an installation.
+            </p>
+            <p>
+              Cache status and its last check time are shown in the catalog
+              preview. When a background check fails, the last complete cached
+              inventory remains browsable with a stale indication. This does not
+              make unverified updates applicable. Existing installed snapshots
+              retain their separate offline behavior.
+              <code>r</code> explicitly requests a fresh check. For CLI
+              discovery, use
+              <code>inspect --json --catalog SOURCE_OR_ID --fresh</code>.
+            </p>
+            <p>
+              Derived cache files live under
+              <code>$XDG_CACHE_HOME/loadout/catalogs</code>, or
+              <code>~/.cache/loadout/catalogs</code> when no absolute XDG cache
+              home is configured. They are private, size-bounded, regenerable
+              data—not installation intent, approval, or a revision history.
+              Corrupt or unavailable cache entries fall back to live loading.
+              Cache eviction never uninstalls kits or removes saved snapshots.
             </p>
           </details>
           <details>

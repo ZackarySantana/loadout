@@ -12,6 +12,7 @@ import type { LoadoutService, Plan, Selection } from "../backend/service"
 import type { DriftReport, FileDrift, KitDrift } from "../backend/service"
 import { canonical } from "../domain/content"
 import { sameSourceContent } from "../domain/content-identity"
+import { catalogCacheLabel } from "./cache-label"
 import { answersForUpdate } from "./answers"
 import {
   destinationGroups,
@@ -105,6 +106,8 @@ export class ScreenModel {
   cursor = 0
   catalog?: Catalog
   private browsedCatalog?: Catalog
+  private catalogRefreshGeneration = 0
+  private catalogRefreshAbort?: AbortController
   private catalogFilters = new Map<string, string>()
   catalogs: Catalog[] = []
   errors: string[] = []
@@ -232,6 +235,102 @@ export class ScreenModel {
       item.source === catalog.source && item.id === catalog.id ? catalog : item,
     )
   }
+  cancelCatalogRefresh(): void {
+    this.catalogRefreshGeneration++
+    this.catalogRefreshAbort?.abort()
+    this.catalogRefreshAbort = undefined
+  }
+  private async revalidateCatalog(catalog: Catalog): Promise<void> {
+    this.cancelCatalogRefresh()
+    const generation = this.catalogRefreshGeneration
+    const controller = new AbortController()
+    this.catalogRefreshAbort = controller
+    const canReceive = () =>
+      generation === this.catalogRefreshGeneration &&
+      !controller.signal.aborted &&
+      !this.busy &&
+      !this.form &&
+      !this.settingsForm &&
+      !this.registering &&
+      this.page === 0 &&
+      this.catalog?.id === catalog.id &&
+      this.catalog.source === catalog.source
+    try {
+      const result = await this.backend.browseCatalog(catalog.source, {
+        signal: controller.signal,
+      })
+      if (
+        !canReceive() ||
+        result.id !== catalog.id ||
+        result.source !== catalog.source
+      )
+        return
+      const selection = this.selected()
+      const selected = selection?.id
+      const previous = new Map(
+        this.catalog!.kits.map((item) => [item.key, item]),
+      )
+      const next = {
+        ...result,
+        kits: result.kits.map((item) => {
+          const saved = previous.get(item.key)
+          if (!saved || !sameSourceContent(saved, item)) return item
+          return canonical(saved) === canonical(item)
+            ? saved
+            : { ...item, kit: saved.kit }
+        }),
+      }
+      // A source change must not move a reader away from their selected kit.
+      // The refreshed backend cache remains available on the next explicit browse.
+      if (
+        selection?.kind === "kit" &&
+        !this.matchingKits(next).some(
+          (item) => item.key === selection.item?.key,
+        )
+      )
+        return
+      this.showCatalog(next)
+      const index = this.rows().findIndex((row) => row.id === selected)
+      this.cursor =
+        index >= 0
+          ? index
+          : Math.max(
+              0,
+              this.rows().findIndex((row) => row.kind === "kit"),
+            )
+      this.changed()
+    } catch (error) {
+      if (!canReceive()) return
+      const current = this.catalog!
+      const reason = error instanceof Error ? error.message : String(error)
+      this.showCatalog(
+        current.cache
+          ? { ...current, cache: { ...current.cache, status: "stale", reason } }
+          : {
+              ...current,
+              issues: [
+                ...new Set([
+                  ...(current.issues ?? []),
+                  "Source check unavailable; previously browsed inventory retained.",
+                ]),
+              ],
+            },
+      )
+      this.changed()
+    } finally {
+      if (this.catalogRefreshAbort === controller)
+        this.catalogRefreshAbort = undefined
+    }
+  }
+  private enterCatalog(catalog: Catalog): void {
+    this.showCatalog(catalog)
+    this.cursor = Math.max(
+      0,
+      this.rows().findIndex((row) => row.kind === "kit"),
+    )
+    if (!this.matchingKits().length) this.editing = { kind: "search" }
+    this.message = "Space configures a kit. Esc returns to catalogs."
+  }
   searchQuery(): string {
     return this.catalog
       ? (this.catalogFilters.get(
@@ -239,13 +338,13 @@ export class ScreenModel {
         ) ?? "")
       : ""
   }
-  private matchingKits(): LoadedKit[] {
+  private matchingKits(catalog = this.catalog): LoadedKit[] {
     const terms = this.searchQuery()
       .trim()
       .toLowerCase()
       .split(/\s+/)
       .filter(Boolean)
-    return (this.catalog?.kits ?? []).filter((item) => {
+    return (catalog?.kits ?? []).filter((item) => {
       const text =
         `${item.kit.name} ${item.kit.id} ${item.key} ${item.kit.description}`.toLowerCase()
       return terms.every((term) => text.includes(term))
@@ -615,7 +714,7 @@ export class ScreenModel {
       const rows: Row[] = this.catalogs.map((catalog) => ({
         id: `catalog:${catalog.id}`,
         kind: "catalog",
-        label: `${catalog.permanent ? "◆" : "◇"} ${catalog.name}  ·  ${catalog.hydration === "deferred" || catalog.hydration === "partial" ? "Browse to load" : `${catalog.kits.length} kits`}${catalog.kind === "remote" ? "  ·  remote catalog" : catalog.kind === "repo" ? "  ·  automatic" : catalog.permanent ? "  ·  built-in" : "  ·  registered"}`,
+        label: `${catalog.permanent ? "◆" : "◇"} ${catalog.name}  ·  ${catalog.hydration === "deferred" || catalog.hydration === "partial" ? "Browse to load" : `${catalog.kits.length} kits`}${catalog.kind === "remote" ? "  ·  remote catalog" : catalog.kind === "repo" ? "  ·  automatic" : catalog.permanent ? "  ·  built-in" : "  ·  registered"}${catalog.cache ? `  ·  ${catalogCacheLabel(catalog.cache)}` : ""}`,
         catalog,
       }))
       if (this.issueCount())
@@ -1175,6 +1274,7 @@ export class ScreenModel {
       this.registering = false
       this.cursor = this.catalogs.length
     } else if (this.page === 0 && this.catalog) {
+      this.cancelCatalogRefresh()
       const id = this.catalog.id
       this.catalog = undefined
       this.cursor = Math.max(
@@ -1292,17 +1392,20 @@ export class ScreenModel {
       return
     }
     if (row.kind === "catalog") {
-      this.message = "Loading catalog…"
-      await this.run(async () => {
-        const catalog = await this.backend.browseCatalog(row.catalog!.source)
-        this.showCatalog(catalog)
-        this.cursor = Math.max(
-          0,
-          this.rows().findIndex((candidate) => candidate.kind === "kit"),
-        )
-        if (!this.matchingKits().length) this.editing = { kind: "search" }
-        this.message = "Space configures a kit. Esc returns to catalogs."
-      })
+      if (
+        row.catalog?.kind === "remote" &&
+        row.catalog.hydration === "loaded"
+      ) {
+        this.enterCatalog(row.catalog)
+        void this.revalidateCatalog(row.catalog)
+      } else {
+        this.message = "Loading catalog…"
+        await this.run(async () => {
+          this.enterCatalog(
+            await this.backend.browseCatalog(row.catalog!.source),
+          )
+        })
+      }
     } else if (row.kind === "search") {
       this.focusSearch()
     } else if (row.kind === "update-offer" && row.sourceDrift) {
@@ -1355,6 +1458,7 @@ export class ScreenModel {
         this.changed()
         return
       }
+      this.cancelCatalogRefresh()
       const config = this.configuration(row.item)
       const draft = this.drafts.get(row.item.key)
       const installed = this.backend
@@ -1482,6 +1586,7 @@ export class ScreenModel {
     this.changed()
   }
   private async run(action: () => Promise<void>): Promise<void> {
+    this.cancelCatalogRefresh()
     this.busy = true
     this.changed()
     try {
