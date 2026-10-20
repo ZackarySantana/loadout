@@ -13,13 +13,20 @@ import type { LoadoutService, Plan, Selection } from "../backend/service"
 import type { DriftReport, FileDrift, KitDrift } from "../backend/service"
 import { canonical } from "../domain/content"
 import { answersForUpdate } from "./answers"
+import {
+  destinationGroups,
+  outputSettingsSchema,
+  type OutputSettings,
+  type DestinationGroupKey,
+} from "../domain/settings"
 
-export const pages = ["Catalogs", "Installed", "Review"] as const
+export const pages = ["Catalogs", "Installed", "Review", "Settings"] as const
 export interface RowChoice {
   value: string | boolean
   label: string
   selected: boolean
   description?: string
+  disabled?: boolean
 }
 export interface Row {
   id: string
@@ -38,6 +45,9 @@ export interface Row {
     | "health"
     | "drift-file"
     | "update"
+    | "settings-group"
+    | "location"
+    | "location-input"
   indent?: boolean
   item?: LoadedKit
   scope?: Scope
@@ -51,6 +61,11 @@ export interface Row {
   sourceDrift?: KitDrift
   updateStaged?: boolean
   fileDrift?: FileDrift
+  settingsGroup?: DestinationGroupKey
+  locationId?: string
+  description?: string
+  value?: string
+  primary?: boolean
 }
 interface Form {
   item: LoadedKit
@@ -70,6 +85,8 @@ export type Backend = Pick<
   | "register"
   | "refresh"
   | "status"
+  | "settings"
+  | "defaultSettings"
 >
 
 export class ScreenModel {
@@ -80,12 +97,26 @@ export class ScreenModel {
   errors: string[] = []
   drift: DriftReport = { kits: [], files: [] }
   drafts = new Map<string, Selection>()
+  savedSettings?: OutputSettings
+  defaultsSettings?: OutputSettings
+  settingsDraft?: OutputSettings
+  readonly stagedSettingsGroups = new Set<DestinationGroupKey>()
+  settingsForm?: {
+    group: DestinationGroupKey | "restore"
+    locations: { id: string; value: string }[]
+    mode: "copy" | "link"
+    inputId?: string
+  }
+  private nextLocationId = 0
   form?: Form
   plan?: Plan
   busy = false
   message =
     "Space opens a catalog. Nothing is written until you review and apply."
-  editing?: { kind: "catalog" } | { kind: "question"; id: string }
+  editing?:
+    | { kind: "catalog" }
+    | { kind: "question"; id: string }
+    | { kind: "location"; id: string }
   registering = false
   source = ""
   private optionFocus = new Map<string, number>()
@@ -105,7 +136,7 @@ export class ScreenModel {
     await this.loadStatus()
     this.message = this.issueCount()
       ? "Catalog or output drift found. Installed shows details; saved kits are kept."
-      : "Choose a catalog. Repository catalogs are discovered from this project."
+      : "Choose a catalog."
     this.changed()
   }
   private async loadStatus(): Promise<void> {
@@ -113,6 +144,22 @@ export class ScreenModel {
     this.catalogs = catalogs
     this.errors = errors
     this.drift = drift
+    const previousSettings = this.settingsDraft ?? this.savedSettings
+    this.savedSettings = this.backend.settings()
+    const rebasedSettings = structuredClone(this.savedSettings)
+    for (const group of this.stagedSettingsGroups) {
+      if (
+        !previousSettings ||
+        canonical(previousSettings[group]) ===
+          canonical(this.savedSettings[group])
+      )
+        this.stagedSettingsGroups.delete(group)
+      else rebasedSettings[group] = structuredClone(previousSettings[group])
+    }
+    this.settingsDraft = this.stagedSettingsGroups.size
+      ? rebasedSettings
+      : undefined
+    this.defaultsSettings = this.backend.defaultSettings()
     if (this.catalog)
       this.catalog = catalogs.find(
         (catalog) =>
@@ -173,7 +220,7 @@ export class ScreenModel {
   }
   async refreshStatus(): Promise<void> {
     if (this.busy) return
-    if (this.form || this.registering) {
+    if (this.form || this.settingsForm || this.registering) {
       this.message = "Accept or cancel the open form before refreshing sources."
       this.changed()
       return
@@ -182,9 +229,12 @@ export class ScreenModel {
     await this.run(async () => {
       await this.loadStatus()
       this.plan = undefined
-      if (this.page === 2 && this.drafts.size) {
+      if (this.page === 2 && this.stagedCount()) {
         this.optionFocus.delete("review-actions")
-        this.plan = await this.backend.plan([...this.drafts.values()])
+        this.plan = await this.backend.plan(
+          [...this.drafts.values()],
+          this.settingsDraft,
+        )
       }
       this.cursor = Math.max(
         0,
@@ -409,39 +459,40 @@ export class ScreenModel {
           .map((file, index): Row => ({
             id: `drift-file:${index}`,
             kind: "drift-file",
-            label: `! ${file.status} · ${this.displayPath(file.path)}`,
+            label: `! Managed output ${index + 1} · ${file.status}`,
             fileDrift: file,
           })),
       )
       return [...issues, ...this.kitRows([...items.values()])]
     }
+    if (this.page === 3) return this.settingsRows()
     if (!this.plan)
       return [
         {
           id: "empty-review",
           kind: "heading",
-          label: "Stage kits in Catalogs, then return here.",
+          label: "Stage kits or settings, then return here.",
         },
       ]
     const rows: Row[] = [
       {
         id: "review-actions",
         kind: "actions",
-        label: `${this.plan.changes.length} file changes · ${this.drafts.size} staged selections`,
+        label: `${this.plan.changes.length} file changes · ${this.stagedCount()} staged changes`,
         choices: [
           {
             value: "apply",
             label: "Apply changes",
             selected: false,
             description:
-              "Apply changes writes all listed files and saves installation intent. Space is the final confirmation.",
+              "Apply changes writes all listed files and saves settings and installation intent. Space is the final confirmation.",
           },
           {
             value: "edit",
             label: "Keep editing",
             selected: false,
             description:
-              "Return to staged kits without writing. Reviewing does not write any files.",
+              "Return to staged changes without writing. Reviewing does not write any files.",
           },
         ],
         focusedOptionIndex: this.optionFocus.get("review-actions") ?? 1,
@@ -464,6 +515,290 @@ export class ScreenModel {
       return `~/${path.slice(this.backend.home.length + 1)}`
     return path
   }
+  settingsChanged(): boolean {
+    return (
+      !!this.settingsDraft &&
+      canonical(this.settingsDraft) !== canonical(this.savedSettings)
+    )
+  }
+  stagedCount(): number {
+    return this.drafts.size + Number(this.settingsChanged())
+  }
+  private settingsRows(): Row[] {
+    const settings = this.settingsDraft ?? this.savedSettings
+    if (!settings) return []
+    const rows: Row[] = []
+    for (const group of destinationGroups) {
+      const value = settings[group.key]
+      rows.push({
+        id: `settings:${group.key}`,
+        kind: "settings-group",
+        settingsGroup: group.key,
+        label: group.label,
+        scope: group.scope,
+        staged: canonical(value) !== canonical(this.savedSettings?.[group.key]),
+        description: `${value.locations.length} locations · ${value.mode === "copy" ? "Copy" : "Link"}`,
+      })
+      const form = this.settingsForm
+      if (form?.group !== group.key) continue
+      const modeId = `settings:${group.key}:mode`
+      rows.push({
+        id: modeId,
+        kind: "choice",
+        label: "Additional locations",
+        settingsGroup: group.key,
+        indent: true,
+        choices: ["copy", "link"].map((mode) => ({
+          value: mode,
+          label: mode === "copy" ? "Copy" : "Link",
+          selected: form.mode === mode,
+        })),
+        focusedOptionIndex:
+          this.optionFocus.get(modeId) ?? (form.mode === "copy" ? 0 : 1),
+      })
+      form.locations.forEach((location, index) => {
+        const id = `settings:${group.key}:location:${location.id}`
+        rows.push({
+          id,
+          kind: "location",
+          primary: index === 0,
+          settingsGroup: group.key,
+          locationId: location.id,
+          indent: true,
+          label: `${index + 1}${index === 0 ? "  Primary" : ""}`,
+          value: location.value,
+          choices: [
+            { value: "edit", label: "Edit", selected: false },
+            {
+              value: "up",
+              label: "Move up",
+              selected: false,
+              disabled: index === 0,
+            },
+            {
+              value: "down",
+              label: "Move down",
+              selected: false,
+              disabled: index === form.locations.length - 1,
+            },
+            { value: "remove", label: "Remove", selected: false },
+          ],
+          focusedOptionIndex: this.optionFocus.get(id) ?? 0,
+        })
+        if (form.inputId === location.id)
+          rows.push({
+            id: `${id}:input`,
+            kind: "location-input",
+            label: "Location",
+            settingsGroup: group.key,
+            locationId: location.id,
+            value: location.value,
+            indent: true,
+          })
+      })
+      rows.push({
+        id: `settings:${group.key}:add`,
+        kind: "actions",
+        label: "",
+        settingsGroup: group.key,
+        indent: true,
+        choices: [{ value: "add", label: "+ Add location", selected: false }],
+        focusedOptionIndex: 0,
+      })
+      const id = `settings:${group.key}:actions`
+      rows.push({
+        id,
+        kind: "actions",
+        label: "",
+        settingsGroup: group.key,
+        indent: true,
+        choices: [
+          { value: "accept", label: "Accept", selected: false },
+          { value: "cancel", label: "Cancel", selected: false },
+        ],
+        focusedOptionIndex: this.optionFocus.get(id) ?? 0,
+      })
+    }
+    const restoring = this.settingsForm?.group === "restore"
+    rows.push({
+      id: "settings:restore",
+      kind: "settings-group",
+      label: "Restore defaults",
+      description: restoring
+        ? "Restore all four location lists and copy/link choices."
+        : undefined,
+    })
+    if (restoring)
+      rows.push({
+        id: "settings:restore:actions",
+        kind: "actions",
+        label: "",
+        indent: true,
+        choices: [
+          { value: "accept", label: "Accept", selected: false },
+          { value: "cancel", label: "Cancel", selected: false },
+        ],
+        focusedOptionIndex:
+          this.optionFocus.get("settings:restore:actions") ?? 0,
+      })
+    return rows
+  }
+  private openSettings(group: DestinationGroupKey | "restore"): void {
+    const value =
+      group === "restore"
+        ? undefined
+        : (this.settingsDraft ?? this.savedSettings)?.[group]
+    this.settingsForm = {
+      group,
+      locations:
+        value?.locations.map((value) => ({
+          id: String(++this.nextLocationId),
+          value,
+        })) ?? [],
+      mode: value?.mode ?? "copy",
+    }
+    this.optionFocus.clear()
+    this.cursor = Math.max(
+      0,
+      this.rows().findIndex(
+        (row) =>
+          row.id ===
+          `settings:${group}:${group === "restore" ? "actions" : "mode"}`,
+      ),
+    )
+    this.message =
+      "Edit locations, then Accept to stage. Review and Apply saves settings."
+  }
+  private acceptSettings(): void {
+    const form = this.settingsForm
+    if (!form) return
+    try {
+      const candidate = structuredClone(
+        this.settingsDraft ?? this.savedSettings!,
+      )
+      if (form.group === "restore")
+        Object.assign(candidate, structuredClone(this.defaultsSettings!))
+      else
+        candidate[form.group] = {
+          locations: form.locations.map((location) => location.value.trim()),
+          mode: form.mode,
+        }
+      const parsed = outputSettingsSchema.safeParse(candidate)
+      if (!parsed.success)
+        throw new Error(
+          parsed.error.issues[0]?.message ?? "Check the location settings.",
+        )
+      if (form.group !== "restore") {
+        const locations = candidate[form.group].locations
+        if (new Set(locations).size !== locations.length)
+          throw new Error("Each location must be unique within this group.")
+        for (const location of locations) {
+          if (location.includes("\\") || location.split("/").includes(".."))
+            throw new Error(
+              "Use forward slashes without parent traversal in locations.",
+            )
+          if (
+            form.group.startsWith("repository") &&
+            (location.startsWith("/") || location.startsWith("~"))
+          )
+            throw new Error(
+              "Repository locations must be relative to the project.",
+            )
+          if (location.startsWith("~") && !location.startsWith("~/"))
+            throw new Error("Use ~/ for home locations.")
+        }
+      }
+      this.stagedSettingsGroups.clear()
+      for (const group of destinationGroups)
+        if (
+          canonical(candidate[group.key]) !==
+          canonical(this.savedSettings![group.key])
+        )
+          this.stagedSettingsGroups.add(group.key)
+      this.settingsDraft = this.stagedSettingsGroups.size
+        ? candidate
+        : undefined
+      this.closeSettings()
+      this.plan = undefined
+      this.message =
+        "Settings staged. Review before applying. Nothing written yet."
+    } catch (error) {
+      this.message = error instanceof Error ? error.message : String(error)
+    }
+    this.changed()
+  }
+  private closeSettings(): void {
+    const group = this.settingsForm?.group
+    this.settingsForm = undefined
+    this.editing = undefined
+    this.cursor = Math.max(
+      0,
+      this.rows().findIndex((row) => row.id === `settings:${group}`),
+    )
+  }
+  private activateSettings(row: Row): void {
+    if (row.kind === "settings-group") {
+      this.openSettings(row.settingsGroup ?? "restore")
+      return
+    }
+    const form = this.settingsForm
+    if (!form) return
+    const action = row.choices?.[row.focusedOptionIndex ?? 0]?.value
+    if (row.id.endsWith(":actions")) {
+      if (action === "cancel") {
+        this.closeSettings()
+        this.message =
+          "Settings edit discarded. Previously staged changes are unchanged."
+      } else this.acceptSettings()
+    } else if (row.id.endsWith(":mode")) form.mode = action as "copy" | "link"
+    else if (action === "add") {
+      const location = { id: String(++this.nextLocationId), value: "" }
+      form.locations.push(location)
+      this.editLocation(location.id)
+    } else if (row.kind === "location") {
+      const index = form.locations.findIndex(
+        (location) => location.id === row.locationId,
+      )
+      if (action === "edit") this.editLocation(row.locationId!)
+      else if (action === "remove") {
+        form.locations.splice(index, 1)
+        if (form.inputId === row.locationId) form.inputId = undefined
+        const nextId =
+          form.locations[Math.min(index, form.locations.length - 1)]?.id
+        this.cursor = Math.max(
+          0,
+          this.rows().findIndex(
+            (candidate) =>
+              (nextId !== undefined && candidate.locationId === nextId) ||
+              candidate.id === `settings:${form.group}:add`,
+          ),
+        )
+      } else {
+        const next = index + (action === "up" ? -1 : 1)
+        if (next >= 0 && next < form.locations.length) {
+          const [location] = form.locations.splice(index, 1)
+          form.locations.splice(next, 0, location!)
+          this.cursor = this.rows().findIndex(
+            (candidate) => candidate.id === row.id,
+          )
+        } else
+          this.message =
+            action === "up"
+              ? "This location is already first."
+              : "This location is already last."
+      }
+    } else if (row.kind === "location-input")
+      this.editing = { kind: "location", id: row.locationId! }
+  }
+  private editLocation(id: string): void {
+    this.settingsForm!.inputId = id
+    this.editing = { kind: "location", id }
+    this.cursor = this.rows().findIndex(
+      (row) => row.kind === "location-input" && row.locationId === id,
+    )
+    this.message =
+      "Type a location · Enter finishes input · Esc accepts this group"
+  }
   selected(): Row | undefined {
     return this.rows()[this.cursor]
   }
@@ -476,7 +811,12 @@ export class ScreenModel {
       row.kind !== "heading" &&
       (!this.form ||
         (row.item?.key === this.form.item.key && row.kind !== "kit")) &&
-      (!this.registering || row.kind === "source")
+      (!this.registering || row.kind === "source") &&
+      (!this.settingsForm ||
+        (this.settingsForm.group === "restore"
+          ? row.id === "settings:restore:actions"
+          : row.settingsGroup === this.settingsForm.group &&
+            row.kind !== "settings-group"))
         ? [index]
         : [],
     )
@@ -494,6 +834,8 @@ export class ScreenModel {
     if (focused?.kind === "input" && focused.question)
       this.editing = { kind: "question", id: focused.question.id }
     else if (focused?.kind === "source") this.editing = { kind: "catalog" }
+    else if (focused?.kind === "location-input")
+      this.editing = { kind: "location", id: focused.locationId! }
     this.changed()
   }
   moveOption(delta: number): void {
@@ -511,12 +853,13 @@ export class ScreenModel {
   }
   async cycle(backward = false): Promise<void> {
     if (this.busy) return
-    if (this.form || this.registering) {
-      this.editing = undefined
+    if (this.form || this.settingsForm || this.registering) {
       this.message = "Accept or cancel the inline form before changing tabs."
       this.changed()
       return
     }
+    if (this.page === 2)
+      this.message = "Staged changes are kept. Review before applying."
     this.page = (this.page + (backward ? pages.length - 1 : 1)) % pages.length
     this.cursor = 0
     if (this.page === 2) await this.review()
@@ -527,21 +870,29 @@ export class ScreenModel {
   }
   async review(): Promise<void> {
     this.optionFocus.delete("review-actions")
-    if (!this.drafts.size) {
+    if (!this.stagedCount()) {
       this.plan = undefined
-      this.message = "No staged changes. Choose a kit to get started."
+      this.message =
+        "No staged changes. Choose a kit or configure settings to get started."
       this.changed()
       return
     }
     await this.run(async () => {
       await this.loadStatus()
-      this.plan = await this.backend.plan([...this.drafts.values()])
+      this.plan = await this.backend.plan(
+        [...this.drafts.values()],
+        this.settingsDraft,
+      )
       this.message =
-        "Reviewing does not write. Choose Apply changes, then Space writes all listed files and saves intent."
+        "Reviewing does not write. Choose Apply changes, then Space writes all listed files and saves settings and intent."
     })
   }
   back(): void {
     if (this.busy) return
+    if (this.settingsForm) {
+      this.acceptSettings()
+      return
+    }
     if (this.form) {
       this.acceptForm()
       return
@@ -597,6 +948,15 @@ export class ScreenModel {
     if (this.editing?.kind === "catalog") this.source = value
     else if (this.editing?.kind === "question" && this.form)
       this.form.answers[this.editing.id] = value
+    else if (this.editing?.kind === "location" && this.settingsForm) {
+      const id = this.editing.id
+      const location = this.settingsForm.locations.find(
+        (entry) => entry.id === id,
+      )
+      if (location) location.value = value
+      this.message =
+        "Type a location · Enter finishes input · Esc accepts this group"
+    }
     this.changed()
   }
   async finishInput(): Promise<void> {
@@ -625,6 +985,11 @@ export class ScreenModel {
     if (this.busy || this.editing) return
     const row = this.selected()
     if (!row) return
+    if (this.page === 3) {
+      this.activateSettings(row)
+      this.changed()
+      return
+    }
     if (row.kind === "catalog") {
       this.catalog = row.catalog
       this.cursor = 0
@@ -700,14 +1065,19 @@ export class ScreenModel {
       this.registering = true
       this.editing = { kind: "catalog" }
       this.cursor += 1
-      this.message =
-        "Enter an external catalog path or HTTPS URL."
+      this.message = "Enter an external catalog path or HTTPS URL."
     } else if (row.kind === "health") {
       this.page = 1
       this.cursor = 0
+    } else if (row.kind === "drift-file") {
+      this.page = 2
+      this.cursor = 0
+      await this.review()
+      this.message =
+        "Review shows managed output paths and status. Drift must be reconciled before applying."
     } else if (row.id === "review-actions" && this.plan) {
       if (row.choices![row.focusedOptionIndex ?? 1]!.value === "edit") {
-        this.page = 1
+        this.page = !this.drafts.size && this.settingsChanged() ? 3 : 1
         this.plan = undefined
         this.cursor = Math.max(
           0,
@@ -717,12 +1087,14 @@ export class ScreenModel {
           ),
         )
         this.message =
-          "Keep editing your staged kits. No files written. Tab to Review for a fresh plan."
+          "Keep editing your staged changes. No files written. Tab to Review for a fresh plan."
       } else {
         const plan = this.plan
         await this.run(async () => {
           await this.backend.apply(plan)
           this.drafts.clear()
+          this.settingsDraft = undefined
+          this.stagedSettingsGroups.clear()
           this.plan = undefined
           this.cursor = 0
           await this.loadStatus()

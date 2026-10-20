@@ -138,9 +138,9 @@ export function DriftPreview(props: {
                 }
               >
                 <For each={files()}>
-                  {(file) => (
+                  {(file, index) => (
                     <text fg={theme.warning} wrapMode="word" flexShrink={0}>
-                      {file.status}: {safe(file.path)}
+                      Managed output {index() + 1}: {file.status}
                     </text>
                   )}
                 </For>
@@ -163,13 +163,19 @@ export function DriftPreview(props: {
         {(file) => (
           <Section title="Managed output drift">
             <text fg={theme.file} wrapMode="word" flexShrink={0}>
-              {safe(file().path)}
+              Managed output · {file().status}
             </text>
             <text fg={theme.warning} wrapMode="word" flexShrink={0}>
-              {file().status}
+              Open Review to inspect exact output locations.
             </text>
             <text fg={theme.text} wrapMode="word" flexShrink={0}>
-              {safe(file().reason)}
+              {file().status === "modified"
+                ? "Managed content or its symbolic link differs from the saved record."
+                : file().status === "missing"
+                  ? "A managed output is missing."
+                  : file().status === "unsafe"
+                    ? "An output location contains an unexpected link or unsafe filesystem entry."
+                    : "A managed output could not be read safely."}
             </text>
           </Section>
         )}

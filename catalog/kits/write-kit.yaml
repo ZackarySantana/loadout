@@ -28,7 +28,6 @@ outputs:
             default: true
         outputs:
           - type: instructions
-            targets: [AGENTS.md, CLAUDE.md]
             content: Review changes for actionable defects before suggesting cosmetic edits.
           - type: skill
             name: review
@@ -48,8 +47,8 @@ outputs:
         - Select and multi-select require nonempty choices arrays of objects with value and label. Choice values are unique strings. Defaults must match choices. Boolean defaults to false and multi-select to an empty array; select without a default uses its first choice.
         - Questions and outputs may have when with question and exactly one of equals or includes. Use equals for a string or boolean answer and includes for membership in a multi-select answer. Conditional questions refer only to earlier questions. Outputs may refer to any declared question.
         - Interpolate an answer in content by surrounding its question ID with two opening and two closing curly braces. Arrays become comma-separated text. Interpolation applies to instruction content, skill file contents, and file content only, never paths or metadata. Guard content that refers to conditional answers with a matching condition so hidden answers are not referenced.
-        - Instructions have type: instructions, targets containing AGENTS.md and/or CLAUDE.md, and content. Repository instructions go to those root files; global instructions go to ~/.codex/AGENTS.md and ~/.claude/CLAUDE.md.
-        - Skills have type: skill, name, and files mapping relative paths to inline strings. Include SKILL.md with name and description frontmatter. Link supporting Markdown from SKILL.md. Skills materialize in both .agents/skills/<name>/ and .claude/skills/<name>/ under the selected scope root.
+        - Instructions have type: instructions and content, with optional when. Loadout combines active instruction fragments and sends them to the user's configured instruction locations. Do not hardcode destination filenames in a new instruction output.
+        - Skills have type: skill, name, and files mapping relative paths to inline strings. Include SKILL.md with name and description frontmatter. Link supporting Markdown from SKILL.md. Loadout writes or links the skill's managed files under the user's configured skill locations for the selected scope.
         - Optional files have type: file, a fixed relative path, and inline content; add when to make them conditional. Paths must not be absolute or contain backslashes, empty segments, dot segments, or parent traversal. Use static paths without answer substitutions.
         - Do not add shell hooks, source scripts, or executable payloads. Selection and scope are application state, not kit fields.
 

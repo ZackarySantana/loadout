@@ -1,14 +1,25 @@
-import { join } from "node:path"
+import { dirname, join, relative } from "node:path"
 import {
   interpolate,
   matches,
   validateAnswers,
   type ConfiguredKit,
 } from "../domain/kit"
+import type { OutputSettings } from "../domain/settings"
 import type { State, Managed } from "./state"
+import { defaultOutputSettings, inside, resolveDestinations } from "./settings"
 
-export function renderState(state: State, home: string): State["managed"] {
+export function renderState(
+  state: State,
+  home: string,
+  settings: OutputSettings = state.settings ?? defaultOutputSettings(home, {}),
+): State["managed"] {
   const result: State["managed"] = {}
+  const groups = resolveDestinations(
+    settings,
+    home,
+    Object.keys(state.repositories),
+  )
   const add = (path: string, output: Managed) => {
     const existing = result[path]
     if (existing?.type === "instructions" && output.type === "instructions") {
@@ -22,6 +33,13 @@ export function renderState(state: State, home: string): State["managed"] {
   }
   const render = (config: ConfiguredKit, root: string, global: boolean) => {
     const answers = validateAnswers(config.kit, config.answers)
+    const destinations = (kind: "instructions" | "skills") =>
+      groups.find(
+        (group) =>
+          group.base === root &&
+          group.scope === (global ? "global" : "repository") &&
+          group.kind === kind,
+      )!
     for (const output of config.kit.outputs) {
       if (!matches(output.when, answers)) continue
       const text = (content: string) => {
@@ -33,41 +51,48 @@ export function renderState(state: State, home: string): State["managed"] {
         return rendered
       }
       if (output.type === "instructions") {
-        for (const target of new Set(output.targets))
-          add(
-            join(
-              root,
-              global
-                ? target === "AGENTS.md"
-                  ? ".codex/AGENTS.md"
-                  : ".claude/CLAUDE.md"
-                : target,
-            ),
-            {
-              type: "instructions",
-              blocks: { [config.key]: text(output.content) },
-            },
-          )
+        // Legacy targets remain readable but no longer route generic instructions.
+        const group = destinations("instructions")
+        for (const path of group.mode === "link"
+          ? group.locations.slice(0, 1)
+          : group.locations)
+          add(path, {
+            type: "instructions",
+            blocks: { [config.key]: text(output.content) },
+          })
       } else if (output.type === "skill") {
-        for (const agent of [".agents", ".claude"])
+        const group = destinations("skills")
+        for (const location of group.mode === "link"
+          ? group.locations.slice(0, 1)
+          : group.locations)
           for (const [file, content] of Object.entries(output.files))
-            add(join(root, agent, "skills", output.name, file), {
+            add(join(location, output.name, file), {
               type: "file",
               content: text(content),
             })
       } else {
-        const path = output.path
+        const path = join(root, output.path)
         if (
-          path.split("/").some((part) => [".git", ".loadout"].includes(part)) ||
+          output.path
+            .split("/")
+            .some((part) => [".git", ".loadout"].includes(part)) ||
           [
             "AGENTS.md",
             "CLAUDE.md",
             ".codex/AGENTS.md",
             ".claude/CLAUDE.md",
-          ].includes(path)
+          ].includes(output.path) ||
+          groups.some((group) =>
+            group.locations.some(
+              (location) =>
+                path === location ||
+                inside(path, location) ||
+                (group.kind === "skills" && inside(location, path)),
+            ),
+          )
         )
           throw new Error(`Reserved output path: ${path}`)
-        add(join(root, path), { type: "file", content: text(output.content) })
+        add(path, { type: "file", content: text(output.content) })
       }
     }
   }
@@ -75,5 +100,31 @@ export function renderState(state: State, home: string): State["managed"] {
   for (const [repo, selections] of Object.entries(state.repositories))
     for (const config of Object.values(selections))
       if (!state.global[config.key]) render(config, repo, false)
+  for (const group of groups) {
+    if (group.mode !== "link" || !group.locations.length) continue
+    const primary = group.locations[0]!
+    const sources = Object.keys(result).filter((path) =>
+      group.kind === "instructions" ? path === primary : inside(primary, path),
+    )
+    for (const location of group.locations.slice(1))
+      for (const source of sources) {
+        const path =
+          group.kind === "instructions"
+            ? location
+            : join(location, relative(primary, source))
+        add(path, {
+          type: "symlink",
+          target: relative(dirname(path), source),
+          source,
+        })
+      }
+  }
+  const paths = Object.keys(result)
+  for (let i = 0; i < paths.length; i++)
+    for (let j = i + 1; j < paths.length; j++)
+      if (inside(paths[i]!, paths[j]!) || inside(paths[j]!, paths[i]!))
+        throw new Error(
+          `Output file/directory conflict: ${paths[i]} and ${paths[j]}`,
+        )
   return result
 }

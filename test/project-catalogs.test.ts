@@ -42,7 +42,7 @@ async function fixture() {
     ),
   )
   const open = (repo = repository, member = home) =>
-    LoadoutService.open({ home: member, repository: repo })
+    LoadoutService.open({ home: member, repository: repo, environment: {} })
   return { root, home, otherHome, repository, otherRepository, unrelated, open }
 }
 

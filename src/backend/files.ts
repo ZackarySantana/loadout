@@ -1,6 +1,70 @@
-import { lstat, readFile } from "node:fs/promises"
+import { lstat, open, readFile, readlink } from "node:fs/promises"
+import { constants } from "node:fs"
 import { dirname, parse, resolve } from "node:path"
 import type { Managed } from "./state"
+import { z } from "zod"
+
+export const nodeSnapshotSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("missing") }).strict(),
+  z
+    .object({
+      kind: z.literal("file"),
+      content: z.string(),
+      mode: z.number().int().min(0).max(0o7777),
+    })
+    .strict(),
+  z.object({ kind: z.literal("symlink"), target: z.string().min(1) }).strict(),
+])
+export type NodeSnapshot = z.infer<typeof nodeSnapshotSchema>
+
+export function sameNode(a: NodeSnapshot, b: NodeSnapshot): boolean {
+  return a.kind === "missing"
+    ? b.kind === "missing"
+    : a.kind === "symlink"
+      ? b.kind === "symlink" && a.target === b.target
+      : b.kind === "file" && a.content === b.content && a.mode === b.mode
+}
+
+/** Parents are always real directories. A leaf link is only read, never followed. */
+export async function snapshotNode(
+  path: string,
+  allowLink = false,
+): Promise<NodeSnapshot> {
+  await assertSafeDirectory(dirname(path))
+  let stat
+  try {
+    stat = await lstat(path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      return { kind: "missing" }
+    throw error
+  }
+  if (stat.isSymbolicLink()) {
+    if (!allowLink) throw new Error(`Refusing unmanaged symlink: ${path}`)
+    return { kind: "symlink", target: await readlink(path) }
+  }
+  if (!stat.isFile()) throw new Error(`Not a regular file: ${path}`)
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const opened = await handle.stat()
+    if (!opened.isFile() || opened.ino !== stat.ino || opened.dev !== stat.dev)
+      throw new Error(`File changed while reading: ${path}`)
+    const content = await handle.readFile("utf8")
+    await assertSafePath(path)
+    const current = await lstat(path)
+    if (
+      current.ino !== opened.ino ||
+      current.dev !== opened.dev ||
+      current.size !== opened.size ||
+      current.mtimeMs !== opened.mtimeMs ||
+      current.ctimeMs !== opened.ctimeMs
+    )
+      throw new Error(`File changed while reading: ${path}`)
+    return { kind: "file", content, mode: opened.mode & 0o7777 }
+  } finally {
+    await handle.close()
+  }
+}
 
 export async function readOptional(path: string): Promise<string | null> {
   return (await readOptionalBytes(path))?.toString("utf8") ?? null
@@ -51,6 +115,8 @@ export function reconcile(
   previous: Managed | undefined,
   desired: Managed | undefined,
 ): string | null {
+  if (previous?.type === "symlink" || desired?.type === "symlink")
+    throw new Error(`Links must be reconciled without following them: ${path}`)
   if (previous && desired && previous.type !== desired.type)
     throw new Error(`Output type conflict: ${path}`)
   if (previous?.type === "file" || desired?.type === "file") {

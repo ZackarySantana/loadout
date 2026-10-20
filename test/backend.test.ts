@@ -38,7 +38,7 @@ async function fixture() {
     [home, repository, otherRepository].map((path) => mkdir(path)),
   )
   const open = (repo = repository) =>
-    LoadoutService.open({ home, repository: repo })
+    LoadoutService.open({ home, repository: repo, environment: {} })
   return {
     root,
     home,

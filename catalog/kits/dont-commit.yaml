@@ -3,6 +3,5 @@ name: Leave Git to the user
 description: Leave commits and Git operations to the user.
 outputs:
   - type: instructions
-    targets: [AGENTS.md, CLAUDE.md]
     content: |
       Do not commit changes or perform Git operations. Leave Git to the user.

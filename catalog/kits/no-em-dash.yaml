@@ -3,7 +3,6 @@ name: No em dashes
 description: Avoid em dashes in output.
 outputs:
   - type: instructions
-    targets: [AGENTS.md, CLAUDE.md]
     content: |
       # No em dashes
 

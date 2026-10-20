@@ -7,7 +7,8 @@ import {
   message,
   type CatalogListing,
 } from "./catalogs"
-import { assertSafePath, readOptional, reconcile } from "./files"
+import { snapshotNode, reconcile, type NodeSnapshot } from "./files"
+import { assertLink } from "./outputs"
 import type { State } from "./state"
 import { canonical } from "../domain/content"
 export { canonical } from "../domain/content"
@@ -163,8 +164,9 @@ export async function inspectDrift(
   }
   const files: FileDrift[] = []
   for (const [path, managed] of Object.entries(state.managed)) {
+    let node: NodeSnapshot
     try {
-      await assertSafePath(path)
+      node = await snapshotNode(path, managed.type === "symlink")
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
       files.push({
@@ -174,14 +176,7 @@ export async function inspectDrift(
       })
       continue
     }
-    let before: string | null
-    try {
-      before = await readOptional(path)
-    } catch (error) {
-      files.push({ path, status: "unreadable", reason: message(error) })
-      continue
-    }
-    if (before === null) {
+    if (node.kind === "missing") {
       files.push({
         path,
         status: "missing",
@@ -190,12 +185,32 @@ export async function inspectDrift(
       continue
     }
     try {
-      reconcile(path, before, managed, structuredClone(managed))
+      if (managed.type === "symlink") {
+        assertLink(path, managed, state.managed)
+        if (node.kind !== "symlink" || node.target !== managed.target)
+          throw new Error("Managed link target was changed")
+        const source = await snapshotNode(managed.source)
+        if (source.kind !== "file")
+          throw new Error("Managed link source is missing")
+        const baseline = state.managed[managed.source]!
+        reconcile(
+          managed.source,
+          source.content,
+          baseline,
+          structuredClone(baseline),
+        )
+      } else {
+        if (node.kind !== "file")
+          throw new Error("Managed output is not a regular file")
+        reconcile(path, node.content, managed, structuredClone(managed))
+      }
       files.push({
         path,
         status: "current",
         reason:
-          "Managed content matches; unrelated instruction text is ignored",
+          managed.type === "symlink"
+            ? "Managed link and its source match"
+            : "Managed content matches; unrelated instruction text is ignored",
       })
     } catch (error) {
       files.push({ path, status: "modified", reason: message(error) })

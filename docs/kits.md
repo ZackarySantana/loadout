@@ -14,7 +14,6 @@ questions:
     required: true
 outputs:
   - type: instructions
-    targets: [AGENTS.md, CLAUDE.md]
     content: |
       You are working on {{project-name}}. Follow this repository's conventions.
 ```
@@ -75,13 +74,12 @@ All outputs require `type` and may have `when`.
 
 ```yaml
 - type: instructions
-  targets: [AGENTS.md, CLAUDE.md]
   content: |
     Review tests before changing deployment behavior.
   when: { question: checks, includes: tests }
 ```
 
-`targets` is a nonempty array containing `AGENTS.md` and/or `CLAUDE.md`; omitted targets default to both. Repository instructions materialize in those files at the repository root. Global instructions materialize in `~/.codex/AGENTS.md` and `~/.claude/CLAUDE.md` respectively. Both targets receive their own instruction content, not an import directive.
+Instruction outputs contain content, not output-location policy. Loadout combines active fragments and sends them to the instruction locations configured in Settings for the chosen scope. Exact destinations and any symbolic links appear in Review. Existing definitions with filename-based `targets` remain readable, but configured locations now own routing; do not use `targets` for new kits.
 
 ### Skills
 
@@ -100,7 +98,7 @@ All outputs require `type` and may have `when`.
       Check tests, deployment approval, and recovery readiness.
 ```
 
-`files` maps fixed relative paths to inline strings and must include `SKILL.md`. Give `SKILL.md` useful name/description frontmatter and link any supporting Markdown. A skill materializes in both `.agents/skills/<name>/` and `.claude/skills/<name>/`, beneath the repository root for repository scope or the home directory for global scope. Keep bundled skill files textual and declarative, without executable payloads.
+`files` maps fixed relative paths to inline strings and must include `SKILL.md`. Give `SKILL.md` useful name/description frontmatter and link any supporting Markdown. Managed files materialize under each configured skill location using `<name>/<file>`. Link mode keeps real files in the first location and links the corresponding managed files in later locations. Unrelated files in those directories are not replaced. Keep bundled skill files textual and declarative, without executable payloads.
 
 ### Other files
 
@@ -114,7 +112,7 @@ All outputs require `type` and may have `when`.
 
 A file output requires a fixed `path` and inline `content`. The path is relative to the selected scope root, repository or home directory. For file outputs and skill file keys, reject absolute paths, backslashes, empty segments, `.` segments, and `..` traversal. Do not interpolate paths. Add a boolean question and `when` to make a file opt-in.
 
-File outputs must not target `.git` or `.loadout` path segments or the instruction destinations `AGENTS.md`, `CLAUDE.md`, `.codex/AGENTS.md`, and `.claude/CLAUDE.md`. Use an instructions output for those destinations. Avoid collisions between file and skill outputs.
+File outputs must not target `.git` or `.loadout` path segments, or collide with configured instruction or skill locations. Use an instructions or skill output for managed context destinations.
 
 ## Complete example and review
 
@@ -124,7 +122,7 @@ File outputs must not target `.git` or `.loadout` path segments or the instructi
 - Conditional questions controlled by an earlier boolean.
 - Conditional outputs using both `equals` and `includes`.
 - Content interpolation in instructions, skill files, and an optional deployment note.
-- Instructions for both agents, a skill with supporting Markdown, and the opt-in `docs/deployment-context.md` file.
+- Generic instruction content, a skill with supporting Markdown, and the opt-in `docs/deployment-context.md` file. Settings chooses the instruction and skill destinations.
 
 Try deployment disabled, deployment enabled with and without rollback, and the optional note enabled. Hidden answers must never be required by active output text. Check every choice and default, preview generated content, and apply only after reviewing the planned changes. Scope is selected in Loadout, not declared in YAML. For `both`, global presence suppresses repository copies while preserving repository intent.
 

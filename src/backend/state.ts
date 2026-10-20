@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { catalogOriginSchema, kitSchema } from "../domain/kit"
+import { outputSettingsSchema } from "../domain/settings"
 
 const answerSchema = z.record(
   z.string(),
@@ -29,6 +30,13 @@ const managedSchema = z.discriminatedUnion("type", [
     })
     .strict(),
   z.object({ type: z.literal("file"), content: z.string() }).strict(),
+  z
+    .object({
+      type: z.literal("symlink"),
+      target: z.string().min(1),
+      source: z.string().min(1),
+    })
+    .strict(),
 ])
 export const stateSchema = z
   .object({
@@ -36,6 +44,7 @@ export const stateSchema = z
     global: selectionSchema,
     repositories: z.record(z.string(), selectionSchema),
     managed: z.record(z.string(), managedSchema),
+    settings: outputSettingsSchema.optional(),
   })
   .strict()
 export type State = z.infer<typeof stateSchema>

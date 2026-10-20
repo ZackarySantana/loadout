@@ -14,6 +14,7 @@ import { CatalogPreview } from "./CatalogPreview"
 import { GuidePreview } from "./GuidePreview"
 import { Brand } from "./Brand"
 import { ReviewPreview } from "./ReviewPreview"
+import { SettingsPreview } from "./SettingsPreview"
 import { DriftPreview, SourceNotice, sourceLabels } from "./DriftPreview"
 import { theme as color, scopeColor } from "./theme"
 import type { Scope } from "../domain/kit"
@@ -22,7 +23,7 @@ const safeText = (text: string) =>
 const rowDescription = (row: Row) =>
   row.kind === "scope" || row.id === "review-actions"
     ? row.choices?.[row.focusedOptionIndex ?? 0]?.description
-    : row.question?.description
+    : (row.description ?? row.question?.description)
 
 function details(model: ScreenModel, row?: Row): { title: string } {
   if (row?.kind === "health" || row?.kind === "drift-file")
@@ -36,6 +37,7 @@ function details(model: ScreenModel, row?: Row): { title: string } {
     return {
       title: "Review before applying",
     }
+  if (model.page === 3) return { title: "Output settings" }
   return {
     title: model.page === 1 ? "Your installed kits" : "Build your loadout",
   }
@@ -48,6 +50,21 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
   const unsubscribe = model.subscribe(() => update((value) => value + 1))
   onCleanup(unsubscribe)
   const dimensions = useTerminalDimensions()
+  const tabLines = createMemo(() => {
+    if (dimensions().width >= 54) return 1
+    const available = Math.max(1, dimensions().width - 4)
+    let lines = 1
+    let used = 0
+    for (const page of pages) {
+      const width = page.length + 2
+      if (used && used + 1 + width > available) {
+        lines++
+        used = 0
+      }
+      used += (used ? 1 : 0) + width
+    }
+    return lines
+  })
   // Reserve outer padding and the column gap before splitting available space.
   // Explicit widths keep the preview's intrinsic text width from shrinking the list.
   const columnWidth = createMemo(() => Math.max(0, dimensions().width - 3))
@@ -125,7 +142,7 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
   })
   const formOpen = createMemo(() => {
     revision()
-    return Boolean(model.form)
+    return Boolean(model.form || model.settingsForm)
   })
   const isEditing = (row: Row) => {
     const editor = editing()
@@ -133,7 +150,10 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
       (row.kind === "input" &&
         editor?.kind === "question" &&
         editor.id === row.question?.id) ||
-      (row.kind === "source" && editor?.kind === "catalog")
+      (row.kind === "source" && editor?.kind === "catalog") ||
+      (row.kind === "location-input" &&
+        editor?.kind === "location" &&
+        editor.id === row.locationId)
     )
   }
   const currentPage = createMemo(() => {
@@ -142,7 +162,11 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
   })
   const draftCount = createMemo(() => {
     revision()
-    return model.drafts.size
+    return model.stagedCount()
+  })
+  const settingsChanged = createMemo(() => {
+    revision()
+    return model.settingsChanged()
   })
   const title = createMemo(() => {
     revision()
@@ -155,7 +179,7 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
   const status = createMemo(() => {
     revision()
     return exitPrompt()
-      ? "Exit Loadout? Unapplied selections will be discarded.  q exit · Esc stay"
+      ? "Exit Loadout? Unapplied changes will be discarded.  q exit · Esc stay"
       : `${model.busy ? "Working… " : ""}${safeText(model.message)}`
   })
   let list: ScrollBoxRenderable | undefined
@@ -186,6 +210,8 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
     if (row.kind === "heading") return color.muted
     if (row.kind === "register" || row.kind === "source") return color.file
     if (row.kind === "actions") return color.sage
+    if (row.primary) return color.sage
+    if (row.kind === "settings-group" && row.scope) return scopeColor(row.scope)
     if (row.kind === "change" && row.changeIndex !== undefined) {
       const change = model.plan?.changes[row.changeIndex]
       return change?.after === null
@@ -245,7 +271,7 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
       void model.activate()
     else if (key.name === "left" || motion === "h") {
       if (model.selected()?.choices) model.moveOption(-1)
-      else if (!model.form) model.back()
+      else if (!model.form && !model.settingsForm) model.back()
     } else if (key.name === "right" || motion === "l") model.moveOption(1)
     else if (key.name === "pageup")
       info?.scrollBy(-Math.max(1, dimensions().height - 8))
@@ -263,29 +289,32 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
     >
       <box
         id="loadout-header"
-        height={5}
+        height={dimensions().width < 54 ? 6 + tabLines() : 5}
         paddingX={1}
         paddingY={1}
         flexShrink={0}
-        flexDirection="row"
+        flexDirection={dimensions().width < 54 ? "column" : "row"}
         alignItems="center"
         gap={dimensions().width < 80 ? 1 : 3}
       >
-        <Brand compact={dimensions().width < 62} />
+        <Brand compact={dimensions().width < 82} />
         <box
-          height={3}
+          height={2 + tabLines()}
           flexGrow={1}
           minWidth={0}
           flexDirection="column"
           justifyContent="flex-start"
           paddingTop={1}
+          width={dimensions().width < 54 ? "100%" : undefined}
         >
           <box
             id="loadout-tabs"
-            height={1}
+            height={tabLines()}
             flexShrink={0}
             flexDirection="row"
-            gap={dimensions().width < 80 ? 1 : 3}
+            flexWrap="wrap"
+            columnGap={dimensions().width < 80 ? 1 : 3}
+            rowGap={0}
           >
             <Index each={pages}>
               {(page, index) => (
@@ -346,13 +375,20 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
                   flexShrink={0}
                   paddingLeft={row().indent ? 2 : 0}
                   marginTop={
-                    row().kind === "kit"
+                    row().kind === "kit" || row().kind === "settings-group"
                       ? index > 0 && rows()[index - 1]?.kind !== "actions"
                         ? 1
                         : 0
-                      : row().indent && (row().item || model.registering)
-                        ? 1
-                        : 0
+                      : row().kind === "location-input" ||
+                          rows()[index - 1]?.id.endsWith(":add")
+                        ? 0
+                        : row().indent &&
+                            (row().item ||
+                              row().settingsGroup ||
+                              model.settingsForm ||
+                              model.registering)
+                          ? 1
+                          : 0
                   }
                   marginBottom={row().kind === "actions" ? 1 : 0}
                   backgroundColor={
@@ -395,6 +431,11 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
                           </span>
                         )}
                       </Show>
+                      <Show
+                        when={row().kind === "settings-group" && row().staged}
+                      >
+                        <span style={{ fg: color.warning }}> *</span>
+                      </Show>
                     </text>
                   </Show>
                   <Show
@@ -408,11 +449,27 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
                       </box>
                     )}
                   </Show>
-                  <Show when={row().choices}>
+                  <Show when={row().kind === "location"}>
+                    <box paddingLeft={2} flexShrink={0}>
+                      <text fg={color.text} wrapMode="word" flexShrink={0}>
+                        {safeText(row().value || "New location")}
+                      </text>
+                    </box>
+                  </Show>
+                  <Show
+                    when={
+                      row().choices &&
+                      (row().kind !== "location" || index === active())
+                    }
+                  >
                     <box
                       flexDirection="row"
                       flexWrap="wrap"
-                      paddingLeft={row().kind === "actions" ? 0 : 2}
+                      paddingLeft={
+                        row().kind === "actions" || row().kind === "location"
+                          ? 0
+                          : 2
+                      }
                       gap={1}
                     >
                       <Index each={row().choices}>
@@ -431,20 +488,24 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
                                   : color.panel
                             }
                             fg={
-                              row().kind === "scope"
-                                ? scopeColor(choice().value as Scope)
-                                : row().kind === "actions"
-                                  ? choice().value === "accept" ||
-                                    choice().value === "apply"
-                                    ? color.sage
-                                    : color.muted
-                                  : choice().selected
-                                    ? color.sage
-                                    : color.text
+                              choice().disabled
+                                ? color.excluded
+                                : row().kind === "scope"
+                                  ? scopeColor(choice().value as Scope)
+                                  : row().kind === "actions" ||
+                                      row().kind === "location"
+                                    ? choice().value === "accept" ||
+                                      choice().value === "apply"
+                                      ? color.sage
+                                      : color.muted
+                                    : choice().selected
+                                      ? color.sage
+                                      : color.text
                             }
                           >
-                            {row().kind === "actions"
-                              ? `${safeText(choice().label)} `
+                            {row().kind === "actions" ||
+                            row().kind === "location"
+                              ? `${safeText(choice().label)}${choice().disabled ? " (unavailable)" : ""} `
                               : ` ${
                                   row().question?.type === "multi-select"
                                     ? choice().selected
@@ -460,7 +521,11 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
                     </box>
                   </Show>
                   <Show
-                    when={row().kind === "input" || row().kind === "source"}
+                    when={
+                      row().kind === "input" ||
+                      row().kind === "source" ||
+                      row().kind === "location-input"
+                    }
                   >
                     <box paddingLeft={2} flexShrink={0}>
                       <input
@@ -470,9 +535,11 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
                         value={
                           row().kind === "source"
                             ? model.source
-                            : String(
-                                model.form?.answers[row().question!.id] ?? "",
-                              )
+                            : row().kind === "location-input"
+                              ? (row().value ?? "")
+                              : String(
+                                  model.form?.answers[row().question!.id] ?? "",
+                                )
                         }
                         onInput={(value) => {
                           if (isEditing(row())) model.edit(value)
@@ -544,20 +611,33 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
                       when={catalogSelection()}
                       fallback={
                         <Show
-                          when={currentPage() !== 2}
+                          when={currentPage() !== 3}
                           fallback={
-                            <ReviewPreview
-                              plan={reviewSelection().plan}
-                              selections={reviewSelection().selections}
-                              changeIndex={reviewSelection().changeIndex}
-                              repository={model.backend.repository}
-                              home={model.backend.home}
-                              drift={reviewSelection().drift}
-                              errors={reviewSelection().errors}
+                            <SettingsPreview
+                              group={rows()[active()]?.settingsGroup}
+                              restoring={rows()[active()]?.id.startsWith(
+                                "settings:restore",
+                              )}
+                              staged={settingsChanged()}
                             />
                           }
                         >
-                          <GuidePreview />
+                          <Show
+                            when={currentPage() !== 2}
+                            fallback={
+                              <ReviewPreview
+                                plan={reviewSelection().plan}
+                                selections={reviewSelection().selections}
+                                changeIndex={reviewSelection().changeIndex}
+                                repository={model.backend.repository}
+                                home={model.backend.home}
+                                drift={reviewSelection().drift}
+                                errors={reviewSelection().errors}
+                              />
+                            }
+                          >
+                            <GuidePreview />
+                          </Show>
                         </Show>
                       }
                     >
@@ -616,13 +696,17 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
         {status()}
       </text>
       <text wrapMode="word" flexShrink={0} fg={color.sage}>
-        {editing()?.kind === "question"
-          ? "Type an answer · ↑↓ questions · Enter finish input · Esc accept kit"
-          : editing()?.kind === "catalog"
-            ? "Type an external catalog path or URL · Enter register · Esc stop editing"
-            : formOpen()
-              ? "↑↓/jk questions · ←→/hl options · Space select/toggle · Esc accept kit · Cancel discards"
-              : "↑↓/jk rows · ←→/hl options · Space select · Tab pages · r refresh · Esc back · PgUp/PgDn details · q q quit"}
+        {editing()?.kind === "location"
+          ? "Type a location · ↑↓ rows · Enter finish input · Esc accept group"
+          : editing()?.kind === "question"
+            ? "Type an answer · ↑↓ questions · Enter finish input · Esc accept kit"
+            : editing()?.kind === "catalog"
+              ? "Type an external catalog path or URL · Enter register · Esc stop editing"
+              : model.settingsForm
+                ? "↑↓/jk rows · ←→/hl actions · Space select · Esc accept group · Cancel discards"
+                : formOpen()
+                  ? "↑↓/jk questions · ←→/hl options · Space select/toggle · Esc accept kit · Cancel discards"
+                  : "↑↓/jk rows · ←→/hl options · Space select · Tab pages · r refresh · Esc back · PgUp/PgDn details · q q quit"}
       </text>
     </box>
   )

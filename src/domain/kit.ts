@@ -79,7 +79,7 @@ export const outputSchema = z.discriminatedUnion("type", [
       targets: z
         .array(z.enum(["AGENTS.md", "CLAUDE.md"]))
         .min(1)
-        .default(["AGENTS.md", "CLAUDE.md"]),
+        .optional(),
       content: z.string(),
       when: conditionSchema.optional(),
     })

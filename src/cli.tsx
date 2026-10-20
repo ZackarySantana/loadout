@@ -33,7 +33,7 @@ Usage: loadout [--repo <project>]
 Tab switches pages. Up/Down or j/k navigate; Left/Right or h/l navigate options.
 Text questions start editing on focus; Vim keys then type normally.
 Space selects. Esc accepts an open kit; otherwise it goes back. Press q twice to exit.
-Kit changes are written only after review and explicit confirmation.
+Kit and settings changes are written only after review and explicit confirmation.
 Repo kits are discovered automatically from .loadout/kits/*.yaml; no repo catalog index or registration is needed.
 Registration is only for external catalogs and installs no kits.
 Status is read-only; a nonzero exit code means drift or catalog issues were found.`)

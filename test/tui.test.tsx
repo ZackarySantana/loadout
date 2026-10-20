@@ -196,7 +196,11 @@ async function fixture(
       ],
     }),
   )
-  const service = await LoadoutService.open({ home, repository })
+  const service = await LoadoutService.open({
+    home,
+    repository,
+    environment: {},
+  })
   if (register) await service.register(source)
   const model = new ScreenModel(service)
   await model.initialize()
@@ -479,7 +483,7 @@ describe("rendered keyboard workflows", () => {
     ui.setup.resize(150, 80)
     await ui.setup.flush()
     await ui.press("TAB")
-    expect(ui.frame()).toContain("2 file changes")
+    expect(ui.frame()).toContain("3 file changes")
     expect(ui.frame()).toContain("Apply changes")
     expect(ui.frame()).toContain("Keep editing")
     expect(ui.model.selected()?.id).toBe("review-actions")
@@ -510,7 +514,7 @@ describe("rendered keyboard workflows", () => {
         sections[i - 1]!.y + sections[i - 1]!.height,
       )
     for (const [label, color] of [
-      ["Added: 1", "#bbd4a4"],
+      ["Added: 2", "#bbd4a4"],
       ["Modified: 1", "#98c7e6"],
       ["Removed: 0", "#df9a97"],
     ]) {
@@ -561,7 +565,7 @@ describe("rendered keyboard workflows", () => {
         )
         ?.fg.equals(RGBA.fromHex("#a1b49f")),
     ).toBe(true)
-    await ui.go("change:1")
+    await ui.go("change:2")
     expect(ui.frame()).toContain("Review before merging")
     await ui.focusOption("review-actions", "apply")
     const planBeforeRefresh = ui.model.plan
@@ -613,6 +617,7 @@ describe("rendered keyboard workflows", () => {
     const reopened = await LoadoutService.open({
       home: ui.home,
       repository: ui.repository,
+      environment: {},
     })
     expect(reopened.configuration("fixture/team")).toEqual({
       scope: "repository",
@@ -624,6 +629,7 @@ describe("rendered keyboard workflows", () => {
         note: "Review before merging",
       },
     })
+    await ui.press("TAB")
     await ui.press("TAB")
     await ui.press("TAB")
     expect(ui.frame()).toContain("Team context  [repository]")
@@ -710,6 +716,7 @@ describe("rendered keyboard workflows", () => {
     const reopened = await LoadoutService.open({
       home: ui.home,
       repository: ui.repository,
+      environment: {},
     })
     expect(
       (await reopened.catalogs()).catalogs.map((catalog) => catalog.id),
@@ -779,7 +786,7 @@ describe("rendered keyboard workflows", () => {
     const ui = await fixture()
     const checkHeader = (width: number) => {
       const logo = ui.setup.renderer.root.findDescendantById("loadout-wordmark")
-      if (width >= 62) {
+      if (width >= 82) {
         expect(logo).toBeDefined()
         expect(logo!.height).toBe(3)
         expect(logo!.width).toBe(27)
@@ -791,8 +798,8 @@ describe("rendered keyboard workflows", () => {
             node instanceof TextRenderable && node.plainText === "LOADOUT",
         )!
       expect(brand).toBeDefined()
-      expect(brand.x).toBe(2)
-      expect(brand.y).toBe(width >= 62 ? 1 : 2)
+      expect(brand.x).toBe(width < 54 ? Math.floor((width - 7) / 2) : 2)
+      expect(brand.y).toBe(width >= 82 || width < 54 ? 1 : 2)
       const brandText = brand as TextRenderable
       expect(brandText.plainText).toMatch(/^[\x20-\x7e\n]+$/)
       const brandSpans = ui.setup
@@ -818,24 +825,35 @@ describe("rendered keyboard workflows", () => {
       ).toBe(true)
       const lines = ui.frame().split("\n")
       expect(lines[0]!.trim()).toBe("")
-      expect(lines[4]!.trim()).toBe("")
-      const tabs = ["Catalogs", "Installed", "Review"].map((name) =>
+      expect(
+        lines[
+          ui.setup.renderer.root.findDescendantById("loadout-header")!.height -
+            1
+        ]!.trim(),
+      ).toBe("")
+      const tabs = ["Catalogs", "Installed", "Review", "Settings"].map((name) =>
         descendants(ui.setup.renderer.root).find(
           (node) =>
             node instanceof TextRenderable && node.plainText.trim() === name,
         )!,
       )
-      for (const tab of tabs) {
+      for (const [index, tab] of tabs.entries()) {
         expect(tab.height).toBe(1)
-        expect(tab.y).toBe(brand.y + Math.floor(brand.height / 2))
-        expect(tab.x).toBeGreaterThanOrEqual(brand.x + brand.width)
+        expect(tab.y).toBe(
+          width < 54
+            ? 4 + (index === 3 ? 1 : 0)
+            : brand.y + Math.floor(brand.height / 2),
+        )
+        expect(tab.x).toBeGreaterThanOrEqual(
+          width < 54 ? 2 : brand.x + brand.width,
+        )
         expect(tab.x + tab.width).toBeLessThanOrEqual(width)
       }
-      expect(new Set(tabs.map((tab) => tab.y)).size).toBe(1)
+      expect(new Set(tabs.map((tab) => tab.y)).size).toBe(width < 54 ? 2 : 1)
       expect(tabs[1]!.x).toBeGreaterThanOrEqual(tabs[0]!.x + tabs[0]!.width)
       const caption =
         ui.setup.renderer.root.findDescendantById("loadout-caption")!
-      expect(caption.y).toBe(3)
+      expect(caption.y).toBe(width < 54 ? 6 : 3)
       expect(caption.height).toBe(1)
       expect(caption.x).toBe(tabs[0]!.x)
       expect(caption.y).toBeGreaterThanOrEqual(tabs[0]!.y + tabs[0]!.height)
@@ -936,9 +954,10 @@ describe("rendered keyboard workflows", () => {
     })
     await ui.press("TAB")
     await ui.press("TAB")
-    expect(ui.frame()).toContain("1 file changes")
+    expect(ui.frame()).toContain("2 file changes")
     expect(ui.model.plan?.changes.map((change) => change.path)).toEqual([
       join(ui.repository, "AGENTS.md"),
+      join(ui.repository, "CLAUDE.md"),
     ])
     await ui.choose("review-actions", "apply")
     expect(ui.frame()).toContain("Applied successfully")
@@ -1288,6 +1307,7 @@ describe("rendered keyboard workflows", () => {
     const reopened = await LoadoutService.open({
       home: ui.home,
       repository: ui.repository,
+      environment: {},
     })
     expect(
       reopened.installed().find((item) => item.key === key)?.origin,
@@ -1300,6 +1320,7 @@ describe("rendered keyboard workflows", () => {
     expect(originalOutput).toBe("Original Phoenix team / legacy\n")
     const originalAgents = await readFile(agents, "utf8")
     await writeFile(kitPath, stringify(definition(true)))
+    await ui.press("TAB")
     await ui.press("TAB")
     await ui.press("TAB")
     expect(ui.model.page).toBe(1)
@@ -1332,7 +1353,7 @@ describe("rendered keyboard workflows", () => {
     expect(ui.frame()).toContain("Catalog update staged")
     expect(await readFile(output, "utf8")).toBe(originalOutput)
     await ui.press("TAB")
-    expect(ui.frame()).toContain("2 file changes")
+    expect(ui.frame()).toContain("3 file changes")
     await ui.go("change:1")
     expect(ui.frame()).toContain("Updated Phoenix team")
     await reviewAndApply()
@@ -1341,6 +1362,7 @@ describe("rendered keyboard workflows", () => {
     expect(ui.model.drift.kits.find((kit) => kit.key === key)?.status).toBe(
       "current",
     )
+    await ui.press("TAB")
     await ui.press("TAB")
     await ui.press("TAB")
     const savedState = await readFile(state, "utf8")
@@ -1418,6 +1440,7 @@ describe("rendered keyboard workflows", () => {
     )
     await ui.press("TAB")
     await ui.press("TAB")
+    await ui.press("TAB")
     await ui.go("kit:fixture/team")
     expect(ui.frame()).toContain("Source changed")
     await ui.press(" ")
@@ -1430,6 +1453,7 @@ describe("rendered keyboard workflows", () => {
     const other = await LoadoutService.open({
       home: ui.home,
       repository: ui.repository,
+      environment: {},
     })
     const item = other
       .installed()

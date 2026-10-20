@@ -131,7 +131,13 @@ test("built CLI navigates bundled kits and updates a live answer in a real PTY o
   })
   const child = Bun.spawn(["bun", cli], {
     cwd: repository,
-    env: { ...process.env, HOME: home, TERM: "xterm-256color" },
+    env: {
+      ...process.env,
+      HOME: home,
+      CODEX_HOME: join(home, ".codex"),
+      XDG_CONFIG_HOME: join(home, ".config"),
+      TERM: "xterm-256color",
+    },
     terminal,
   })
   const text = () => screen.text()
@@ -262,7 +268,12 @@ test("CLI catalogs follow the repository and status reports source/output drift 
     const run = async (args: string[], cwd = repository) => {
       const proc = Bun.spawn(["bun", cli, ...args], {
         cwd,
-        env: { ...process.env, HOME: home },
+        env: {
+          ...process.env,
+          HOME: home,
+          CODEX_HOME: join(home, ".codex"),
+          XDG_CONFIG_HOME: join(home, ".config"),
+        },
         stdout: "pipe",
         stderr: "pipe",
       })
@@ -282,7 +293,11 @@ test("CLI catalogs follow the repository and status reports source/output drift 
       "Global CLI catalog (registered)",
     )
     expect(await Bun.file(join(repository, "context.txt")).exists()).toBe(false)
-    const service = await LoadoutService.open({ home, repository })
+    const service = await LoadoutService.open({
+      home,
+      repository,
+      environment: {},
+    })
     const item = (await service.catalogs()).catalogs.find(
       (catalog) => catalog.kind === "repo",
     )!.kits[0]!
@@ -312,7 +327,11 @@ test("CLI catalogs follow the repository and status reports source/output drift 
     expect(missing.text).toContain(`File ${output} · missing`)
     expect(await Bun.file(output).exists()).toBe(false)
     expect(await readFile(state, "utf8")).toBe(stateBefore)
-    const reopened = await LoadoutService.open({ home, repository })
+    const reopened = await LoadoutService.open({
+      home,
+      repository,
+      environment: {},
+    })
     expect(reopened.installed()[0]?.kit.outputs[0]).toMatchObject({
       content: "Baseline team context.\n",
     })

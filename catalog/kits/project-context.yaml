@@ -39,13 +39,11 @@ questions:
     default: false
 outputs:
   - type: instructions
-    targets: [AGENTS.md, CLAUDE.md]
     content: |
       # Project context
 
       You are working on {{project-name}}. Read the repository's documentation and existing conventions before proposing changes. Keep changes focused on the requested task.
   - type: instructions
-    targets: [AGENTS.md, CLAUDE.md]
     when: { question: deployment-enabled, equals: true }
     content: |
       # Deployment context
@@ -53,7 +51,6 @@ outputs:
       The deployment target for {{project-name}} is {{deployment-target}}. Required checks: {{checks}}.
       Deployment guidance is planning context, not permission to deploy. Ask for explicit approval before changing a live environment.
   - type: instructions
-    targets: [AGENTS.md, CLAUDE.md]
     when: { question: checks, includes: rollback }
     content: |
       Before a deployment, document the rollback trigger, recovery steps, and who can approve rollback. Do not assume destructive data changes can be reversed.

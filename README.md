@@ -1,6 +1,6 @@
 # Loadout
 
-Compose project and user-wide agent context from catalogs of declarative kits. A kit can contribute instructions to `AGENTS.md` / `CLAUDE.md`, skills, and other text files, with inline configuration questions.
+Compose project and user-wide agent context from catalogs of declarative kits. A kit can contribute instructions, skills, and other text files, with inline configuration questions. Configurable destination defaults support Codex, Claude, and OpenCode.
 
 ## Develop
 
@@ -32,7 +32,7 @@ Dependencies are local to the project. OpenTUI’s Solid integration runs on Bun
 - An open kit keeps navigation inside its form. Accept or cancel it to return to the kit list; other kits cannot receive focus while you are configuring it.
 - Text answers stay visible on their own line below the question, aligned with its text. Optional question descriptions appear as muted italic help below the control.
 - **↑ / ↓** wrap at list boundaries. Inside an open kit, they wrap between its first and last form controls without leaving the kit.
-- **Tab** / **Shift+Tab** cycle Catalogs, Installed, and Review. Finish or cancel an open form first.
+- **Tab** / **Shift+Tab** cycle Catalogs, Installed, Review, and Settings. Finish or cancel an open form first.
 - **Review** lists actual file changes, staged scope/answers, and safety details in sections. Highlight a file for its colored diff. The visible **Apply changes / Keep editing** row defaults to **Keep editing**. Explicitly focus **Apply changes** with **← / →** or **h / l**, then press **Space** to write all listed files and save installation intent. This is the final confirmation, with no second menu. Applying still saves intent and answers when there are zero file changes. **Keep editing** returns to Installed with drafts intact and a fresh plan on the next Review; reviewing never writes files.
 - **Esc** accepts an open kit; only its explicit **Cancel** action discards the edit. Outside a kit, **Esc** goes back or stops catalog input; **PgUp / PgDn** scroll the informational column. Press **q** twice to exit, even with no changes: the first opens confirmation, the second exits. **Esc** stays; **Space** does not confirm. **Ctrl+C** opens the same prompt. While typing an answer, **q** is literal text.
 - **r** refreshes live catalog sources and drift status when no form is open. Installed highlights changed/unavailable sources and modified or missing managed outputs. A changed source does not change the installed snapshot: choose **Use catalog update**, review reused and new answers, accept, then use Review and Apply changes.
@@ -47,7 +47,13 @@ When a global kit is removed, Loadout restores copies in every known repository 
 
 Choose **Not installed** to clear global intent and this project’s repository intent; other projects’ intent is retained. To remove only global intent while retaining this project’s fallback, choose **Repository**.
 
-Instructions go to project-root `AGENTS.md` and `CLAUDE.md`, or globally to `~/.codex/AGENTS.md` and `~/.claude/CLAUDE.md`. Skills go to both `.agents/skills/` and `.claude/skills/`. Those are separate CLI destinations, not duplicate installations across scopes.
+Instructions and skills go to the ordered locations configured in **Settings**. The default lists cover Codex, Claude, and OpenCode, deduplicating their shared repository instruction destination. These are separate CLI destinations, not duplicate installations across scopes.
+
+## Destination settings
+
+Edit repository/global instruction and skill locations in the Settings tab. Each group supports independent copies or links to its first, primary location. Add, reorder, or remove locations; settings edits are staged alongside kit selections and take effect only after Review and Apply changes.
+
+Link mode links only managed files, not whole skill roots. Unrelated files and independent user instructions are protected; conflicts block apply. Review shows the exact resolved destinations, relocations, and link targets, including effects on other known repositories. See [output settings](docs/settings.md).
 
 ## Catalogs and kits
 

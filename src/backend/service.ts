@@ -4,12 +4,20 @@ import {
   mkdir,
   realpath,
   rename,
+  symlink,
   unlink,
   writeFile,
 } from "node:fs/promises"
 import { dirname, join, relative, isAbsolute, resolve } from "node:path"
 import { hostname } from "node:os"
 import { randomUUID } from "node:crypto"
+import { outputSettingsSchema, type OutputSettings } from "../domain/settings"
+import {
+  defaultOutputSettings,
+  inside,
+  resolveDestinations,
+  type ResolvedDestinationGroup,
+} from "./settings"
 import { z } from "zod"
 import {
   type Answers,
@@ -35,8 +43,14 @@ import {
   readOptional,
   readOptionalBytes,
   reconcile,
+  assertSafeDirectory,
+  snapshotNode,
+  sameNode,
+  nodeSnapshotSchema,
+  type NodeSnapshot,
 } from "./files"
 import { renderState } from "./render"
+import { planOutputs } from "./outputs"
 import { emptyState, stateSchema, type State } from "./state"
 
 export interface Selection {
@@ -48,17 +62,31 @@ export interface Change {
   path: string
   before: string | null
   after: string | null
+  beforeKind?: NodeSnapshot["kind"]
+  afterKind?: NodeSnapshot["kind"]
+  beforeTarget?: string
+  afterTarget?: string
 }
 export interface Plan {
   changes: readonly Change[]
   summary: string[]
+  settings: OutputSettings
+  previousSettings: OutputSettings
+  settingsChanged: boolean
+  resolvedLocations: ResolvedDestinationGroup[]
+}
+interface NodeChange extends Change {
+  beforeNode: NodeSnapshot
+  afterNode: NodeSnapshot
 }
 interface PlanData {
   before: string | null
   state: State
-  changes: Change[]
+  changes: NodeChange[]
   sources: LoadedKit[]
-  files: { path: string; before: string | null }[]
+  files: { path: string; before: NodeSnapshot }[]
+  materializedSources: Set<string>
+  linkSources: Set<string>
 }
 const journalSchema = z.object({
   before: z.string().nullable(),
@@ -69,9 +97,54 @@ const journalSchema = z.object({
       before: z.string().nullable(),
       after: z.string().nullable(),
       beforeMode: z.number().int().min(0).max(0o7777).optional(),
+      beforeNode: nodeSnapshotSchema.optional(),
+      afterNode: nodeSnapshotSchema.optional(),
     }),
   ),
 })
+
+function displayNode(node: NodeSnapshot): string | null {
+  return node.kind === "missing"
+    ? null
+    : node.kind === "file"
+      ? node.content
+      : `-> ${node.target}`
+}
+
+async function atomicNodeWrite(
+  path: string,
+  desired: NodeSnapshot,
+  expected: NodeSnapshot,
+): Promise<void> {
+  await assertSafeDirectory(dirname(path))
+  const check = async () => {
+    if (
+      !sameNode(await snapshotNode(path, expected.kind === "symlink"), expected)
+    )
+      throw new Error(
+        `File or link changed since review; concurrent edits were preserved: ${path}`,
+      )
+  }
+  await check()
+  if (desired.kind === "missing") {
+    if (expected.kind !== "missing") await unlink(path)
+    return
+  }
+  await mkdir(dirname(path), { recursive: true })
+  await assertSafeDirectory(dirname(path))
+  const temp = `${path}.loadout-${randomUUID()}`
+  try {
+    if (desired.kind === "symlink") await symlink(desired.target, temp)
+    else {
+      await writeFile(temp, desired.content, { flag: "wx", mode: 0o600 })
+      await chmod(temp, desired.mode)
+    }
+    await check()
+    await rename(temp, path)
+  } finally {
+    await unlink(temp).catch(() => {})
+  }
+}
 
 async function fileMode(path: string): Promise<number | undefined> {
   try {
@@ -133,21 +206,29 @@ export class LoadoutService {
   private state: State = emptyState()
   private raw: string | null = null
   private plans = new WeakMap<Plan, PlanData>()
+  private readonly defaults: OutputSettings
 
-  private constructor(home: string, repository: string) {
+  private constructor(
+    home: string,
+    repository: string,
+    environment: Record<string, string | undefined>,
+  ) {
     this.home = home
     this.repository = repository
     this.directory = join(home, ".loadout")
     this.statePath = join(this.directory, "state.json")
+    this.defaults = defaultOutputSettings(home, environment)
   }
 
   static async open(options: {
     home: string
     repository: string
+    environment?: Record<string, string | undefined>
   }): Promise<LoadoutService> {
     const service = new LoadoutService(
       await realpath(options.home),
       await realpath(options.repository),
+      options.environment ?? process.env,
     )
     if (service.home === service.repository)
       throw new Error(
@@ -183,6 +264,8 @@ export class LoadoutService {
     catalogs: Catalog[]
     errors: string[]
     drift: DriftReport
+    settings: OutputSettings
+    defaultSettings: OutputSettings
   }> {
     await this.refresh()
     const listing = await loadCatalogListing(
@@ -194,7 +277,16 @@ export class LoadoutService {
       catalogs: listing.catalogs,
       errors: listing.errors,
       drift,
+      settings: this.settings(),
+      defaultSettings: this.defaultSettings(),
     })
+  }
+
+  settings(): OutputSettings {
+    return structuredClone(this.state.settings ?? this.defaults)
+  }
+  defaultSettings(): OutputSettings {
+    return structuredClone(this.defaults)
   }
 
   installed(): LoadedKit[] {
@@ -312,9 +404,16 @@ export class LoadoutService {
     })
   }
 
-  async plan(selections: Selection[]): Promise<Plan> {
+  async plan(
+    selections: Selection[],
+    settings?: OutputSettings,
+  ): Promise<Plan> {
     // Snapshot caller-owned objects before the first await; later UI edits cannot alter a review.
     selections = structuredClone(selections)
+    const candidateSettings =
+      settings === undefined
+        ? undefined
+        : outputSettingsSchema.parse(structuredClone(settings))
     for (const selection of selections) {
       selection.item.kit = kitSchema.parse(selection.item.kit)
       if (selection.item.origin)
@@ -400,32 +499,95 @@ export class LoadoutService {
         `${item.kit.name}: ${scope === "none" ? "remove from global and this repository" : scope}`,
       )
     }
-    next.managed = renderState(next, this.home)
-    const changes: Change[] = []
-    const files: { path: string; before: string | null }[] = []
+    const previousSettings = this.settings()
+    const effectiveSettings = structuredClone(
+      candidateSettings ?? previousSettings,
+    )
+    // Validate repository lists even when no repository intent exists yet.
+    resolveDestinations(effectiveSettings, this.home, [
+      ...Object.keys(next.repositories),
+      this.repository,
+    ])
+    next.settings = structuredClone(effectiveSettings)
+    next.managed = renderState(next, this.home, effectiveSettings)
     for (const path of new Set([
       ...Object.keys(previous.managed),
       ...Object.keys(next.managed),
-    ])) {
-      this.assertOwnedPath(path, next)
-      await assertSafePath(path)
-      const before = await readOptional(path)
-      files.push({ path, before })
-      const after = reconcile(
-        path,
-        before,
-        previous.managed[path],
-        next.managed[path],
-      )
-      if (before !== after) changes.push({ path, before, after })
+    ]))
+      this.assertOwnedPath(path, next, previous)
+    const nodes = await planOutputs(previous.managed, next.managed)
+    const changes: NodeChange[] = []
+    const files = [...nodes.before].map(([path, before]) => ({ path, before }))
+    for (const [path, beforeNode] of nodes.before) {
+      const afterNode = nodes.after.get(path)!
+      if (!sameNode(beforeNode, afterNode))
+        changes.push({
+          path,
+          before: displayNode(beforeNode),
+          after: displayNode(afterNode),
+          beforeKind: beforeNode.kind,
+          afterKind: afterNode.kind,
+          ...(beforeNode.kind === "symlink"
+            ? { beforeTarget: beforeNode.target }
+            : {}),
+          ...(afterNode.kind === "symlink"
+            ? { afterTarget: afterNode.target }
+            : {}),
+          beforeNode,
+          afterNode,
+        })
     }
-    const plan: Plan = { changes: structuredClone(changes), summary }
+    // Materialize all real files before links; retire obsolete sources last.
+    const rank = (change: NodeChange) =>
+      change.afterNode.kind === "file"
+        ? 0
+        : change.afterNode.kind === "symlink"
+          ? 1
+          : 2
+    changes.sort((a, b) => rank(a) - rank(b))
+    const settingsChanged =
+      canonical(previousSettings) !== canonical(effectiveSettings)
+    if (settingsChanged)
+      summary.push(
+        "Update output settings for all known repositories and global selections",
+      )
+    const plan: Plan = {
+      changes: changes.map(
+        ({ beforeNode: _before, afterNode: _after, ...change }) =>
+          structuredClone(change),
+      ),
+      summary: structuredClone(summary),
+      settings: structuredClone(effectiveSettings),
+      previousSettings: structuredClone(previousSettings),
+      settingsChanged,
+      resolvedLocations: resolveDestinations(effectiveSettings, this.home, [
+        ...Object.keys(next.repositories),
+        this.repository,
+      ]),
+    }
     this.plans.set(plan, {
       before: beforeState,
       state: next,
       changes,
       sources,
       files,
+      materializedSources: new Set(
+        Object.entries(previous.managed).flatMap(([path, managed]) =>
+          managed.type === "symlink" &&
+          next.managed[path] &&
+          next.managed[path]?.type !== "symlink"
+            ? [managed.source]
+            : [],
+        ),
+      ),
+      linkSources: new Set(
+        [
+          ...Object.values(previous.managed),
+          ...Object.values(next.managed),
+        ].flatMap((managed) =>
+          managed.type === "symlink" ? [managed.source] : [],
+        ),
+      ),
     })
     return plan
   }
@@ -459,38 +621,73 @@ export class LoadoutService {
             )
         }
       }
+      const expectedNodes = new Map<string, NodeSnapshot>()
       for (const change of data.files) {
-        await assertSafePath(change.path)
-        const current = await readOptional(change.path)
-        if (current !== change.before) {
+        const current = await snapshotNode(
+          change.path,
+          change.before.kind === "symlink",
+        )
+        if (!sameNode(current, change.before)) {
           const managed = data.state.managed[change.path]
           if (
-            data.changes.some((file) => file.path === change.path) ||
-            !managed
+            current.kind !== "file" ||
+            change.before.kind !== "file" ||
+            current.mode !== change.before.mode ||
+            managed?.type !== "instructions" ||
+            data.materializedSources.has(change.path) ||
+            data.changes.some((file) => file.path === change.path)
           )
             throw new Error(
-              `File changed since review; review again: ${change.path}`,
+              `File changed since review; review again (including link targets): ${change.path}`,
             )
-          // No write is planned here: unrelated instruction text may change, but managed blocks may not.
-          reconcile(change.path, current, managed, structuredClone(managed))
+          // Preserve unrelated edits on untouched instruction files, unless their bytes were copied elsewhere.
+          reconcile(
+            change.path,
+            current.content,
+            managed,
+            structuredClone(managed),
+          )
         }
+        expectedNodes.set(change.path, current)
       }
       const after = JSON.stringify(data.state, null, 2) + "\n"
-      const changes = await Promise.all(
-        data.changes.map(async (change) => ({
-          ...change,
-          beforeMode: await fileMode(change.path),
-        })),
-      )
+      const changes = data.changes
       const journal = { before: data.before, after, changes }
       await atomicWrite(
         join(this.directory, "journal.json"),
         JSON.stringify(journal),
       )
       try {
-        for (const change of data.changes)
-          await atomicWrite(change.path, change.after)
-        await atomicWrite(this.statePath, after)
+        const checkSources = async () => {
+          for (const path of data.linkSources) {
+            const expected = expectedNodes.get(path)!
+            if (
+              !sameNode(
+                await snapshotNode(path, expected.kind === "symlink"),
+                expected,
+              )
+            )
+              throw new Error(
+                `Link source changed during apply; concurrent edits were preserved: ${path}`,
+              )
+          }
+        }
+        for (const change of data.changes) {
+          await checkSources()
+          await atomicNodeWrite(
+            change.path,
+            change.afterNode,
+            change.beforeNode,
+          )
+          expectedNodes.set(change.path, change.afterNode)
+        }
+        await checkSources()
+        await atomicWrite(
+          this.statePath,
+          after,
+          undefined,
+          data.before === null ? null : Buffer.from(data.before),
+        )
       } catch (error) {
         await this.recover()
         throw error
@@ -501,20 +698,34 @@ export class LoadoutService {
     })
   }
 
-  private assertOwnedPath(path: string, state: State): void {
+  private assertOwnedPath(path: string, state: State, previous?: State): void {
     const roots = [this.home, ...Object.keys(state.repositories)]
+    const configured = resolveDestinations(
+      state.settings ?? this.defaults,
+      this.home,
+      Object.keys(state.repositories),
+    )
+    const explicitDestination = configured.some((group) =>
+      group.locations.some((location) =>
+        group.kind === "instructions"
+          ? path === location
+          : inside(location, path),
+      ),
+    )
     if (
       !isAbsolute(path) ||
-      !roots.some((root) => {
-        const rel = relative(root, path)
-        return rel && !rel.startsWith("..") && !isAbsolute(rel)
-      })
+      (!explicitDestination &&
+        !previous?.managed[path] &&
+        !roots.some((root) => {
+          const rel = relative(root, path)
+          return rel && !rel.startsWith("..") && !isAbsolute(rel)
+        }))
     )
       throw new Error(`Output is outside known roots: ${path}`)
     if (
       path === this.directory ||
       path.startsWith(`${this.directory}/`) ||
-      path.split("/").includes(".git")
+      path.split("/").some((part) => part === ".git" || part === ".loadout")
     )
       throw new Error(`Reserved output path: ${path}`)
   }
@@ -535,17 +746,78 @@ export class LoadoutService {
         "Cannot recover interrupted apply: state changed. Preserve ~/.loadout/journal.json for inspection.",
       )
     const state = stateSchema.parse(JSON.parse(journal.after))
-    for (const change of journal.changes) {
-      this.assertOwnedPath(change.path, state)
-      await assertSafePath(change.path)
-      const content = await readOptional(change.path)
-      if (content !== change.before && content !== change.after)
+    const previous =
+      journal.before === null
+        ? emptyState()
+        : stateSchema.parse(JSON.parse(journal.before))
+    const changes = journal.changes.map((change) => ({
+      ...change,
+      legacy: change.beforeNode === undefined && change.afterNode === undefined,
+      beforeNode:
+        change.beforeNode ??
+        (change.before === null
+          ? { kind: "missing" as const }
+          : {
+              kind: "file" as const,
+              content: change.before,
+              mode: change.beforeMode ?? 0o600,
+            }),
+      afterNode:
+        change.afterNode ??
+        (change.after === null
+          ? { kind: "missing" as const }
+          : {
+              kind: "file" as const,
+              content: change.after,
+              mode: change.beforeMode ?? 0o600,
+            }),
+    }))
+    const matchesRecoveryNode = (
+      current: NodeSnapshot,
+      expected: NodeSnapshot,
+      legacy: boolean,
+    ) =>
+      sameNode(current, expected) ||
+      (legacy &&
+        current.kind === "file" &&
+        expected.kind === "file" &&
+        current.content === expected.content)
+    for (const change of changes) {
+      this.assertOwnedPath(change.path, state, previous)
+      const content = await snapshotNode(
+        change.path,
+        change.beforeNode.kind === "symlink" ||
+          change.afterNode.kind === "symlink",
+      )
+      if (
+        !matchesRecoveryNode(content, change.beforeNode, change.legacy) &&
+        !matchesRecoveryNode(content, change.afterNode, change.legacy)
+      )
         throw new Error(
           `Cannot recover a file edited after interruption: ${change.path}`,
         )
     }
-    for (const change of [...journal.changes].reverse())
-      await atomicWrite(change.path, change.before, change.beforeMode)
+    // Restore regular sources before links, and remove newly created leaves last.
+    const rank = (node: NodeSnapshot) =>
+      node.kind === "file" ? 0 : node.kind === "symlink" ? 1 : 2
+    for (const change of [...changes].sort(
+      (a, b) => rank(a.beforeNode) - rank(b.beforeNode),
+    )) {
+      const current = await snapshotNode(
+        change.path,
+        change.beforeNode.kind === "symlink" ||
+          change.afterNode.kind === "symlink",
+      )
+      if (sameNode(current, change.beforeNode)) continue
+      if (
+        !matchesRecoveryNode(current, change.beforeNode, change.legacy) &&
+        !matchesRecoveryNode(current, change.afterNode, change.legacy)
+      )
+        throw new Error(
+          `Cannot recover a file edited after interruption: ${change.path}`,
+        )
+      await atomicNodeWrite(change.path, change.beforeNode, current)
+    }
     await unlink(path)
   }
 
