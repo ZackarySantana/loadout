@@ -838,22 +838,18 @@ describe("rendered keyboard workflows", () => {
       )
       for (const tab of tabs) {
         expect(tab.height).toBe(1)
-        expect(tab.y).toBe(1)
+        expect(tab.y).toBe(brand.y + Math.floor(brand.height / 2))
         expect(tab.x).toBeGreaterThanOrEqual(brand.x + brand.width)
         expect(tab.x + tab.width).toBeLessThanOrEqual(width)
       }
       expect(new Set(tabs.map((tab) => tab.y)).size).toBe(1)
       expect(tabs[1]!.x).toBeGreaterThanOrEqual(tabs[0]!.x + tabs[0]!.width)
-      const caption = descendants(ui.setup.renderer.root).find(
-        (node) =>
-          node instanceof TextRenderable &&
-          (node.plainText === "agent context, composed" ||
-            node.plainText.endsWith(" staged")),
-      )!
+      const caption =
+        ui.setup.renderer.root.findDescendantById("loadout-caption")!
       expect(caption.y).toBe(3)
       expect(caption.height).toBe(1)
       expect(caption.x).toBe(tabs[0]!.x)
-      expect(caption.y).toBeGreaterThanOrEqual(tabs[0]!.y + tabs[0]!.height + 1)
+      expect(caption.y).toBeGreaterThanOrEqual(tabs[0]!.y + tabs[0]!.height)
     }
     checkHeader(110)
     const checkColumns = (width: number) => {

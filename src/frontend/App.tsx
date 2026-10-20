@@ -277,8 +277,8 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
           flexGrow={1}
           minWidth={0}
           flexDirection="column"
-          justifyContent="center"
-          gap={1}
+          justifyContent="flex-start"
+          paddingTop={1}
         >
           <box
             id="loadout-tabs"
@@ -310,9 +310,7 @@ export function App(props: { model: ScreenModel; onExit: () => void }) {
             wrapMode="none"
             fg={draftCount() ? color.warning : color.muted}
           >
-            {draftCount()
-              ? `${draftCount()} staged`
-              : "agent context, composed"}
+            {draftCount() ? `${draftCount()} staged` : ""}
           </text>
         </box>
       </box>
