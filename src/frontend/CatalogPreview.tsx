@@ -37,7 +37,7 @@ export function CatalogPreview(props: {
         </text>
         <Show when={props.catalog.kind === "repo"}>
           <text fg={color.muted} wrapMode="word" flexShrink={0}>
-            Kits are discovered from this project's .loadout/kits/.
+            Kits from ./.loadout/kits
           </text>
         </Show>
       </Show>
