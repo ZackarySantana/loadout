@@ -340,8 +340,12 @@ describe("backend integration flows", () => {
       scope: "both",
       answers: { audience: "Organization" },
     })
-    expect(service.installed()).toEqual([globalItem])
-    expect(liveOtherSession.installed()).toEqual([globalItem])
+    expect(service.installed().map(({ installedAt, ...item }) => item)).toEqual(
+      [globalItem],
+    )
+    expect(
+      liveOtherSession.installed().map(({ installedAt, ...item }) => item),
+    ).toEqual([globalItem])
     expect(await text(join(home, "context/guide.txt"))).toBe("Organization\n")
     expect(await text(join(home, ".codex/AGENTS.md"))).toContain(
       "Shared rules for Organization.",
@@ -356,7 +360,9 @@ describe("backend integration flows", () => {
       scope: "repository",
       answers: { project: "Beta" },
     })
-    expect(liveOtherSession.installed()).toEqual([item])
+    expect(
+      liveOtherSession.installed().map(({ installedAt, ...item }) => item),
+    ).toEqual([item])
     expect(await text(join(repository, "context/guide.txt"))).toBeNull()
     expect(await text(join(otherRepository, "context/guide.txt"))).toBe(
       "Beta\n",
@@ -560,7 +566,9 @@ describe("backend integration flows", () => {
     expect(await text(join(repository, "context/tampered.txt"))).toBeNull()
     expect(await text(join(repository, "context/unreviewed.txt"))).toBeNull()
     const reopened = await open()
-    expect(reopened.installed()).toEqual([intendedItem])
+    expect(
+      reopened.installed().map(({ installedAt, ...item }) => item),
+    ).toEqual([intendedItem])
     expect(reopened.configuration(intendedItem.key)).toEqual({
       scope: "repository",
       answers: intendedAnswers,
@@ -684,7 +692,14 @@ describe("backend integration flows", () => {
     const reopened = await open()
     expect(
       (await reopened.catalogs()).catalogs.map((catalog) => catalog.name),
-    ).toEqual(["Repo", "Loadout", "Team"])
+    ).toEqual([
+      "Repo",
+      "Loadout",
+      "Matt Pocock",
+      "Anthropic",
+      "Ponytail",
+      "Team",
+    ])
     await configure(reopened, registered.kits[0]!, "repository", {
       project: "From catalog",
     })
@@ -695,7 +710,7 @@ describe("backend integration flows", () => {
     const after = await open()
     expect(
       (await after.catalogs()).catalogs.map((catalog) => catalog.name),
-    ).toEqual(["Repo", "Loadout"])
+    ).toEqual(["Repo", "Loadout", "Matt Pocock", "Anthropic", "Ponytail"])
     expect(after.configuration("team/guide").scope).toBe("repository")
     const before = await snapshot(root)
     await expect(after.unregister(builtin.source)).rejects.toThrow(/permanent/)

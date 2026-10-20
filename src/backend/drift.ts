@@ -3,6 +3,7 @@ import { join } from "node:path"
 import type { CatalogOrigin, LoadedKit, Scope } from "../domain/kit"
 import {
   builtin,
+  defaultRemoteSources,
   loadRepositoryListing,
   message,
   type CatalogListing,
@@ -11,6 +12,7 @@ import { snapshotNode, reconcile, type NodeSnapshot } from "./files"
 import { assertLink } from "./outputs"
 import type { State } from "./state"
 import { canonical } from "../domain/content"
+import { contentIdentity } from "../domain/content-identity"
 export { canonical } from "../domain/content"
 
 export type KitDriftStatus =
@@ -28,6 +30,8 @@ export interface KitDrift {
   status: KitDriftStatus
   reason: string
   latest?: LoadedKit
+  currentIdentity?: string
+  latestIdentity?: string
 }
 export interface FileDrift {
   path: string
@@ -74,6 +78,7 @@ export async function sourceKit(
   if (origin) {
     const subscribed =
       origin.source === builtin ||
+      defaultRemoteSources.includes(origin.source) ||
       (origin.scope === "repository"
         ? listing.catalogs.some(
             (catalog) =>
@@ -122,23 +127,19 @@ export async function sourceKit(
           reason: "Kit is no longer listed by its catalog",
         }
   }
-  const current = origin
-    ? {
-        ...latest,
-        origin: origin.scope === "repository" ? latest.origin : origin,
-      }
-    : latest
-  return canonical(item.kit) === canonical(latest.kit)
+  return canonical(item.kit) === canonical(latest.kit) &&
+    (!item.origin?.contentHash ||
+      item.origin.contentHash === latest.origin?.contentHash)
     ? {
         status: "current",
         reason: "Saved definition matches its live source",
-        latest: current,
+        latest,
       }
     : {
         status: "changed",
         reason:
           "Live definition differs from the saved snapshot; update explicitly",
-        latest: current,
+        latest,
       }
 }
 
@@ -155,11 +156,16 @@ export async function inspectDrift(
   for (const item of Object.values(effective)) {
     const repo = !!state.repositories[repository]?.[item.key]
     const global = !!state.global[item.key]
+    const source = await sourceKit(item, listing, state.catalogs, cache)
     kits.push({
       key: item.key,
       scope: repo && global ? "both" : global ? "global" : "repository",
       origin: item.origin,
-      ...(await sourceKit(item, listing, state.catalogs, cache)),
+      ...source,
+      currentIdentity: contentIdentity(item),
+      ...(source.latest
+        ? { latestIdentity: contentIdentity(source.latest) }
+        : {}),
     })
   }
   const files: FileDrift[] = []

@@ -1,0 +1,7 @@
+{
+  "type": "remote-skills",
+  "id": "anthropic",
+  "name": "Anthropic",
+  "repo": "anthropics/skills",
+  "directory": "skills"
+}

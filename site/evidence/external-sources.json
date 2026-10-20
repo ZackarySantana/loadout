@@ -1,13 +1,13 @@
 {
   "retrievalDate": "2026-10-19",
   "methodology": {
-    "command": "bun catalog/external/measure.ts",
-    "operation": "Offline regeneration from vendored UTF-8 text only. Does not download, install, or execute upstream code. Regenerates the three external kit YAML files, SOURCE.md sidecars, and this measurement data.",
+    "command": "bun scripts/measure-context.ts",
+    "operation": "Offline regeneration from historical UTF-8 evidence only. Reads the preserved snapshots without changing source bytes, licenses, or SOURCE.md notices. Writes this measurement inventory and the site presentation extract; never fetches remote content, installs kits, or generates runtime kit YAML. Historical commit pins reproduce this comparison only; live catalog update identity uses content hashes, not commits or dates.",
     "units": "UTF-8 bytes use Buffer.byteLength; characters are Unicode code points ([...text].length), not UTF-16 units or grapheme clusters; words are maximal non-whitespace runs (/\\S+/gu); lines count LF-separated logical lines without a phantom empty line after a final LF. Empty text has zero lines.",
     "separation": "Frontmatter includes both delimiter lines and their LF. Body is every character after the closing frontmatter delimiter LF, including the following blank line. Description is the parsed YAML scalar (folded for Ponytail), with no added newline. Discovery is exactly name + LF + parsed description + LF; not an observed host prompt format.",
     "tokenization": "No tokenizer used. These are byte/character/word/line measurements, not token counts or measured runtime context savings.",
     "illustrativeComparison": "An always-inline baseline can concatenate the exact same full SKILL.md files. An illustrative discovery-only state concatenates only discoveryNameAndDescription; activation then adds the selected full file (or body, if explicitly comparing body-only loading). Sum the appropriate fields. This is a conditional accounting illustration, not a benchmark: actual hosts may load more metadata, wrappers, license/support text, retain prior activations, or make skills always active.",
-    "licenseAndSupport": "Full-file skill measurements exclude license, source notices, and the optional Codex UI/policy metadata file. Their separate file records account for installed bytes. Do not compare installed disk totals to prompt text as if they were the same thing.",
+    "licenseAndSupport": "Full-file skill measurements exclude license, source notices, and the optional Codex UI/policy metadata file. Separate file records preserve their historical packaging bytes; installedPath records the former package-relative path, not a current installation. Do not compare disk totals to prompt text as if they were the same thing.",
     "agentsComparison": "The Ponytail AGENTS.md is a genuine upstream always-on rules alternative, not byte-identical to SKILL.md. Its measurement is an independent real-world reference; differences are not savings from equivalent content."
   },
   "sources": [
@@ -67,7 +67,7 @@
       },
       "files": [
         {
-          "path": "catalog/external/mattpocock/to-questionnaire/LICENSE.txt",
+          "path": "site/evidence/mattpocock/to-questionnaire/LICENSE.txt",
           "installedPath": "LICENSE.txt",
           "upstreamPath": "LICENSE",
           "sourceUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/LICENSE",
@@ -78,7 +78,7 @@
           "lines": 21
         },
         {
-          "path": "catalog/external/mattpocock/to-questionnaire/SKILL.md",
+          "path": "site/evidence/mattpocock/to-questionnaire/SKILL.md",
           "installedPath": "SKILL.md",
           "upstreamPath": "skills/productivity/to-questionnaire/SKILL.md",
           "sourceUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/skills/productivity/to-questionnaire/SKILL.md",
@@ -89,7 +89,7 @@
           "lines": 54
         },
         {
-          "path": "catalog/external/mattpocock/to-questionnaire/SOURCE.md",
+          "path": "site/evidence/mattpocock/to-questionnaire/SOURCE.md",
           "installedPath": "SOURCE.md",
           "upstreamPath": null,
           "sourceUrl": null,
@@ -100,7 +100,7 @@
           "lines": 14
         },
         {
-          "path": "catalog/external/mattpocock/to-questionnaire/agents/openai.yaml",
+          "path": "site/evidence/mattpocock/to-questionnaire/agents/openai.yaml",
           "installedPath": "agents/openai.yaml",
           "upstreamPath": "skills/productivity/to-questionnaire/agents/openai.yaml",
           "sourceUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/skills/productivity/to-questionnaire/agents/openai.yaml",
@@ -169,7 +169,7 @@
       },
       "files": [
         {
-          "path": "catalog/external/anthropic/frontend-design/LICENSE.txt",
+          "path": "site/evidence/anthropic/frontend-design/LICENSE.txt",
           "installedPath": "LICENSE.txt",
           "upstreamPath": "skills/frontend-design/LICENSE.txt",
           "sourceUrl": "https://github.com/anthropics/skills/blob/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/frontend-design/LICENSE.txt",
@@ -180,7 +180,7 @@
           "lines": 177
         },
         {
-          "path": "catalog/external/anthropic/frontend-design/SKILL.md",
+          "path": "site/evidence/anthropic/frontend-design/SKILL.md",
           "installedPath": "SKILL.md",
           "upstreamPath": "skills/frontend-design/SKILL.md",
           "sourceUrl": "https://github.com/anthropics/skills/blob/dbd4588f9e1033efb41dad4bef2f7947c8993d44/skills/frontend-design/SKILL.md",
@@ -191,7 +191,7 @@
           "lines": 71
         },
         {
-          "path": "catalog/external/anthropic/frontend-design/SOURCE.md",
+          "path": "site/evidence/anthropic/frontend-design/SOURCE.md",
           "installedPath": "SOURCE.md",
           "upstreamPath": null,
           "sourceUrl": null,
@@ -259,7 +259,7 @@
       },
       "files": [
         {
-          "path": "catalog/external/ponytail/ponytail/LICENSE.txt",
+          "path": "site/evidence/ponytail/ponytail/LICENSE.txt",
           "installedPath": "LICENSE.txt",
           "upstreamPath": "LICENSE",
           "sourceUrl": "https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/LICENSE",
@@ -270,7 +270,7 @@
           "lines": 21
         },
         {
-          "path": "catalog/external/ponytail/ponytail/SKILL.md",
+          "path": "site/evidence/ponytail/ponytail/SKILL.md",
           "installedPath": "SKILL.md",
           "upstreamPath": "skills/ponytail/SKILL.md",
           "sourceUrl": "https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/skills/ponytail/SKILL.md",
@@ -281,7 +281,7 @@
           "lines": 52
         },
         {
-          "path": "catalog/external/ponytail/ponytail/SOURCE.md",
+          "path": "site/evidence/ponytail/ponytail/SOURCE.md",
           "installedPath": "SOURCE.md",
           "upstreamPath": null,
           "sourceUrl": null,
@@ -295,12 +295,12 @@
     }
   ],
   "instructionsComparison": {
-    "path": "catalog/external/ponytail/comparison/AGENTS.md",
+    "path": "site/evidence/ponytail/comparison/AGENTS.md",
     "sourceUrl": "https://github.com/DietrichGebert/ponytail/blob/09c434ab73ca43761c5d8b0c5d341926c2fba710/AGENTS.md",
     "commit": "09c434ab73ca43761c5d8b0c5d341926c2fba710",
     "retrievalDate": "2026-10-19",
     "license": "MIT",
-    "licensePath": "catalog/external/ponytail/comparison/LICENSE.txt",
+    "licensePath": "site/evidence/ponytail/comparison/LICENSE.txt",
     "installedByKits": false,
     "sha256": "b98b15e1d683ee205e124b52b8d330128593f4a87b545cf8185e2712cd1bb25f",
     "measurements": {

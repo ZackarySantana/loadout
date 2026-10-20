@@ -29,6 +29,7 @@ async function main() {
       help: { type: "boolean", short: "h" },
       json: { type: "boolean" },
       request: { type: "string" },
+      catalog: { type: "string" },
       "review-token": { type: "string" },
       approve: { type: "boolean" },
       walkthrough: { type: "boolean" },
@@ -39,15 +40,16 @@ async function main() {
 
 Usage: loadout [--repo <project>] [--walkthrough]
        loadout catalog list
-       loadout catalog add <catalog.json path or HTTPS URL>
+       loadout catalog add <catalog/descriptor path, HTTPS URL or GitHub directory URL>
        loadout catalog remove <registered source>
         loadout status
         loadout guide
-        loadout inspect --json [--request FILE]
+        loadout inspect --json [--request FILE] [--catalog SOURCE_OR_ID]
         loadout plan --request FILE --json
         loadout apply --request FILE --review-token SHA256 --approve --json
 
 Agent workflow: guide and inspect first; ask human preferences and visible kit questions.
+Remote catalog headers are lazy; inspect --catalog SOURCE_OR_ID discovers their full inventory.
 Plan prints exact before/after files, links and warnings without applying.
 Apply rebuilds and requires the unchanged review token plus explicit human approval.
 --approve attests to approval of that exact review; agents must never self-confirm.
@@ -65,6 +67,33 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
     return
   }
   const command = positionals[0]
+  if (
+    values.catalog !== undefined &&
+    (command !== "inspect" || !values.catalog.trim())
+  )
+    throw new Error("--catalog SOURCE_OR_ID is only supported by inspect")
+  if (
+    positionals.length &&
+    !["guide", "inspect", "plan", "apply", "status", "catalog"].includes(
+      command!,
+    )
+  )
+    throw new Error("Unknown command. Use --help for usage.")
+  if (command === "status" && positionals.length !== 1)
+    throw new Error("status takes no positional arguments")
+  if (command === "guide" && positionals.length !== 1)
+    throw new Error("guide takes no positional arguments")
+  if (
+    command === "catalog" &&
+    !(
+      (positionals[1] === "list" && positionals.length === 2) ||
+      (["add", "remove"].includes(positionals[1] ?? "") &&
+        positionals.length === 3)
+    )
+  )
+    throw new Error(
+      "Use: loadout catalog list | add <source> | remove <source>",
+    )
   if (values.walkthrough && positionals.length)
     throw new Error(
       "--walkthrough is only for interactive startup without a command",
@@ -124,7 +153,7 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
   if (machine) {
     const result =
       command === "inspect"
-        ? await inspectWorkflow(service, request)
+        ? await inspectWorkflow(service, request, values.catalog)
         : command === "plan"
           ? (await planWorkflow(service, request!)).review
           : await applyWorkflow(service, request!, values["review-token"]!)
@@ -137,12 +166,27 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
     const files = drift.files.filter((file) => file.status !== "current")
     if (!kits.length && !files.length && !errors.length)
       console.log("No drift detected.")
-    for (const kit of kits)
+    for (const kit of kits) {
       console.log(
         plain(
           `Kit ${displayKitKey(kit.key)} [${kit.scope}] · ${kit.status}\n  ${kit.reason}`,
         ),
       )
+      if (kit.origin?.source)
+        console.log(plain(`  Source: ${kit.origin.source}`))
+      if (kit.currentIdentity || kit.latestIdentity)
+        console.log(
+          plain(
+            `  Content: ${kit.currentIdentity ?? "unknown"} → ${kit.latestIdentity ?? "unavailable"}`,
+          ),
+        )
+      if (kit.latest?.origin?.remote?.upstreamCommitDate)
+        console.log(
+          plain(
+            `  Upstream date: ${kit.latest.origin.remote.upstreamCommitDate} (informational)`,
+          ),
+        )
+    }
     for (const file of files)
       console.log(plain(`File ${file.path} · ${file.status}\n  ${file.reason}`))
     for (const error of errors)
@@ -162,11 +206,11 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
       positionals.length === 3
     ) {
       const catalog = await service.register(positionals[2])
-      console.log(
-        plain(
-          `Registered ${catalog.name} (${catalog.kits.length} available kits)`,
-        ),
-      )
+      const inventory =
+        catalog.hydration === "deferred" || catalog.hydration === "partial"
+          ? "inventory loads on browse"
+          : `${catalog.kits.length} available kits`
+      console.log(plain(`Registered ${catalog.name} (${inventory})`))
       for (const issue of catalog.issues ?? [])
         console.error(plain(`Catalog warning: ${issue}`))
     } else if (
@@ -181,7 +225,7 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
       for (const catalog of catalogs)
         console.log(
           plain(
-            `${catalog.name} (${catalog.kind === "repo" ? "automatic" : catalog.permanent ? "built-in" : "registered"})\n  ${catalog.source}`,
+            `${catalog.name} (${catalog.kind === "remote" ? "remote" : catalog.kind === "repo" ? "automatic" : catalog.permanent ? "built-in" : "registered"})\n  ${catalog.source}`,
           ),
         )
       for (const error of errors) console.error(plain(error))

@@ -1,6 +1,5 @@
 import {
   activeAnswers,
-  defaults,
   matches,
   validateAnswers,
   type Answers,
@@ -12,6 +11,7 @@ import {
 import type { LoadoutService, Plan, Selection } from "../backend/service"
 import type { DriftReport, FileDrift, KitDrift } from "../backend/service"
 import { canonical } from "../domain/content"
+import { sameSourceContent } from "../domain/content-identity"
 import { answersForUpdate } from "./answers"
 import {
   destinationGroups,
@@ -43,6 +43,7 @@ export interface Row {
     | "scope"
     | "choice"
     | "input"
+    | "search"
     | "actions"
     | "register"
     | "source"
@@ -50,6 +51,7 @@ export interface Row {
     | "health"
     | "drift-file"
     | "update"
+    | "update-offer"
     | "settings-group"
     | "location"
     | "location-input"
@@ -77,6 +79,9 @@ interface Form {
   scope: Scope
   answers: Answers
   fromCatalog?: boolean
+  reviewUpdate?: boolean
+  originalScope?: Scope
+  scopeChanged?: boolean
 }
 export type Backend = Pick<
   LoadoutService,
@@ -92,16 +97,20 @@ export type Backend = Pick<
   | "status"
   | "settings"
   | "defaultSettings"
+  | "browseCatalog"
 >
 
 export class ScreenModel {
   page = 0
   cursor = 0
   catalog?: Catalog
+  private browsedCatalog?: Catalog
+  private catalogFilters = new Map<string, string>()
   catalogs: Catalog[] = []
   errors: string[] = []
   drift: DriftReport = { kits: [], files: [] }
   drafts = new Map<string, Selection>()
+  private scopeChangedDrafts = new Set<string>()
   savedSettings?: OutputSettings
   defaultsSettings?: OutputSettings
   settingsDraft?: OutputSettings
@@ -121,6 +130,7 @@ export class ScreenModel {
     "Space opens a catalog. Nothing is written until you review and apply."
   editing?:
     | { kind: "catalog" }
+    | { kind: "search" }
     | { kind: "question"; id: string }
     | { kind: "location"; id: string }
   registering = false
@@ -145,8 +155,8 @@ export class ScreenModel {
       : "Choose a catalog."
     this.changed()
   }
-  private async loadStatus(): Promise<void> {
-    const { catalogs, errors, drift } = await this.backend.status()
+  private async loadStatus(fresh = false): Promise<void> {
+    const { catalogs, errors, drift } = await this.backend.status({ fresh })
     this.catalogs = catalogs
     this.errors = errors
     this.drift = drift
@@ -168,12 +178,91 @@ export class ScreenModel {
       ? rebasedSettings
       : undefined
     this.defaultsSettings = this.backend.defaultSettings()
-    if (this.catalog)
-      this.catalog = catalogs.find(
+    if (this.catalog) {
+      const current = catalogs.find(
         (catalog) =>
           catalog.id === this.catalog!.id &&
           catalog.source === this.catalog!.source,
       )
+      const inventory = this.browsedCatalog
+      if (
+        current &&
+        current.kind === "remote" &&
+        current.hydration !== "loaded" &&
+        inventory?.hydration === "loaded" &&
+        inventory.id === current.id &&
+        inventory.source === current.source
+      ) {
+        // Status intentionally inspects only installed remote kits. Its header is
+        // not a replacement for a complete inventory explicitly browsed by the user.
+        this.catalog = {
+          ...current,
+          kits: inventory.kits,
+          hydration: current.issues?.length ? "partial" : "loaded",
+          unavailableKits: [
+            ...(inventory.unavailableKits ?? []),
+            ...(current.unavailableKits ?? []),
+          ],
+          issues: [
+            ...new Set([
+              ...(current.issues?.length
+                ? [
+                    "Showing previously browsed inventory; source inspection reported issues.",
+                  ]
+                : []),
+              ...(inventory.issues ?? []),
+              ...(current.issues ?? []),
+            ]),
+          ],
+        }
+        this.catalogs = catalogs.map((catalog) =>
+          catalog === current ? this.catalog! : catalog,
+        )
+      } else {
+        this.catalog = current
+        if (!current) this.browsedCatalog = undefined
+        else if (current.hydration === "loaded") this.browsedCatalog = current
+      }
+    }
+  }
+  private showCatalog(catalog: Catalog): void {
+    this.catalog = catalog
+    this.browsedCatalog = catalog
+    this.catalogs = this.catalogs.map((item) =>
+      item.source === catalog.source && item.id === catalog.id ? catalog : item,
+    )
+  }
+  searchQuery(): string {
+    return this.catalog
+      ? (this.catalogFilters.get(
+          canonical([this.catalog.source, this.catalog.id]),
+        ) ?? "")
+      : ""
+  }
+  private matchingKits(): LoadedKit[] {
+    const terms = this.searchQuery()
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean)
+    return (this.catalog?.kits ?? []).filter((item) => {
+      const text =
+        `${item.kit.name} ${item.kit.id} ${item.key} ${item.kit.description}`.toLowerCase()
+      return terms.every((term) => text.includes(term))
+    })
+  }
+  focusSearch(): void {
+    if (this.busy || this.page !== 0 || !this.catalog) return
+    if (this.form || this.settingsForm || this.registering) {
+      this.message = "Accept or cancel the open form before searching kits."
+      this.changed()
+      return
+    }
+    this.cursor = this.rows().findIndex((row) => row.id === "catalog-search")
+    this.editing = { kind: "search" }
+    this.message =
+      "Filter by name, ID, or description · Enter/Esc keeps the filter · ↑↓ kits"
+    this.changed()
   }
   issueCount(): number {
     return (
@@ -192,15 +281,14 @@ export class ScreenModel {
       !!draft &&
       draft.scope !== "none" &&
       !!saved &&
-      (canonical(draft.item.kit) !== canonical(saved.kit) ||
-        canonical(draft.item.origin) !== canonical(saved.origin))
+      !sameSourceContent(draft.item, saved)
     )
   }
   canUpdate(item: LoadedKit): boolean {
     const latest = this.updateSource(item)
     return (
       !!latest &&
-      canonical(item.kit) !== canonical(latest.kit) &&
+      !sameSourceContent(item, latest) &&
       (!item.origin || item.origin.source === latest.origin?.source)
     )
   }
@@ -224,7 +312,59 @@ export class ScreenModel {
           catalog.id === (origin.catalogId ?? item.key.split("/")[0]),
       )
       ?.kits.find((candidate) => candidate.key === item.key)
-    return latest ? { ...latest, origin } : undefined
+    return latest
+  }
+  updateOffers(): KitDrift[] {
+    if (this.page === 2 && this.plan)
+      return this.plan.updates.map((update) => ({
+        key: update.key,
+        scope: update.scope,
+        origin: update.installed.origin,
+        status: "changed",
+        reason: "Source content differs from the installed snapshot.",
+        latest: update.latest,
+      }))
+    return this.drift.kits.filter(
+      (issue) =>
+        issue.status === "changed" &&
+        !!issue.latest &&
+        this.backend.installed().some((item) => item.key === issue.key),
+    )
+  }
+  private updateRows(): Row[] {
+    const rows = this.updateOffers().flatMap((issue): Row[] => {
+      const draft = this.drafts.get(issue.key)
+      const staged = this.updateStaged(issue.key)
+      const row: Row = {
+        id: `update-offer:${issue.key}`,
+        kind: "update-offer",
+        label: `Kit update · ${issue.latest!.kit.name}`,
+        sourceDrift: issue,
+        updateStaged: staged,
+        description:
+          draft?.scope === "none"
+            ? "Removal staged."
+            : staged
+              ? "Update staged. Review the file changes before applying."
+              : "Keep the saved installation, or configure the available update.",
+        choices: [
+          { value: "keep", label: "Keep installed", selected: !staged },
+          { value: "update", label: "Configure update", selected: staged },
+        ],
+        focusedOptionIndex:
+          this.optionFocus.get(`update-offer:${issue.key}`) ?? 0,
+      }
+      return this.form?.reviewUpdate && this.form.item.key === issue.key
+        ? [row, ...this.formRows(this.form)]
+        : [row]
+    })
+    // Keep an open update form reachable even if its source becomes unavailable.
+    if (
+      this.form?.reviewUpdate &&
+      !rows.some((row) => row.item?.key === this.form!.item.key)
+    )
+      rows.push(...this.formRows(this.form))
+    return rows
   }
   async refreshStatus(): Promise<void> {
     if (this.busy) return
@@ -234,11 +374,43 @@ export class ScreenModel {
       return
     }
     const selected = this.selected()?.id
+    const browsing =
+      this.page === 0 && this.catalog?.kind === "remote"
+        ? this.catalog.source
+        : undefined
     await this.run(async () => {
-      await this.loadStatus()
+      await this.loadStatus(true)
       this.plan = undefined
-      if (this.page === 2 && this.stagedCount()) {
-        this.optionFocus.delete("review-actions")
+      this.optionFocus.delete("review-actions")
+      if (browsing && this.catalog?.source === browsing) {
+        try {
+          this.showCatalog(
+            await this.backend.browseCatalog(browsing, { fresh: true }),
+          )
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error)
+          const warning = `Source refresh failed; showing previously browsed inventory. ${reason}`
+          this.catalog = {
+            ...this.catalog,
+            hydration: "partial",
+            issues: [...new Set([...(this.catalog.issues ?? []), warning])],
+          }
+          if (this.browsedCatalog?.hydration === "loaded")
+            this.browsedCatalog = {
+              ...this.browsedCatalog,
+              issues: this.catalog.issues,
+            }
+          this.catalogs = this.catalogs.map((catalog) =>
+            catalog.source === browsing ? this.catalog! : catalog,
+          )
+          this.errors.push(`${browsing}: ${reason}`)
+          throw error
+        }
+      }
+      if (
+        this.page === 2 &&
+        (this.stagedCount() || this.updateOffers().length)
+      ) {
         this.plan = await this.backend.plan(
           [...this.drafts.values()],
           this.settingsDraft,
@@ -399,8 +571,28 @@ export class ScreenModel {
   rows(): Row[] {
     if (this.page === 0) {
       if (this.catalog) {
+        const matches = this.matchingKits()
+        const search: Row = {
+          id: "catalog-search",
+          kind: "search",
+          label: "Search kits · / to focus",
+          value: this.searchQuery(),
+          description:
+            this.catalog.hydration === "deferred" ||
+            this.catalog.hydration === "partial"
+              ? `${matches.length} matching available kits`
+              : `Matches ${matches.length} of ${this.catalog.kits.length} kits`,
+          catalog: this.catalog,
+        }
         const rows: Row[] = [
-          ...this.kitRows(this.catalog.kits, true),
+          ...(!this.form ? [search] : []),
+          ...(this.catalog.issues ?? []).map((issue, index): Row => ({
+            id: `catalog-issue:${this.catalog!.id}:${index}`,
+            kind: "heading",
+            label: `! ${issue}`,
+            catalog: this.catalog,
+          })),
+          ...this.kitRows(matches, true),
           ...(this.catalog.unavailableKits ?? []).map((kit, index): Row => ({
             id: `unavailable:${this.catalog!.id}:${index}`,
             kind: "heading",
@@ -408,12 +600,13 @@ export class ScreenModel {
             catalog: this.catalog,
           })),
         ]
-        if (!rows.length)
+        if (!matches.length && !this.form)
           rows.push({
             id: "empty-catalog",
             kind: "heading",
-            label:
-              "This catalog has no available kits. Saved installations remain in Installed.",
+            label: this.searchQuery().trim()
+              ? "No matching kits. Edit or clear the search to show more."
+              : "This catalog has no available kits. Saved installations remain in Installed.",
             catalog: this.catalog,
           })
         return rows
@@ -422,7 +615,7 @@ export class ScreenModel {
       const rows: Row[] = this.catalogs.map((catalog) => ({
         id: `catalog:${catalog.id}`,
         kind: "catalog",
-        label: `${catalog.permanent ? "◆" : "◇"} ${catalog.name}  ·  ${catalog.kits.length} kits${catalog.kind === "repo" ? "  ·  automatic" : catalog.permanent ? "  ·  built-in" : "  ·  registered"}`,
+        label: `${catalog.permanent ? "◆" : "◇"} ${catalog.name}  ·  ${catalog.hydration === "deferred" || catalog.hydration === "partial" ? "Browse to load" : `${catalog.kits.length} kits`}${catalog.kind === "remote" ? "  ·  remote catalog" : catalog.kind === "repo" ? "  ·  automatic" : catalog.permanent ? "  ·  built-in" : "  ·  registered"}`,
         catalog,
       }))
       if (this.issueCount())
@@ -440,7 +633,7 @@ export class ScreenModel {
         rows.push({
           id: "source",
           kind: "source",
-          label: "External catalog JSON path or HTTPS URL",
+          label: "Catalog path or URL",
           indent: true,
         })
       }
@@ -474,13 +667,19 @@ export class ScreenModel {
       return [...issues, ...this.kitRows([...items.values()])]
     }
     if (this.page === 3) return this.settingsRows()
-    if (!this.plan)
+    const updates = this.updateRows()
+    if (!this.plan || !this.stagedCount())
       return [
-        {
-          id: "empty-review",
-          kind: "heading",
-          label: "Stage kits or settings, then return here.",
-        },
+        ...updates,
+        ...(!updates.length
+          ? ([
+              {
+                id: "empty-review",
+                kind: "heading",
+                label: "Stage kits or settings, then return here.",
+              },
+            ] as Row[])
+          : []),
       ]
     const rows: Row[] = [
       {
@@ -507,6 +706,7 @@ export class ScreenModel {
       },
     ]
     rows.push(
+      ...updates,
       ...this.plan.changes.map((change, changeIndex): Row => ({
         id: `change:${changeIndex}`,
         kind: "change",
@@ -867,9 +1067,11 @@ export class ScreenModel {
     if (this.busy) return
     this.editing = undefined
     const rows = this.rows()
+    const hasKits = rows.some((row) => row.kind === "kit")
     // An open kit becomes its own navigation loop, not part of the outer list.
     const focusable = rows.flatMap((row, index) =>
       row.kind !== "heading" &&
+      (row.kind !== "search" || !hasKits) &&
       (!this.form ||
         (row.item?.key === this.form.item.key && row.kind !== "kit")) &&
       (!this.registering || row.kind === "source") &&
@@ -895,6 +1097,7 @@ export class ScreenModel {
     if (focused?.kind === "input" && focused.question)
       this.editing = { kind: "question", id: focused.question.id }
     else if (focused?.kind === "source") this.editing = { kind: "catalog" }
+    else if (focused?.kind === "search") this.editing = { kind: "search" }
     else if (focused?.kind === "location-input")
       this.editing = { kind: "location", id: focused.locationId! }
     this.changed()
@@ -921,6 +1124,7 @@ export class ScreenModel {
     }
     if (this.page === 2)
       this.message = "Staged changes are kept. Review before applying."
+    this.editing = undefined
     this.page = (this.page + (backward ? pages.length - 1 : 1)) % pages.length
     this.cursor = 0
     if (this.page === 2) await this.review()
@@ -929,23 +1133,28 @@ export class ScreenModel {
         await this.loadStatus()
       })
   }
-  async review(): Promise<void> {
+  async review(focusId?: string): Promise<void> {
     this.optionFocus.delete("review-actions")
-    if (!this.stagedCount()) {
-      this.plan = undefined
-      this.message =
-        "No staged changes. Choose a kit or configure settings to get started."
-      this.changed()
-      return
-    }
     await this.run(async () => {
-      await this.loadStatus()
+      await this.loadStatus(true)
+      this.plan = undefined
+      if (!this.stagedCount() && !this.updateOffers().length) {
+        this.message =
+          "No staged changes. Choose a kit or configure settings to get started."
+        return
+      }
       this.plan = await this.backend.plan(
         [...this.drafts.values()],
         this.settingsDraft,
       )
-      this.message =
-        "Reviewing does not write. Choose Apply changes, then Space writes all listed files and saves settings and intent."
+      if (focusId)
+        this.cursor = Math.max(
+          0,
+          this.rows().findIndex((row) => row.id === focusId),
+        )
+      this.message = this.stagedCount()
+        ? "Reviewing does not write. Choose Apply changes, then Space writes all listed files and saves settings and intent."
+        : "Kit updates are available. Keep installed is the default; configure an update to review its changes."
     })
   }
   back(): void {
@@ -958,8 +1167,11 @@ export class ScreenModel {
       this.acceptForm()
       return
     }
-    if (this.editing) this.editing = undefined
-    else if (this.registering) {
+    if (this.editing) {
+      if (this.editing.kind === "search")
+        this.message = "Search filter kept. ↑↓ kits · / edit search · Esc back"
+      this.editing = undefined
+    } else if (this.registering) {
       this.registering = false
       this.cursor = this.catalogs.length
     } else if (this.page === 0 && this.catalog) {
@@ -976,17 +1188,33 @@ export class ScreenModel {
     if (this.busy || !this.form) return
     try {
       const { item, scope } = this.form
+      const reviewUpdate = this.form.reviewUpdate
       const answers =
         scope === "none" ? {} : validateAnswers(item.kit, this.form.answers)
       this.editing = undefined
-      this.drafts.set(item.key, { item, scope, answers })
+      this.drafts.set(item.key, {
+        item,
+        scope,
+        answers,
+        definition: this.form.fromCatalog ? "catalog" : "saved",
+        ...(!this.form.scopeChanged && scope === this.form.originalScope
+          ? { update: true }
+          : {}),
+      })
+      if (this.form.scopeChanged) this.scopeChangedDrafts.add(item.key)
+      else this.scopeChangedDrafts.delete(item.key)
       this.form = undefined
       this.plan = undefined
       this.cursor = Math.max(
         0,
-        this.rows().findIndex((row) => row.id === `kit:${item.key}`),
+        this.rows().findIndex(
+          (row) =>
+            row.id ===
+            (reviewUpdate ? `update-offer:${item.key}` : `kit:${item.key}`),
+        ),
       )
       this.message = `Staged ${item.kit.name}. Tab to Review when ready. No files written yet.`
+      if (reviewUpdate) void this.review(`update-offer:${item.key}`)
     } catch (error) {
       this.message = error instanceof Error ? error.message : String(error)
     }
@@ -995,18 +1223,28 @@ export class ScreenModel {
   cancelForm(): void {
     if (this.busy || !this.form) return
     const key = this.form.item.key
+    const reviewUpdate = this.form.reviewUpdate
     this.form = undefined
     this.editing = undefined
     this.cursor = Math.max(
       0,
-      this.rows().findIndex((row) => row.id === `kit:${key}`),
+      this.rows().findIndex(
+        (row) =>
+          row.id === (reviewUpdate ? `update-offer:${key}` : `kit:${key}`),
+      ),
     )
     this.message =
       "Kit edit discarded. Previously staged selections are unchanged."
+    if (reviewUpdate) void this.review(`update-offer:${key}`)
     this.changed()
   }
   edit(value: string): void {
-    if (this.editing?.kind === "catalog") this.source = value
+    if (this.editing?.kind === "search" && this.catalog && this.page === 0)
+      this.catalogFilters.set(
+        canonical([this.catalog.source, this.catalog.id]),
+        value,
+      )
+    else if (this.editing?.kind === "catalog") this.source = value
     else if (this.editing?.kind === "question" && this.form)
       this.form.answers[this.editing.id] = value
     else if (this.editing?.kind === "location" && this.settingsForm) {
@@ -1038,6 +1276,8 @@ export class ScreenModel {
           "External catalog registered. No kit files were installed."
       })
     } else {
+      if (this.editing?.kind === "search")
+        this.message = "Search filter kept. ↑↓ kits · / edit search · Esc back"
       this.editing = undefined
       this.changed()
     }
@@ -1052,9 +1292,63 @@ export class ScreenModel {
       return
     }
     if (row.kind === "catalog") {
-      this.catalog = row.catalog
-      this.cursor = 0
-      this.message = "Space configures a kit. Esc returns to catalogs."
+      this.message = "Loading catalog…"
+      await this.run(async () => {
+        const catalog = await this.backend.browseCatalog(row.catalog!.source)
+        this.showCatalog(catalog)
+        this.cursor = Math.max(
+          0,
+          this.rows().findIndex((candidate) => candidate.kind === "kit"),
+        )
+        if (!this.matchingKits().length) this.editing = { kind: "search" }
+        this.message = "Space configures a kit. Esc returns to catalogs."
+      })
+    } else if (row.kind === "search") {
+      this.focusSearch()
+    } else if (row.kind === "update-offer" && row.sourceDrift) {
+      this.optionFocus.delete("review-actions")
+      if (row.choices![row.focusedOptionIndex ?? 0]!.value === "keep") {
+        if (
+          this.drafts.get(row.sourceDrift.key)?.scope === "none" ||
+          this.updateStaged(row.sourceDrift.key)
+        ) {
+          this.drafts.delete(row.sourceDrift.key)
+          this.scopeChangedDrafts.delete(row.sourceDrift.key)
+          await this.review(row.id)
+        }
+        this.message =
+          "Saved content kept. Other staged configuration changes are unchanged."
+      } else
+        await this.run(async () => {
+          const key = row.sourceDrift!.key
+          await this.loadStatus()
+          const issue = this.sourceDrift(key)
+          if (issue?.status !== "changed" || !issue.latest)
+            throw new Error(
+              "The update is no longer available. The saved installation and staged changes are kept.",
+            )
+          const config = this.configuration(issue.latest)
+          const reconciled = answersForUpdate(
+            issue.latest.kit,
+            config.answers ?? {},
+          )
+          this.form = {
+            item: issue.latest,
+            scope: config.scope,
+            answers: reconciled.answers,
+            fromCatalog: true,
+            reviewUpdate: true,
+            originalScope: config.scope,
+            scopeChanged:
+              this.drafts.has(key) && this.scopeChangedDrafts.has(key),
+          }
+          this.optionFocus.clear()
+          this.cursor = this.rows().findIndex(
+            (candidate) => candidate.id === "scope",
+          )
+          this.message =
+            "Review the update and answers. Esc or Accept stages; Cancel keeps previous drafts."
+        })
     } else if (row.kind === "kit" && row.item) {
       if (this.form) {
         this.message = "Accept or cancel the current kit first."
@@ -1062,11 +1356,24 @@ export class ScreenModel {
         return
       }
       const config = this.configuration(row.item)
+      const draft = this.drafts.get(row.item.key)
+      const installed = this.backend
+        .installed()
+        .find((item) => item.key === row.item!.key)
+      const scopeChanged = !!draft && this.scopeChangedDrafts.has(row.item.key)
+      const updating =
+        !scopeChanged &&
+        (draft?.update ||
+          (row.fromCatalog &&
+            installed &&
+            !sameSourceContent(row.item, installed)))
       this.form = {
         item: row.item,
         scope: config.scope === "none" ? "repository" : config.scope,
         answers: answersForUpdate(row.item.kit, config.answers ?? {}).answers,
-        fromCatalog: row.fromCatalog,
+        fromCatalog: row.fromCatalog || draft?.definition === "catalog",
+        scopeChanged,
+        ...(updating ? { originalScope: config.scope } : {}),
       }
       this.optionFocus.clear()
       this.cursor = this.rows().findIndex((row) => row.id === "scope")
@@ -1074,8 +1381,12 @@ export class ScreenModel {
         "↑↓/jk questions · ←→/hl options · Space selects/toggles · Esc accepts · Cancel discards"
     } else if (row.kind === "scope" && this.form) {
       this.optionFocus.set(row.id, row.focusedOptionIndex ?? 0)
-      this.form.scope = row.choices![row.focusedOptionIndex ?? 0]!
-        .value as Scope
+      const scope = row.choices![row.focusedOptionIndex ?? 0]!.value as Scope
+      if (scope !== this.form.scope) {
+        this.form.scopeChanged = true
+        this.form.originalScope = undefined
+      }
+      this.form.scope = scope
     } else if (row.kind === "choice" && row.question && this.form) {
       this.optionFocus.set(row.id, row.focusedOptionIndex ?? 0)
       const id = row.question.id
@@ -1107,6 +1418,8 @@ export class ScreenModel {
         this.form!.item = latest
         this.form!.answers = reconciled.answers
         this.form!.fromCatalog = true
+        if (!this.form!.scopeChanged)
+          this.form!.originalScope = this.form!.scope
         this.optionFocus.clear()
         this.cursor = this.rows().findIndex((item) => item.id === "scope")
         this.message =
@@ -1154,6 +1467,7 @@ export class ScreenModel {
         await this.run(async () => {
           await this.backend.apply(plan)
           this.drafts.clear()
+          this.scopeChangedDrafts.clear()
           this.settingsDraft = undefined
           this.stagedSettingsGroups.clear()
           this.plan = undefined

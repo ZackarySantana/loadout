@@ -45,9 +45,10 @@
           </p>
           <p>
             The strict schemas in
-            <code>src/domain/kit.ts</code> in the checkout are authoritative;
-            unknown fields are rejected. These documents describe the current
-            contract, not a separate format to migrate to.
+            <code>src/domain/kit.ts</code> and
+            <code>src/domain/catalog-source.ts</code> in the checkout are
+            authoritative; unknown fields are rejected. These documents describe
+            the current contract, not a separate format to migrate to.
           </p>
         </section>
         <section id="catalogs">
@@ -56,7 +57,26 @@
           <p>
             A catalog groups declarative YAML kits. Loadout includes a permanent
             built-in catalog, an automatic Repo catalog for the selected
-            project, and external catalogs you register.
+            project, separate lazy remote defaults for Matt Pocock, Anthropic,
+            and Ponytail, and external catalogs you register. Default remote
+            catalogs adapt upstream skill directories, not vendored Loadout
+            kits. They do not require an upstream catalog JSON file.
+          </p>
+          <p>
+            Inside any selected catalog, including native and remote sources,
+            the <strong>Search kits</strong> field stays visible while browsing
+            and filters the displayed kits by name, ID, and description. Press
+            <kbd>/</kbd>
+            outside an open form or text editor to focus it. Matching is
+            case-insensitive, with all space-separated terms required; resource
+            contents and regular expressions are not searched. Enter/Esc ends
+            typing but retains the filter. From search, Down selects the first
+            matching kit and Up the last; kit navigation wraps among matches
+            without focusing search. With no matches, search stays available.
+            The field hides during kit configuration and returns after
+            Accept/Cancel with the query retained. Refresh and tab switches
+            preserve search text. Each catalog retains its own query for the
+            session; queries are not saved to disk.
           </p>
           <details open>
             <summary>Repo: automatic local kits</summary>
@@ -104,6 +124,92 @@
               application state; they belong in neither kit YAML nor catalog
               JSON. Each kit is self-contained: output text is inline YAML, not
               another set of source references.
+            </p>
+          </details>
+          <details open>
+            <summary>
+              Remote skill directories: descriptor or GitHub URL
+            </summary>
+            <pre><code>{
+  "type": "remote-skills",
+  "id": "my-matt-skills",
+  "name": "Matt Pocock skills",
+  "repo": "mattpocock/skills",
+  "directory": "skills",
+  "license": "LICENSE"
+}</code></pre>
+            <p>
+              This strict, unversioned descriptor adapts the upstream repository
+              directly. Required fields are <code>type</code>, <code>id</code>,
+              <code>name</code>, and
+              <code>repo</code> (<code>owner/repo</code>). Optional
+              <code>ref</code> selects a branch, tag, or commit for retrieval;
+              optional <code>directory</code> limits recursive
+              <code>SKILL.md</code> discovery. Omit <code>kits</code> to
+              discover the directory rather than maintaining a copied catalog
+              index. Discovery IDs derive from directory paths; a rename is not
+              an automatic migration of an installed kit.
+            </p>
+            <p>
+              An adapted skill’s installed name comes from its upstream
+              directory basename, not a mutable frontmatter value.
+              <code>SKILL.md</code> bytes are preserved, and its frontmatter
+              <code>name</code> must match that directory name. Mismatched
+              names, case-colliding files or outputs, and conflicting directory
+              basenames mapping to the same destination make affected kits
+              unavailable, rather than silently renaming or truncating content.
+              Narrow the source or explicit grouping to avoid destination
+              conflicts. Frontmatter metadata alone cannot move installed files.
+            </p>
+            <p>
+              Optional <code>kits</code> explicitly groups one or more skills
+              into each named kit. Each entry is
+              <code>{id,name,skills:[{path,license?}]}</code>. Skill paths and
+              license paths are repository-relative; <code>directory</code> is a
+              discovery filter, not a new path root. A skill path of
+              <code>"."</code> selects a repository-root skill. The top-level
+              <code>license</code> supplies a fallback sidecar; per-skill
+              <code>license</code> can select a specific notice. Review actual
+              licenses and supporting resources: a descriptor does not grant
+              redistribution rights.
+            </p>
+            <pre><code>mise exec -- bun src/cli.tsx catalog add /path/to/remote-skills.json
+mise exec -- bun src/cli.tsx catalog add https://github.com/owner/repo
+mise exec -- bun src/cli.tsx catalog add https://github.com/owner/repo/tree/main/skills</code></pre>
+            <p>
+              The GitHub URL form uses the first segment after
+              <code>tree/</code> as the ref; for refs containing slashes use an
+              explicit descriptor. Descriptor files can be local or HTTPS.
+              Registration does not install skills; separately approve adding a
+              source before browsing it with an assisting agent.
+            </p>
+            <p>
+              The default source IDs are <code>matt-pocock</code>,
+              <code>anthropic</code>, and <code>ponytail</code>. Their headers
+              load lazily: launch/status never fetch unused defaults. Browse a
+              catalog for bounded inventory discovery; installed checks inspect
+              only selected skill sets. Deferred or partial inventory has no
+              known full count; do not interpret an available subset as the
+              entire catalog.
+            </p>
+            <p>
+              Remote fetching is bounded HTTPS data retrieval with bounded
+              concurrency, without redirects or embedded credentials. Loadout
+              does not clone repositories, extract archives, or run hooks.
+              Selected directories include regular UTF-8 supporting files,
+              including scripts copied as data, never executed by Loadout.
+              Binary files, symlinks, invalid UTF-8, exceeded bounds, and
+              truncated tree responses fail clearly rather than producing a
+              partial skill copy. Not every upstream skill is therefore
+              installable. Files fetched within an operation use a consistent
+              commit; that retrieval pin is not update identity.
+            </p>
+            <p>
+              Adapted upstream <code>SKILL.md</code> and supporting resources
+              are copied literally, including <code>{{...}}</code> templates.
+              These placeholders are never interpreted as Loadout answers.
+              Scripts remain UTF-8 data; preserving their bytes does not execute
+              them or authorize a harness to run them.
             </p>
           </details>
           <details>
@@ -268,6 +374,7 @@ outputs:
               no active output needs an unanswered value.
             </p>
             <p>
+              In natively authored Loadout kits,
               <code>{{answer-id}}</code> interpolates content only: instruction
               content, skill file values, and file content. Strings remain
               strings, booleans become <code>true</code>/<code>false</code>, and
@@ -275,6 +382,12 @@ outputs:
               references fail. Paths, skill names, labels, choices, and metadata
               are not interpolated. Never place placeholders in paths or skill
               file keys.
+            </p>
+            <p>
+              This interpolation rule does not apply to adapted upstream remote
+              skills: their <code>SKILL.md</code> and supporting resources are
+              copied literally, including <code>{{...}}</code> templates,
+              without interpreting them as Loadout answer references.
             </p>
           </details>
           <details open>
@@ -320,9 +433,10 @@ outputs:
               later ones. Unrelated files in those directories remain untouched.
             </p>
             <p>
-              Keep bundled skill payloads textual and declarative, without
-              executables. The preview shows frontmatter as metadata without
-              treating delimiters as Markdown rules; installed
+              For natively authored Loadout kits, keep bundled skill payloads
+              textual and declarative, without executables. The preview shows
+              frontmatter as metadata without treating delimiters as Markdown
+              rules; installed
               <code>SKILL.md</code> bytes retain their authored frontmatter.
               Loadout installation never executes skill content, but a harness
               may interpret instructions and native extensions later—review
@@ -572,7 +686,14 @@ outputs:
             <code>inspect --json --repo /path/to/project</code>. Guide does not
             read installation state. Inspect returns the protocol, catalog
             inventory, saved snapshots, question metadata, and settings for a
-            human-guided choice; do not drive the TUI.
+            human-guided choice; do not drive the TUI. Initial remote entries
+            can be lazy headers, not full inventories. Ask which catalog to
+            explore, then use
+            <code
+              >inspect --json --catalog SOURCE_OR_ID --repo
+              /path/to/project</code
+            >. Only registered/default sources can be browsed. A deferred or
+            partial catalog has an unknown total, not zero kits.
           </p>
           <details open>
             <summary>Request JSON</summary>
@@ -602,6 +723,15 @@ outputs:
               snapshot, including offline. Scope is <code>repository</code>,
               <code>global</code>, <code>both</code>, or <code>none</code>.
               Answers are strings, booleans, or arrays of strings.
+            </p>
+            <p>
+              Requests automatically hydrate registered catalogs matching keys
+              that explicitly select <code>definition: catalog</code>. Choosing
+              <code>saved</code> keeps the installed snapshot, including
+              offline, without requiring full upstream inventory. Review
+              <code>plan.updates</code> and ask which updates to keep or accept;
+              do not turn an available update into consent. Show content hashes
+              and informational upstream dates alongside the actual file diff.
             </p>
             <p>
               Supply every visible answer explicitly: defaults are suggestions,
@@ -635,6 +765,14 @@ mise exec -- bun src/cli.tsx apply --request request.json --review-token TOKEN -
               definitions, output-node snapshots, and ignore context. Apply
               rebuilds and compares before using the live service plan. A
               changed review requires fresh human approval.
+            </p>
+            <p>
+              Commit, upstream date, and retrieval date are informational
+              provenance, not content identity. Timestamp-only or commit-only
+              changes do not invalidate approval when content is unchanged;
+              changed bytes, paths, state, or captured node guards do. Do not
+              treat a SHA-256 review token as the same thing as a kit’s content
+              hash.
             </p>
             <p>
               <strong>Never self-confirm.</strong>
@@ -780,13 +918,41 @@ mise exec -- bun src/cli.tsx apply --request request.json --review-token TOKEN -
               Source changes and managed-output changes are separate
             </summary>
             <p>
-              Source drift compares a current definition with its installed
-              snapshot. Choose <strong>Use catalog update</strong> in Installed,
-              review reused compatible answers, reset incompatible choices to
-              defaults, answer new required questions, accept, then Review and
-              Apply. The source is checked again before adopting a new
-              definition. Until then, the saved installation stays in effect and
-              is usable offline for scope changes and removal.
+              Source drift compares current content with the installed snapshot.
+              Review lists available updates even with no other drafts, across
+              built-in, Repo, native external, and remote-skills sources.
+              <strong>Keep installed</strong> is the default; choose
+              <strong>Configure update</strong> to reuse compatible answers and
+              answer new or incompatible questions in Review. Accept stages the
+              actual file diff; only explicitly choosing Apply writes it.
+              Keeping an update never mutates its installed snapshot, including
+              when upstream is unavailable. Saved definitions remain usable
+              offline for scope changes and removal.
+            </p>
+            <p>
+              Content identity is SHA-256 over actual source bytes and relevant
+              descriptor semantics. Remote skills include sorted relative paths
+              and raw file bytes; native YAML/JSON definitions also hash their
+              actual bytes. Commit IDs, upstream commit dates, retrieval dates,
+              and installation dates are provenance only, not catalog versions
+              or equality checks. A new commit with unchanged content is not an
+              update. A selected update’s source is checked again before Apply;
+              changed content blocks adoption until a new review is approved.
+            </p>
+            <p>
+              For an unchanged Both-scope installation, updating the active
+              global kit preserves the dormant repository snapshot and its
+              independent answers. Removing global intent can restore that older
+              repository fallback. An explicit scope change follows the usual
+              scope/configuration semantics instead.
+            </p>
+            <p>
+              Former <code>loadout/external-*</code> selections are not renamed,
+              aliased, migrated, or automatically removed. Their saved snapshots
+              remain usable and can show missing upstream after removal of the
+              old built-in entries. To replace one, explicitly select a kit from
+              a remote catalog and remove the old selection only after reviewing
+              both changes.
             </p>
             <p>
               Output drift covers modified, missing, unreadable, or unsafe
@@ -894,6 +1060,20 @@ mise exec -- bun src/cli.tsx apply --request request.json --review-token TOKEN -
             <a href="index.html#author">external provenance checklist</a> before
             redistributing other authors’ skills. License review must include
             supporting resources, not just the entry file.
+          </p>
+          <p>
+            Historical upstream skill, license, source-notice, and Ponytail
+            AGENTS.md comparison bytes are preserved under
+            <code>site/evidence/</code>, outside runtime catalogs. Their commit
+            pins and 19 October 2026 retrieval date reproduce the documentation
+            comparison only; they do not freeze the live remote catalogs or
+            determine update equality. Existing SOURCE notices describe the
+            original snapshot packaging, not a current runtime installation. See
+            the
+            <a href="evidence/external-sources.json"
+              >complete evidence inventory</a
+            >
+            and <a href="index.html#context">measurement workflow</a>.
           </p>
         </section>
         <section id="development">

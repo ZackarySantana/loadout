@@ -257,6 +257,15 @@ mise exec -- bun src/cli.tsx status</code></pre>
                 <kbd>Space</kbd> to browse. Highlight Project context to preview
                 its instructions, skill, and optional note.
               </p>
+              <p>
+                Each catalog shows <strong>Search kits</strong> while browsing;
+                it hides during configuration and returns after Accept/Cancel
+                with the query retained. Press <kbd>/</kbd> outside forms or
+                text editing to filter its names, IDs, and
+                descriptions—especially useful in larger remote catalogs.
+                Opening a catalog normally focuses its first kit, not the search
+                field.
+              </p>
               <div class="terminal" aria-label="Conceptual catalog preview">
                 <span class="muted">Catalogs / Loadout</span><br /><span
                   class="selected"
@@ -347,6 +356,20 @@ mise exec -- bun src/cli.tsx status</code></pre>
               <kbd>Space</kbd> selects or toggles. Focus is distinct from
               selected radio/check markers, and options wrap on narrow
               terminals.
+            </p>
+            <p>
+              In a catalog, <kbd>/</kbd> focuses Search kits when no form or
+              text editor is open. Matching ignores case; every space-separated
+              term must appear in the kit’s name, ID, or description. It does
+              not search resource contents or interpret regular expressions.
+              <kbd>Enter</kbd>/<kbd>Esc</kbd> stops typing without clearing the
+              filter. From search, <kbd>↓</kbd> selects the first match and
+              <kbd>↑</kbd> the last; kit navigation wraps among matches without
+              focusing search. With no matches, search stays available. Use
+              Backspace or <kbd>Ctrl</kbd>+<kbd>U</kbd> while editing to clear
+              the query. Refresh and tab switches preserve search text. Each
+              catalog retains its own query for the session; queries are not
+              saved to disk.
             </p>
             <p>
               Landing on a text input starts typing; Vim keys and
@@ -681,17 +704,23 @@ mise exec -- bun src/cli.tsx apply --request request.json --review-token TOKEN -
             >, measures <strong>2,721 bytes / 473 words / 32 lines</strong>. It
             is different text from its skill, not an equivalent-content
             baseline: subtracting their sizes would not establish savings. This
-            comparison file is not installed by the curated kits.
+            comparison file is documentation evidence, not installed kit
+            content.
           </p>
           <details open>
             <summary>Methodology, exclusions, and reproducibility</summary>
             <p>
               Measurements use pinned upstream UTF-8 text retrieved 19 October
-              2026. Bytes use <code>Buffer.byteLength</code>; words are maximal
-              non-whitespace runs (<code>/\S+/gu</code>). Lines are LF-separated
-              logical lines, with no phantom empty line after a final LF; empty
-              text has zero lines. Unicode characters, also present in the raw
-              data, mean code points, not grapheme clusters.
+              2026. These historical fixtures live under
+              <code>site/evidence/</code>, not in runtime catalogs. Live remote
+              catalogs may now contain different content and additional skills;
+              their update identity is a content hash, not these historical
+              commit pins or retrieval dates. Bytes use
+              <code>Buffer.byteLength</code>; words are maximal non-whitespace
+              runs (<code>/\S+/gu</code>). Lines are LF-separated logical lines,
+              with no phantom empty line after a final LF; empty text has zero
+              lines. Unicode characters, also present in the raw data, mean code
+              points, not grapheme clusters.
             </p>
             <p>
               Frontmatter includes delimiter lines and their LF. Body means
@@ -702,11 +731,13 @@ mise exec -- bun src/cli.tsx apply --request request.json --review-token TOKEN -
             </p>
             <p>
               Full-file counts exclude license files, SOURCE notices, and Matt’s
-              Codex UI/policy metadata; these installed supporting files have
+              Codex UI/policy metadata; these historical supporting files have
               separate records in the data. The selected directories contain no
-              required external supporting Markdown, scripts, or binaries. If
-              references or notices are read by a host, their contents must be
-              added. Do not confuse installed disk totals with prompt text.
+              required external supporting Markdown, scripts, or binaries at the
+              pinned commits. This is not a claim about all live upstream
+              skills. If references or notices are read by a host, their
+              contents must be added. Do not confuse installed disk totals with
+              prompt text.
             </p>
             <p>
               Actual paths, wrappers, permissions, metadata budgets,
@@ -720,30 +751,31 @@ mise exec -- bun src/cli.tsx apply --request request.json --review-token TOKEN -
                 >Download measurement and provenance JSON</a
               >
               · Complete file inventory:
-              <code>catalog/external-sources.json</code> in the checkout. The
-              downloadable JSON and HTML tables are maintained static
-              presentations, not automatically generated by the measurement
-              command.
+              <a href="evidence/external-sources.json"
+                ><code>site/evidence/external-sources.json</code></a
+              >. The command generates both JSON files; HTML tables remain a
+              reviewed static presentation.
             </p>
             <ol>
               <li>
                 Run
-                <code>mise exec -- bun catalog/external/measure.ts</code>
-                offline. It derives metrics from vendored text and regenerates
-                the canonical <code>catalog/external-sources.json</code>,
-                curated kit YAML, and SOURCE notices, without downloading or
-                executing upstream code.
+                <code>mise exec -- bun scripts/measure-context.ts</code>
+                offline. It reads the preserved historical text and regenerates
+                <code>site/evidence/external-sources.json</code> and
+                <code>site/source-measurements.json</code>. It never downloads
+                remote content, changes source bytes, licenses or SOURCE
+                notices, executes upstream code, or generates runtime kit YAML.
               </li>
               <li>
-                Manually refresh <code>site/source-measurements.json</code> from
-                that canonical inventory, and update all HTML measurement
-                tables, assumed activation cases, totals, citations, and dated
+                Compare the regenerated JSON with all HTML measurement tables,
+                assumed activation cases, totals, citations, and dated
                 references together.
               </li>
               <li>
                 Review the synchronized presentation against the pinned sources,
                 licenses, hashes, arithmetic, and methodology before sharing it.
-                The command does not update the site extract or HTML.
+                The command does not update HTML; adjust its tables and prose
+                only if the evidence or methodology actually changes.
               </li>
             </ol>
           </details>
@@ -859,13 +891,25 @@ outputs:
           </p>
           <h3>External catalogs</h3>
           <p>
-            An external catalog is a strict JSON index pointing at
-            self-contained kit YAML. Register a local path or HTTPS URL;
+            An external source can be a strict JSON index pointing at
+            self-contained kit YAML, a remote-skills descriptor, or a GitHub
+            repository/directory URL adapted directly from upstream
+            <code>SKILL.md</code> directories. Upstream catalog JSON is not
+            required. Register a local descriptor path or HTTPS URL;
             registration is a user-wide source reference, not an installation.
           </p>
           <pre><code>mise exec -- bun src/cli.tsx catalog add /path/to/catalog.json
 mise exec -- bun src/cli.tsx catalog list
 mise exec -- bun src/cli.tsx catalog remove /path/to/catalog.json</code></pre>
+          <p>
+            Matt Pocock (<code>matt-pocock</code>), Anthropic
+            (<code>anthropic</code>), and Ponytail (<code>ponytail</code>) are
+            separate default remote catalogs, not kits in Loadout’s built-in
+            catalog. Browse a catalog to load its bounded upstream inventory; an
+            unloaded header does not mean zero kits. Unused defaults do not
+            fetch on launch or status. Installed checks fetch only selected
+            skill sets, not every unused skill.
+          </p>
           <p>
             <a href="reference.html#catalogs"
               >Catalog schema, source boundaries, and offline behavior →</a
@@ -874,10 +918,10 @@ mise exec -- bun src/cli.tsx catalog remove /path/to/catalog.json</code></pre>
           <h3>Provenance is part of a useful kit</h3>
           <p>
             Before sharing an upstream skill, verify the author and repository,
-            pin a commit, inspect every supporting file, and confirm that its
-            license permits redistribution. Preserve notices and distinguish
-            original text from adaptations. Publicly readable does not mean
-            freely redistributable.
+            record its provenance, inspect every supporting file, and confirm
+            that its license permits redistribution. Preserve notices and
+            distinguish original text from adaptations. Publicly readable does
+            not mean freely redistributable.
           </p>
           <p>
             Review instructions as carefully as code: they can persuade an agent
@@ -886,13 +930,16 @@ mise exec -- bun src/cli.tsx catalog remove /path/to/catalog.json</code></pre>
             guessed content or imply an endorsement.
           </p>
           <p>
-            Curated selections include Matt Pocock’s questionnaire (MIT),
-            Anthropic’s frontend design (Apache-2.0), and DietrichGebert’s
-            Ponytail core skill (MIT). They include the complete selected skill
-            directories, licenses, and source notices—not entire upstream
-            repositories or Ponytail’s hooks/plugins. Matt’s Codex policy
-            metadata is preserved. Ponytail’s requested modes and session
-            persistence depend on the host and never override user constraints.
+            The historical comparison fixtures include Matt Pocock’s
+            questionnaire (MIT), Anthropic’s frontend design (Apache-2.0), and
+            DietrichGebert’s Ponytail core skill (MIT). They include the
+            complete selected skill directories, licenses, and source
+            notices—not entire upstream repositories or Ponytail’s
+            hooks/plugins. Matt’s Codex policy metadata is preserved in the
+            evidence. These fixtures are not the live catalog inventory and are
+            never used as runtime templates. Ponytail’s requested modes and
+            session persistence depend on the host and never override user
+            constraints.
           </p>
           <p class="small">
             Read
@@ -916,9 +963,12 @@ mise exec -- bun src/cli.tsx catalog remove /path/to/catalog.json</code></pre>
                 output is a separate conflict.
               </p>
               <p>
-                Use Installed → Use catalog update for an explicit update,
-                answer new or incompatible questions, then review and apply.
-                User instruction text outside managed blocks is preserved.
+                Open Review to see available updates, even with no other drafts.
+                <strong>Keep installed</strong> is the default. Choose
+                <strong>Configure update</strong>, check reused compatible
+                answers, answer new or incompatible questions in Review, then
+                accept the file diff and explicitly apply. User instruction text
+                outside managed blocks is preserved.
               </p>
             </div>
             <div>

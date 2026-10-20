@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { agentFields } from "./subagents"
+import { remoteProvenanceSchema } from "./catalog-source"
 
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]*$/)
 const value = z.union([z.string(), z.boolean()])
@@ -190,6 +191,11 @@ export const catalogOriginSchema = z
     scope: z.enum(["repository", "global"]),
     repository: z.string().min(1).optional(),
     file: relativePath.optional(),
+    contentHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    remote: remoteProvenanceSchema.optional(),
   })
   .strict()
   .refine(
@@ -198,12 +204,14 @@ export const catalogOriginSchema = z
   )
 export type CatalogOrigin = z.infer<typeof catalogOriginSchema>
 export interface ConfiguredKit {
+  installedAt?: string
   key: string
   kit: Kit
   answers: Answers
   origin?: CatalogOrigin
 }
 export interface LoadedKit {
+  installedAt?: string
   key: string
   kit: Kit
   origin?: CatalogOrigin
@@ -214,7 +222,8 @@ export interface Catalog {
   source: string
   permanent: boolean
   kits: LoadedKit[]
-  kind?: "repo" | "builtin" | "external"
+  kind?: "repo" | "builtin" | "external" | "remote"
+  hydration?: "deferred" | "partial" | "loaded"
   automatic?: boolean
   unavailableKits?: {
     key?: string

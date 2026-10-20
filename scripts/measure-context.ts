@@ -1,11 +1,11 @@
-/** Offline curation tool: bun catalog/external/measure.ts. Never fetches or executes upstream code. */
+/** Historical evidence only: bun scripts/measure-context.ts. Never fetches or executes upstream code. */
 import { createHash } from "node:crypto"
 import { readdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { Document, isScalar, parse, Scalar } from "yaml"
+import { parse } from "yaml"
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..")
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const retrievalDate = "2026-10-19"
 const sources = [
   {
@@ -97,22 +97,54 @@ async function listFiles(directory: string): Promise<string[]> {
   return paths.flat().sort()
 }
 
-const records = []
+type Measurement = ReturnType<typeof measure>
+type SourceInfo = (typeof sources)[number]
+
+interface EvidenceFileRecord extends Measurement {
+  path: string
+  installedPath: string
+  upstreamPath: string | null
+  sourceUrl: string | null
+  sha256: string
+}
+
+interface SourceMeasurementRecord extends SourceInfo {
+  retrievalDate: string
+  skillName: string
+  skillDescription: string
+  sourceUrl: string
+  supportingResources: string
+  measurements: {
+    fullFile: Measurement
+    frontmatterWithDelimiters: Measurement
+    descriptionValue: Measurement
+    discoveryNameAndDescription: Measurement
+    body: Measurement
+  }
+  files: EvidenceFileRecord[]
+}
+
+const records: SourceMeasurementRecord[] = []
 for (const source of sources) {
-  const directory = resolve(root, "catalog/external", source.directory)
+  const directory = resolve(root, "site/evidence", source.directory)
   const skill = await readFile(resolve(directory, "SKILL.md"), "utf8")
   const match = /^---\n([\s\S]*?)\n---\n/.exec(skill)
   if (!match) throw new Error(`Missing frontmatter: ${source.directory}`)
-  const frontmatter = parse(match[1]!)
+  const frontmatter: unknown = parse(match[1]!)
+  if (
+    typeof frontmatter !== "object" ||
+    frontmatter === null ||
+    !("name" in frontmatter) ||
+    typeof frontmatter.name !== "string" ||
+    !("description" in frontmatter) ||
+    typeof frontmatter.description !== "string"
+  )
+    throw new Error(`Invalid skill metadata: ${source.directory}`)
   const body = skill.slice(match[0].length)
-  const provenance = `# Source and scope\n\nAuthor: ${source.author}\nRepository: https://github.com/${source.repo}\nSource commit: ${source.commit}\nRetrieved: ${retrievalDate}\nSkill: https://github.com/${source.repo}/blob/${source.commit}/${source.upstreamDirectory}/SKILL.md\nLicense: ${source.license}; see LICENSE.txt.\n\nUpstream files are unmodified. SOURCE.md is Loadout packaging metadata. This is an independently curated snapshot, not an endorsement by the author. The commit identifies source provenance, not a catalog update mechanism.\n\n${source.rationale}\n\n${source.limitations}\n`
-  await writeFile(resolve(directory, "SOURCE.md"), provenance)
-  const files: Record<string, string> = {}
-  const fileRecords = []
+  const fileRecords: EvidenceFileRecord[] = []
   for (const path of await listFiles(directory)) {
     const name = relative(directory, path)
     const content = await readFile(path, "utf8")
-    files[name] = content
     const upstreamPath =
       name === "SOURCE.md"
         ? null
@@ -130,27 +162,6 @@ for (const source of sources) {
       ...measure(content),
     })
   }
-  const kit = {
-    id: source.id,
-    name: source.name,
-    description: source.description,
-    outputs: [{ type: "skill", name: frontmatter.name, files }],
-  }
-  const document = new Document(kit)
-  const license = document.getIn(["outputs", 0, "files", "LICENSE.txt"], true)
-  // Quote leading-blank licenses so block indentation cannot pad an empty line.
-  // YAML escaping preserves every source character, including the initial LF.
-  if (
-    isScalar(license) &&
-    typeof license.value === "string" &&
-    license.value.startsWith("\n")
-  ) {
-    license.type = Scalar.QUOTE_DOUBLE
-  }
-  await writeFile(
-    resolve(root, "catalog/kits", `${source.id}.yaml`),
-    document.toString({ lineWidth: 0 }),
-  )
   records.push({
     ...source,
     retrievalDate,
@@ -172,14 +183,14 @@ for (const source of sources) {
   })
 }
 const ponytail = sources[2]!
-const comparisonPath = "catalog/external/ponytail/comparison/AGENTS.md"
+const comparisonPath = "site/evidence/ponytail/comparison/AGENTS.md"
 const comparison = await readFile(resolve(root, comparisonPath), "utf8")
 const result = {
   retrievalDate,
   methodology: {
-    command: "bun catalog/external/measure.ts",
+    command: "bun scripts/measure-context.ts",
     operation:
-      "Offline regeneration from vendored UTF-8 text only. Does not download, install, or execute upstream code. Regenerates the three external kit YAML files, SOURCE.md sidecars, and this measurement data.",
+      "Offline regeneration from historical UTF-8 evidence only. Reads the preserved snapshots without changing source bytes, licenses, or SOURCE.md notices. Writes this measurement inventory and the site presentation extract; never fetches remote content, installs kits, or generates runtime kit YAML. Historical commit pins reproduce this comparison only; live catalog update identity uses content hashes, not commits or dates.",
     units:
       "UTF-8 bytes use Buffer.byteLength; characters are Unicode code points ([...text].length), not UTF-16 units or grapheme clusters; words are maximal non-whitespace runs (/\\S+/gu); lines count LF-separated logical lines without a phantom empty line after a final LF. Empty text has zero lines.",
     separation:
@@ -189,7 +200,7 @@ const result = {
     illustrativeComparison:
       "An always-inline baseline can concatenate the exact same full SKILL.md files. An illustrative discovery-only state concatenates only discoveryNameAndDescription; activation then adds the selected full file (or body, if explicitly comparing body-only loading). Sum the appropriate fields. This is a conditional accounting illustration, not a benchmark: actual hosts may load more metadata, wrappers, license/support text, retain prior activations, or make skills always active.",
     licenseAndSupport:
-      "Full-file skill measurements exclude license, source notices, and the optional Codex UI/policy metadata file. Their separate file records account for installed bytes. Do not compare installed disk totals to prompt text as if they were the same thing.",
+      "Full-file skill measurements exclude license, source notices, and the optional Codex UI/policy metadata file. Separate file records preserve their historical packaging bytes; installedPath records the former package-relative path, not a current installation. Do not compare disk totals to prompt text as if they were the same thing.",
     agentsComparison:
       "The Ponytail AGENTS.md is a genuine upstream always-on rules alternative, not byte-identical to SKILL.md. Its measurement is an independent real-world reference; differences are not savings from equivalent content.",
   },
@@ -200,16 +211,90 @@ const result = {
     commit: ponytail.commit,
     retrievalDate,
     license: "MIT",
-    licensePath: "catalog/external/ponytail/comparison/LICENSE.txt",
+    licensePath: "site/evidence/ponytail/comparison/LICENSE.txt",
     installedByKits: false,
     sha256: createHash("sha256").update(comparison, "utf8").digest("hex"),
     measurements: measure(comparison),
   },
 }
 await writeFile(
-  resolve(root, "catalog/external-sources.json"),
+  resolve(root, "site/evidence/external-sources.json"),
   `${JSON.stringify(result, null, 2)}\n`,
 )
+// Generate the downloadable extract from the same records; HTML remains a
+// deliberately reviewed static presentation of these historical measurements.
+const compact = (measurement: ReturnType<typeof measure>) => ({
+  utf8Bytes: measurement.utf8Bytes,
+  words: measurement.whitespaceSeparatedWords,
+  lines: measurement.lines,
+})
+const sum = (field: "fullFile" | "discoveryNameAndDescription") =>
+  records.reduce(
+    (total, record) => total + record.measurements[field].utf8Bytes,
+    0,
+  )
+const discoveryBytes = sum("discoveryNameAndDescription")
+const extract = {
+  retrievalDate,
+  sourceInventory:
+    "site/evidence/external-sources.json in the Loadout checkout",
+  reproduce: "mise exec -- bun scripts/measure-context.ts",
+  reproduceNotice:
+    "Regenerates the historical evidence inventory and this presentation extract offline. Never fetches live catalog content, changes snapshots or notices, or generates runtime kit YAML. Does not update HTML.",
+  extractMaintenance:
+    "Review all site HTML measurement tables, activation cases, totals, citations, and dated references against the regenerated JSON. Review historical source pins, licenses, hashes, arithmetic, and methodology before sharing. These fixtures do not describe the current remote catalog inventory.",
+  methodology: {
+    bytes: "Exact UTF-8 bytes, Buffer.byteLength; no tokenizer used.",
+    words: "Maximal non-whitespace runs, /\\S+/gu.",
+    lines:
+      "LF-separated logical lines; no phantom empty line after a final LF; empty text is zero lines.",
+    body: "Every character after closing frontmatter delimiter LF, including the following blank line.",
+    discovery:
+      "name + LF + parsed YAML description + LF; not an observed host prompt. Ponytail description retains its trailing LF.",
+    exclusions:
+      "Full skill counts exclude license, SOURCE notice, optional Codex policy metadata, host wrappers, paths, system prompts, tools, history and retained activations. Disk totals are not prompt totals.",
+    limitations:
+      "Assumed activation cases for historical fixtures only; not runtime token counts, benchmarks, universal savings, identical host loading policies, or current remote catalog measurements. These selected snapshot directories contain no required external supporting Markdown/scripts/binaries. Complete supporting-file hashes are in the evidence inventory.",
+  },
+  sources: records.map((record) => ({
+    name: `${record.author}: ${record.skillName}`,
+    repository: record.repo,
+    commit: record.commit,
+    path: `${record.upstreamDirectory}/SKILL.md`,
+    sourceUrl: record.sourceUrl,
+    rawUrl: `https://raw.githubusercontent.com/${record.repo}/${record.commit}/${record.upstreamDirectory}/SKILL.md`,
+    sha256: record.files.find((file) => file.installedPath === "SKILL.md")!
+      .sha256,
+    license: record.license,
+    licenseUrl: `https://github.com/${record.repo}/blob/${record.commit}/${record.licensePath}`,
+    description: record.skillDescription,
+    fullFile: compact(record.measurements.fullFile),
+    body: compact(record.measurements.body),
+    discovery: compact(record.measurements.discoveryNameAndDescription),
+  })),
+  instructionsComparison: {
+    sourceUrl: result.instructionsComparison.sourceUrl,
+    rawUrl: `https://raw.githubusercontent.com/${ponytail.repo}/${ponytail.commit}/AGENTS.md`,
+    commit: ponytail.commit,
+    sha256: result.instructionsComparison.sha256,
+    license: result.instructionsComparison.license,
+    ...compact(result.instructionsComparison.measurements),
+    installedByKits: false,
+    limitation:
+      "Different real upstream instructions, not byte-equivalent to the skill. Their size difference is not equivalent-content savings.",
+  },
+  assumedCasesUtf8Bytes: {
+    allFullFilesInline: sum("fullFile"),
+    discoveryOnly: discoveryBytes,
+    discoveryPlusFullQuestionnaire:
+      discoveryBytes + records[0]!.measurements.fullFile.utf8Bytes,
+    discoveryPlusAllFullFiles: discoveryBytes + sum("fullFile"),
+  },
+}
+await writeFile(
+  resolve(root, "site/source-measurements.json"),
+  `${JSON.stringify(extract, null, 2)}\n`,
+)
 console.log(
-  `Regenerated ${records.length} external kits and source measurements offline.`,
+  `Regenerated ${records.length} historical source measurements offline.`,
 )

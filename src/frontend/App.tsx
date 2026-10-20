@@ -19,6 +19,7 @@ import { Walkthrough, walkthroughPages } from "./Walkthrough"
 import { DriftPreview, SourceNotice, sourceLabels } from "./DriftPreview"
 import { theme as color, scopeColor } from "./theme"
 import type { Scope } from "../domain/kit"
+import { UpdatePreview } from "./UpdatePreview"
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
 const rowDescription = (row: Row) =>
@@ -103,6 +104,33 @@ export function App(props: {
       scope: form?.scope ?? config.scope,
     }
   })
+  const updateSelection = createMemo(() => {
+    revision()
+    const row = rows()[active()]
+    if (row?.kind !== "update-offer" || !row.sourceDrift?.latest)
+      return undefined
+    const installed = model.backend
+      .installed()
+      .find((item) => item.key === row.sourceDrift!.key)
+    const draft = installed ? model.drafts.get(installed.key) : undefined
+    const form =
+      model.form?.item.key === installed?.key ? model.form : undefined
+    const scope = form?.scope ?? draft?.scope ?? row.sourceDrift.scope
+    const updateOnly = form
+      ? form.originalScope === "both" && !form.scopeChanged
+      : draft?.update === true
+    return installed
+      ? {
+          installed,
+          latest: row.sourceDrift.latest,
+          scope,
+          staged: row.updateStaged,
+          removing: scope === "none",
+          preservesFallback:
+            scope === "both" && row.sourceDrift.scope === "both" && updateOnly,
+        }
+      : undefined
+  })
   const catalogSelection = createMemo(() => rows()[active()]?.catalog)
   const driftSelection = createMemo(() => {
     revision()
@@ -122,6 +150,9 @@ export function App(props: {
       ? {
           issue,
           staged,
+          installed: model.backend
+            .installed()
+            .find((item) => item.key === row.item!.key),
           previewingLatest: form?.fromCatalog ?? row.fromCatalog,
         }
       : undefined
@@ -134,6 +165,7 @@ export function App(props: {
       changeIndex: rows()[active()]?.changeIndex,
       drift: model.drift,
       errors: model.errors,
+      installed: model.backend.installed(),
     }
   })
   const previewIdentity = createMemo(() => {
@@ -144,6 +176,7 @@ export function App(props: {
       return `change:${model.plan?.changes[row.changeIndex ?? -1]?.path ?? row.changeIndex}`
     if (row?.fileDrift) return `drift-file:${row.fileDrift.path}`
     if (row?.kind === "health") return "health"
+    if (row?.kind === "update-offer") return row.id
     return `page:${model.page}`
   })
   const editing = createMemo(() => {
@@ -161,6 +194,7 @@ export function App(props: {
         editor?.kind === "question" &&
         editor.id === row.question?.id) ||
       (row.kind === "source" && editor?.kind === "catalog") ||
+      (row.kind === "search" && editor?.kind === "search") ||
       (row.kind === "location-input" &&
         editor?.kind === "location" &&
         editor.id === row.locationId)
@@ -216,6 +250,11 @@ export function App(props: {
   }
   createEffect(() => {
     const row = rows()[active()]
+    if (row?.kind === "search") {
+      // Search stays pinned above the list while results start at the top.
+      list?.scrollTo(0)
+      return
+    }
     const id = row?.choices
       ? `${row.id}:option:${row.focusedOptionIndex ?? 0}`
       : row?.id
@@ -236,7 +275,7 @@ export function App(props: {
   }
   const rowColor = (row: Row, focused: boolean): string => {
     if (row.kind === "health" || row.kind === "drift-file") return color.warning
-    if (row.kind === "update") return color.file
+    if (row.kind === "update" || row.kind === "update-offer") return color.file
     if (row.kind === "heading") return color.muted
     if (row.kind === "register" || row.kind === "source") return color.file
     if (row.kind === "actions") return color.sage
@@ -344,6 +383,12 @@ export function App(props: {
     const motion = !key.ctrl && !key.meta && !key.shift ? key.name : undefined
     key.preventDefault()
     if (key.name === "q") exit()
+    else if (
+      (key.sequence === "/" || key.name === "/") &&
+      currentPage() === 0 &&
+      model.catalog
+    )
+      model.focusSearch()
     else if (key.name === "r") void model.refreshStatus()
     else if (key.name === "up" || motion === "k") model.move(-1)
     else if (key.name === "down" || motion === "j") model.move(1)
@@ -440,6 +485,48 @@ export function App(props: {
             backgroundColor={color.panel}
             flexDirection="column"
           >
+            <Show when={rows()[0]?.kind === "search" && !formOpen()}>
+              <box
+                id="catalog-search"
+                width="100%"
+                minWidth={0}
+                flexDirection="column"
+                flexShrink={0}
+                paddingX={1}
+                marginBottom={1}
+                backgroundColor={active() === 0 ? color.selected : color.panel}
+              >
+                <text
+                  fg={active() === 0 ? color.sage : color.text}
+                  wrapMode="word"
+                  flexShrink={0}
+                >
+                  {`${active() === 0 ? "›" : " "} Search kits `}
+                  <span style={{ fg: color.muted }}>· / to focus</span>
+                </text>
+                <box paddingLeft={2} flexShrink={0}>
+                  <input
+                    id="catalog-search:input"
+                    focused={editing()?.kind === "search"}
+                    width="100%"
+                    value={rows()[0]?.value ?? ""}
+                    onInput={(value) => {
+                      if (editing()?.kind === "search") model.edit(value)
+                    }}
+                    onSubmit={() => void model.finishInput()}
+                    backgroundColor={
+                      active() === 0 ? color.selected : color.panel
+                    }
+                    textColor={color.text}
+                    cursorColor={color.sage}
+                    placeholder="Name, ID, or description"
+                  />
+                </box>
+                <text fg={color.muted} wrapMode="word" flexShrink={0}>
+                  <i>{safeText(rows()[0]?.description ?? "")}</i>
+                </text>
+              </box>
+            </Show>
             <scrollbox
               ref={list}
               flexGrow={1}
@@ -454,211 +541,229 @@ export function App(props: {
               </Show>
               <Index each={rows()}>
                 {(row, index) => (
-                  <box
-                    id={row().id}
-                    flexDirection="column"
-                    flexShrink={0}
-                    paddingLeft={row().indent ? 2 : 0}
-                    marginTop={
-                      row().kind === "kit" || row().kind === "settings-group"
-                        ? index > 0 && rows()[index - 1]?.kind !== "actions"
-                          ? 1
-                          : 0
-                        : row().kind === "location-input" ||
-                            rows()[index - 1]?.id.endsWith(":add")
-                          ? 0
-                          : row().indent &&
-                              (row().item ||
-                                row().settingsGroup ||
-                                model.settingsForm ||
-                                model.registering)
+                  <Show when={row().kind !== "search"}>
+                    <box
+                      id={row().id}
+                      flexDirection="column"
+                      flexShrink={0}
+                      paddingLeft={row().indent ? 2 : 0}
+                      marginTop={
+                        row().kind === "kit" ||
+                        row().kind === "settings-group" ||
+                        row().kind === "update-offer"
+                          ? index > 0 &&
+                            rows()[index - 1]?.kind !== "actions" &&
+                            rows()[index - 1]?.kind !== "search"
                             ? 1
                             : 0
-                    }
-                    marginBottom={row().kind === "actions" ? 1 : 0}
-                    backgroundColor={
-                      index === active() ? color.selected : color.panel
-                    }
-                  >
-                    <Show when={row().label}>
-                      <text
-                        wrapMode="word"
-                        flexShrink={0}
-                        fg={rowColor(row(), index === active())}
-                      >
-                        <Show
-                          when={row().kind === "kit" && row().item}
-                          fallback={`${index === active() ? "›" : " "} ${safeText(row().label)}`}
+                          : row().kind === "location-input" ||
+                              rows()[index - 1]?.id.endsWith(":add")
+                            ? 0
+                            : row().indent &&
+                                (row().item ||
+                                  row().settingsGroup ||
+                                  model.settingsForm ||
+                                  model.registering)
+                              ? 1
+                              : 0
+                      }
+                      marginBottom={row().kind === "actions" ? 1 : 0}
+                      backgroundColor={
+                        index === active() ? color.selected : color.panel
+                      }
+                    >
+                      <Show when={row().label}>
+                        <text
+                          wrapMode="word"
+                          flexShrink={0}
+                          fg={rowColor(row(), index === active())}
                         >
-                          {(item) => (
-                            <span>
-                              {`${index === active() ? "›" : " "} ${row().scope === "none" ? "○" : "●"} ${safeText(item().kit.name)}  `}
-                              <Show when={row().scope !== "none"}>
-                                <span
-                                  style={{
-                                    fg: scopeColor(row().scope ?? "none"),
-                                  }}
-                                >{`[${row().scope}]`}</span>
-                              </Show>
-                              <Show when={row().staged}>
-                                <span style={{ fg: color.warning }}> *</span>
-                              </Show>
-                              <Show
-                                when={
-                                  row().sourceDrift &&
-                                  row().sourceDrift!.status !== "current"
+                          <Show
+                            when={row().kind === "kit" && row().item}
+                            fallback={`${index === active() ? "›" : " "} ${safeText(row().label)}`}
+                          >
+                            {(item) => (
+                              <span>
+                                {`${index === active() ? "›" : " "} ${row().scope === "none" ? "○" : "●"} ${safeText(item().kit.name)}  `}
+                                <Show when={row().scope !== "none"}>
+                                  <span
+                                    style={{
+                                      fg: scopeColor(row().scope ?? "none"),
+                                    }}
+                                  >{`[${row().scope}]`}</span>
+                                </Show>
+                                <Show when={row().staged}>
+                                  <span style={{ fg: color.warning }}> *</span>
+                                </Show>
+                                <Show
+                                  when={
+                                    row().sourceDrift &&
+                                    row().sourceDrift!.status !== "current"
+                                  }
+                                >
+                                  <span
+                                    style={{ fg: color.warning }}
+                                  >{` · ${row().updateStaged ? "Update staged" : sourceLabels[row().sourceDrift!.status]}`}</span>
+                                </Show>
+                              </span>
+                            )}
+                          </Show>
+                          <Show
+                            when={
+                              row().kind === "settings-group" && row().staged
+                            }
+                          >
+                            <span style={{ fg: color.warning }}> *</span>
+                          </Show>
+                        </text>
+                      </Show>
+                      <Show
+                        when={
+                          row().kind === "kit" && row().item?.kit.description
+                        }
+                      >
+                        {(description) => (
+                          <box paddingLeft={4} flexShrink={0}>
+                            <text
+                              fg={color.muted}
+                              wrapMode="word"
+                              flexShrink={0}
+                            >
+                              <i>{safeText(description())}</i>
+                            </text>
+                          </box>
+                        )}
+                      </Show>
+                      <Show when={row().kind === "location"}>
+                        <box paddingLeft={2} flexShrink={0}>
+                          <text fg={color.text} wrapMode="word" flexShrink={0}>
+                            {safeText(row().value || "New location")}
+                          </text>
+                        </box>
+                      </Show>
+                      <Show
+                        when={
+                          row().choices &&
+                          (row().kind !== "location" || index === active())
+                        }
+                      >
+                        <box
+                          flexDirection="row"
+                          flexWrap="wrap"
+                          paddingLeft={
+                            row().kind === "actions" ||
+                            row().kind === "location" ||
+                            row().kind === "update-offer"
+                              ? 0
+                              : 2
+                          }
+                          gap={1}
+                        >
+                          <Index each={row().choices}>
+                            {(choice, optionIndex) => (
+                              <text
+                                id={`${row().id}:option:${optionIndex}`}
+                                flexShrink={0}
+                                maxWidth="100%"
+                                wrapMode="word"
+                                bg={
+                                  index === active() &&
+                                  optionIndex === row().focusedOptionIndex
+                                    ? color.optionFocus
+                                    : index === active()
+                                      ? color.selected
+                                      : color.panel
+                                }
+                                fg={
+                                  choice().disabled
+                                    ? color.excluded
+                                    : row().kind === "scope"
+                                      ? scopeColor(choice().value as Scope)
+                                      : row().kind === "actions" ||
+                                          row().kind === "location" ||
+                                          row().kind === "update-offer"
+                                        ? choice().value === "accept" ||
+                                          choice().value === "apply"
+                                          ? color.sage
+                                          : color.muted
+                                        : choice().selected
+                                          ? color.sage
+                                          : color.text
                                 }
                               >
-                                <span
-                                  style={{ fg: color.warning }}
-                                >{` · ${row().updateStaged ? "Update staged" : sourceLabels[row().sourceDrift!.status]}`}</span>
-                              </Show>
-                            </span>
-                          )}
-                        </Show>
-                        <Show
-                          when={row().kind === "settings-group" && row().staged}
-                        >
-                          <span style={{ fg: color.warning }}> *</span>
-                        </Show>
-                      </text>
-                    </Show>
-                    <Show
-                      when={row().kind === "kit" && row().item?.kit.description}
-                    >
-                      {(description) => (
-                        <box paddingLeft={4} flexShrink={0}>
-                          <text fg={color.muted} wrapMode="word" flexShrink={0}>
-                            <i>{safeText(description())}</i>
-                          </text>
+                                {row().kind === "actions" ||
+                                row().kind === "location" ||
+                                row().kind === "update-offer"
+                                  ? `${safeText(choice().label)}${choice().disabled ? " (unavailable)" : ""} `
+                                  : ` ${
+                                      row().question?.type === "multi-select"
+                                        ? choice().selected
+                                          ? "☑"
+                                          : "☐"
+                                        : choice().selected
+                                          ? "◉"
+                                          : "○"
+                                    } ${safeText(choice().label)} `}
+                              </text>
+                            )}
+                          </Index>
                         </box>
-                      )}
-                    </Show>
-                    <Show when={row().kind === "location"}>
-                      <box paddingLeft={2} flexShrink={0}>
-                        <text fg={color.text} wrapMode="word" flexShrink={0}>
-                          {safeText(row().value || "New location")}
-                        </text>
-                      </box>
-                    </Show>
-                    <Show
-                      when={
-                        row().choices &&
-                        (row().kind !== "location" || index === active())
-                      }
-                    >
-                      <box
-                        flexDirection="row"
-                        flexWrap="wrap"
-                        paddingLeft={
-                          row().kind === "actions" || row().kind === "location"
-                            ? 0
-                            : 2
+                      </Show>
+                      <Show
+                        when={
+                          row().kind === "input" ||
+                          row().kind === "source" ||
+                          row().kind === "location-input"
                         }
-                        gap={1}
                       >
-                        <Index each={row().choices}>
-                          {(choice, optionIndex) => (
-                            <text
-                              id={`${row().id}:option:${optionIndex}`}
-                              flexShrink={0}
-                              maxWidth="100%"
-                              wrapMode="word"
-                              bg={
-                                index === active() &&
-                                optionIndex === row().focusedOptionIndex
-                                  ? color.optionFocus
-                                  : index === active()
-                                    ? color.selected
-                                    : color.panel
-                              }
-                              fg={
-                                choice().disabled
-                                  ? color.excluded
-                                  : row().kind === "scope"
-                                    ? scopeColor(choice().value as Scope)
-                                    : row().kind === "actions" ||
-                                        row().kind === "location"
-                                      ? choice().value === "accept" ||
-                                        choice().value === "apply"
-                                        ? color.sage
-                                        : color.muted
-                                      : choice().selected
-                                        ? color.sage
-                                        : color.text
-                              }
-                            >
-                              {row().kind === "actions" ||
-                              row().kind === "location"
-                                ? `${safeText(choice().label)}${choice().disabled ? " (unavailable)" : ""} `
-                                : ` ${
-                                    row().question?.type === "multi-select"
-                                      ? choice().selected
-                                        ? "☑"
-                                        : "☐"
-                                      : choice().selected
-                                        ? "◉"
-                                        : "○"
-                                  } ${safeText(choice().label)} `}
-                            </text>
-                          )}
-                        </Index>
-                      </box>
-                    </Show>
-                    <Show
-                      when={
-                        row().kind === "input" ||
-                        row().kind === "source" ||
-                        row().kind === "location-input"
-                      }
-                    >
-                      <box paddingLeft={2} flexShrink={0}>
-                        <input
-                          id={`${row().id}:input`}
-                          focused={isEditing(row())}
-                          width="100%"
-                          value={
-                            row().kind === "source"
-                              ? model.source
-                              : row().kind === "location-input"
-                                ? (row().value ?? "")
-                                : String(
-                                    model.form?.answers[row().question!.id] ??
-                                      "",
-                                  )
-                          }
-                          onInput={(value) => {
-                            if (isEditing(row())) model.edit(value)
-                          }}
-                          onSubmit={() => void model.finishInput()}
-                          backgroundColor={
-                            index === active() ? color.selected : color.panel
-                          }
-                          textColor={color.text}
-                          cursorColor={color.sage}
-                          placeholder="Enter a value"
-                        />
-                      </box>
-                    </Show>
-                    <Show when={rowDescription(row())}>
-                      {(description) => (
-                        <box flexShrink={0}>
-                          <text
-                            id={
-                              row().kind === "scope"
-                                ? "scope-description"
-                                : `${row().id}:description`
+                        <box paddingLeft={2} flexShrink={0}>
+                          <input
+                            id={`${row().id}:input`}
+                            focused={isEditing(row())}
+                            width="100%"
+                            value={
+                              row().kind === "source"
+                                ? model.source
+                                : row().kind === "location-input"
+                                  ? (row().value ?? "")
+                                  : String(
+                                      model.form?.answers[row().question!.id] ??
+                                        "",
+                                    )
                             }
-                            fg={color.muted}
-                            wrapMode="word"
-                            flexShrink={0}
-                          >
-                            <i>{safeText(description())}</i>
-                          </text>
+                            onInput={(value) => {
+                              if (isEditing(row())) model.edit(value)
+                            }}
+                            onSubmit={() => void model.finishInput()}
+                            backgroundColor={
+                              index === active() ? color.selected : color.panel
+                            }
+                            textColor={color.text}
+                            cursorColor={color.sage}
+                            placeholder="Enter a value"
+                          />
                         </box>
-                      )}
-                    </Show>
-                  </box>
+                      </Show>
+                      <Show when={rowDescription(row())}>
+                        {(description) => (
+                          <box flexShrink={0}>
+                            <text
+                              id={
+                                row().kind === "scope"
+                                  ? "scope-description"
+                                  : `${row().id}:description`
+                              }
+                              fg={color.muted}
+                              wrapMode="word"
+                              flexShrink={0}
+                            >
+                              <i>{safeText(description())}</i>
+                            </text>
+                          </box>
+                        )}
+                      </Show>
+                    </box>
+                  </Show>
                 )}
               </Index>
             </scrollbox>
@@ -688,87 +793,98 @@ export function App(props: {
               contentOptions={{ flexDirection: "column" }}
             >
               <Show
-                when={kitSelection()}
+                when={updateSelection()}
                 fallback={
                   <Show
-                    when={driftSelection()}
+                    when={kitSelection()}
                     fallback={
                       <Show
-                        when={catalogSelection()}
+                        when={driftSelection()}
                         fallback={
                           <Show
-                            when={currentPage() !== 3}
+                            when={catalogSelection()}
                             fallback={
-                              <SettingsPreview
-                                group={rows()[active()]?.settingsGroup}
-                                restoring={rows()[active()]?.id.startsWith(
-                                  "settings:restore",
-                                )}
-                                staged={settingsChanged()}
-                              />
+                              <Show
+                                when={currentPage() !== 3}
+                                fallback={
+                                  <SettingsPreview
+                                    group={rows()[active()]?.settingsGroup}
+                                    restoring={rows()[active()]?.id.startsWith(
+                                      "settings:restore",
+                                    )}
+                                    staged={settingsChanged()}
+                                  />
+                                }
+                              >
+                                <Show
+                                  when={currentPage() !== 2}
+                                  fallback={
+                                    <ReviewPreview
+                                      plan={reviewSelection().plan}
+                                      selections={reviewSelection().selections}
+                                      changeIndex={
+                                        reviewSelection().changeIndex
+                                      }
+                                      repository={model.backend.repository}
+                                      home={model.backend.home}
+                                      drift={reviewSelection().drift}
+                                      errors={reviewSelection().errors}
+                                      installed={reviewSelection().installed}
+                                    />
+                                  }
+                                >
+                                  <GuidePreview />
+                                </Show>
+                              </Show>
                             }
                           >
-                            <Show
-                              when={currentPage() !== 2}
-                              fallback={
-                                <ReviewPreview
-                                  plan={reviewSelection().plan}
-                                  selections={reviewSelection().selections}
-                                  changeIndex={reviewSelection().changeIndex}
-                                  repository={model.backend.repository}
-                                  home={model.backend.home}
-                                  drift={reviewSelection().drift}
-                                  errors={reviewSelection().errors}
-                                />
-                              }
-                            >
-                              <GuidePreview />
-                            </Show>
+                            {(catalog) => (
+                              <CatalogPreview
+                                catalog={catalog()}
+                                repository={model.backend.repository}
+                              />
+                            )}
                           </Show>
                         }
                       >
-                        {(catalog) => (
-                          <CatalogPreview
-                            catalog={catalog()}
-                            repository={model.backend.repository}
+                        {(selection) => (
+                          <DriftPreview
+                            report={selection().report}
+                            errors={selection().errors}
+                            file={selection().file}
                           />
                         )}
                       </Show>
                     }
                   >
                     {(selection) => (
-                      <DriftPreview
-                        report={selection().report}
-                        errors={selection().errors}
-                        file={selection().file}
-                      />
+                      <box
+                        width="100%"
+                        minWidth={0}
+                        flexDirection="column"
+                        flexShrink={0}
+                      >
+                        <Show when={sourceSelection()}>
+                          {(source) => (
+                            <SourceNotice
+                              issue={source().issue}
+                              staged={source().staged}
+                              previewingLatest={source().previewingLatest}
+                              installed={source().installed}
+                            />
+                          )}
+                        </Show>
+                        <KitPreview
+                          item={selection().item}
+                          answers={selection().answers}
+                          scope={selection().scope}
+                        />
+                      </box>
                     )}
                   </Show>
                 }
               >
-                {(selection) => (
-                  <box
-                    width="100%"
-                    minWidth={0}
-                    flexDirection="column"
-                    flexShrink={0}
-                  >
-                    <Show when={sourceSelection()}>
-                      {(source) => (
-                        <SourceNotice
-                          issue={source().issue}
-                          staged={source().staged}
-                          previewingLatest={source().previewingLatest}
-                        />
-                      )}
-                    </Show>
-                    <KitPreview
-                      item={selection().item}
-                      answers={selection().answers}
-                      scope={selection().scope}
-                    />
-                  </box>
-                )}
+                {(selection) => <UpdatePreview {...selection()} />}
               </Show>
             </scrollbox>
           </box>
@@ -796,15 +912,17 @@ export function App(props: {
           ? "Left/Right or h/l: Back/Next · Space/Enter: Next · Esc: Skip · ↑↓/PgUp/PgDn: scroll · q q quit"
           : editing()?.kind === "location"
             ? "Type a location · ↑↓ rows · Enter finish input · Esc accept group"
-            : editing()?.kind === "question"
-              ? "Type an answer · ↑↓ questions · Enter finish input · Esc accept kit"
-              : editing()?.kind === "catalog"
-                ? "Type an external catalog path or URL · Enter register · Esc stop editing"
-                : model.settingsForm
-                  ? "↑↓/jk rows · ←→/hl actions · Space select · Esc accept group · Cancel discards"
-                  : formOpen()
-                    ? "↑↓/jk questions · ←→/hl options · Space select/toggle · Esc accept kit · Cancel discards"
-                    : "↑↓/jk rows · ←→/hl options · Space select · Tab pages · ? walkthrough · r refresh · Esc back · Shift+↑↓/PgUp/PgDn details · q q quit"}
+            : editing()?.kind === "search"
+              ? "Type to filter kits · ↑↓ kits · Enter/Esc keep filter · Tab pages · Shift+↑↓ details"
+              : editing()?.kind === "question"
+                ? "Type an answer · ↑↓ questions · Enter finish input · Esc accept kit"
+                : editing()?.kind === "catalog"
+                  ? "Type an external catalog path or URL · Enter register · Esc stop editing"
+                  : model.settingsForm
+                    ? "↑↓/jk rows · ←→/hl actions · Space select · Esc accept group · Cancel discards"
+                    : formOpen()
+                      ? "↑↓/jk questions · ←→/hl options · Space select/toggle · Esc accept kit · Cancel discards"
+                      : `${currentPage() === 0 && model.catalog ? "/ search · " : ""}↑↓/jk rows · ←→/hl options · Space select · Tab pages · ? walkthrough · r refresh · Esc back · Shift+↑↓/PgUp/PgDn details · q q quit`}
       </text>
     </box>
   )

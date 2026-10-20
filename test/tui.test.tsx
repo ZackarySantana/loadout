@@ -698,7 +698,7 @@ describe("rendered keyboard workflows", () => {
     expect(ui.frame()).toContain("write files.")
     await ui.select("register")
     await ui.go("source")
-    expect(ui.frame()).toContain("External catalog JSON path or HTTPS URL")
+    expect(ui.frame()).toContain("Catalog path or URL")
     expect(ui.input("source").focused).toBe(true)
     await ui.setup.mockInput.typeText(ui.source)
     await ui.setup.flush()
@@ -719,7 +719,14 @@ describe("rendered keyboard workflows", () => {
     })
     expect(
       (await reopened.catalogs()).catalogs.map((catalog) => catalog.id),
-    ).toEqual([ui.model.catalogs[0]!.id, "loadout", "fixture"])
+    ).toEqual([
+      ui.model.catalogs[0]!.id,
+      "loadout",
+      "matt-pocock",
+      "anthropic",
+      "ponytail",
+      "fixture",
+    ])
     expect(await Bun.file(join(ui.repository, "AGENTS.md")).exists()).toBe(
       false,
     )

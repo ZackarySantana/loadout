@@ -7,6 +7,8 @@ import type {
 } from "../backend/service"
 import { theme } from "./theme"
 import { displayKitKey } from "../domain/catalog"
+import { SourceMetadata } from "./UpdatePreview"
+import type { LoadedKit } from "../domain/kit"
 
 const safe = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
@@ -43,6 +45,7 @@ export function SourceNotice(props: {
   issue: KitDrift
   staged: boolean
   previewingLatest?: boolean
+  installed?: LoadedKit
 }) {
   return (
     <box
@@ -67,13 +70,19 @@ export function SourceNotice(props: {
           : props.previewingLatest && props.issue.status === "changed"
             ? "This preview uses the current catalog definition. Accept the configuration, then Review and Apply to update installed files."
             : props.issue.status === "changed"
-              ? "Installed files use the saved definition. Choose Use catalog update to review the current source, or keep configuring the snapshot."
+              ? "Installed files use the saved definition. Review offers available kit updates; the saved snapshot remains usable."
               : `${safe(props.issue.reason)}. The saved kit is kept and can still be configured or removed.`}
       </text>
       <Show when={props.issue.origin}>
         <text fg={theme.muted} wrapMode="word" flexShrink={0}>
           {safe(props.issue.origin!.source)}
         </text>
+      </Show>
+      <Show when={props.installed}>
+        {(installed) => <SourceMetadata item={installed()} label="Installed" />}
+      </Show>
+      <Show when={props.issue.latest}>
+        {(latest) => <SourceMetadata item={latest()} label="Available" />}
       </Show>
     </box>
   )

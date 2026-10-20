@@ -31,12 +31,14 @@ import {
 } from "../domain/kit"
 import {
   builtin,
+  defaultRemoteSources,
   loadCatalog,
   loadCatalogListing,
   normalizeSource,
   type CatalogListing,
 } from "./catalogs"
 import { canonical, inspectDrift, sourceKit, type DriftReport } from "./drift"
+import { sameSourceContent, stableReviewData } from "../domain/content-identity"
 export type { DriftReport, KitDrift, KitDriftStatus, FileDrift } from "./drift"
 import {
   assertSafePath,
@@ -65,6 +67,16 @@ export interface Selection {
   item: LoadedKit
   scope: Scope
   answers: Answers
+  definition?: "catalog" | "saved"
+  /** Update the active installation without replacing an independent Both fallback. */
+  update?: boolean
+}
+export interface KitUpdate {
+  key: string
+  scope: Scope
+  installed: LoadedKit
+  latest: LoadedKit
+  decision: "keep" | "update" | "remove"
 }
 export interface Change {
   path: string
@@ -83,6 +95,7 @@ export interface Plan {
   settingsChanged: boolean
   resolvedLocations: ResolvedDestinationGroup[]
   ignore: IgnoreReport
+  updates: KitUpdate[]
 }
 interface NodeChange extends Change {
   beforeNode: NodeSnapshot
@@ -99,6 +112,7 @@ interface PlanData {
   ignore: IgnorePlan
   repositoryOutputs: Map<string, Set<string>>
   previousState: State
+  updates: KitUpdate[]
 }
 const journalSchema = z.object({
   before: z.string().nullable(),
@@ -272,7 +286,38 @@ export class LoadoutService {
     return { catalogs, errors }
   }
 
-  async status(): Promise<{
+  async browseCatalog(
+    source: string,
+    options?: { fresh?: boolean },
+  ): Promise<Catalog> {
+    await this.refresh()
+    if (
+      ![
+        builtin,
+        ...defaultRemoteSources,
+        ...this.state.catalogs,
+        join(this.repository, ".loadout/kits"),
+      ].includes(source)
+    )
+      throw new Error("Catalog is not registered or automatic")
+    const listing = await loadCatalogListing(
+      this.state.catalogs,
+      this.repository,
+      {
+        hydrateSources: [source],
+        installed: this.installed(),
+        forceRefresh: options?.fresh,
+      },
+    )
+    const catalog = listing.catalogs.find(
+      (catalog) => catalog.source === source,
+    )
+    if (!catalog)
+      throw new Error(listing.failures.get(source) ?? "Catalog is unavailable")
+    return structuredClone(catalog)
+  }
+
+  async status(options?: { fresh?: boolean }): Promise<{
     catalogs: Catalog[]
     errors: string[]
     drift: DriftReport
@@ -283,6 +328,7 @@ export class LoadoutService {
     const listing = await loadCatalogListing(
       this.state.catalogs,
       this.repository,
+      { installed: this.installed(), forceRefresh: options?.fresh },
     )
     const drift = await inspectDrift(this.state, this.repository, listing)
     return structuredClone({
@@ -309,10 +355,11 @@ export class LoadoutService {
       ...this.state.global,
     }
     return structuredClone(
-      Object.values(kits).map(({ key, kit, origin }) => ({
+      Object.values(kits).map(({ key, kit, origin, installedAt }) => ({
         key,
         kit,
         ...(origin ? { origin } : {}),
+        ...(installedAt ? { installedAt } : {}),
       })),
     )
   }
@@ -343,10 +390,12 @@ export class LoadoutService {
         "Repo is automatic: add kit YAML files to .loadout/kits/. External catalogs can only be registered globally.",
       )
     const normalized = await normalizeSource(source, this.repository)
-    const catalog = await loadCatalog(normalized, false, {
-      source: normalized,
-      scope: "global",
-    })
+    const catalog = await loadCatalog(
+      normalized,
+      false,
+      { source: normalized, scope: "global" },
+      { hydrateSources: [] },
+    )
     await this.locked(async () => {
       await this.reload()
       const existing = await this.catalogs()
@@ -429,6 +478,12 @@ export class LoadoutService {
         ? undefined
         : outputSettingsSchema.parse(structuredClone(settings))
     for (const selection of selections) {
+      if (selection.definition !== undefined)
+        selection.definition = z
+          .enum(["catalog", "saved"])
+          .parse(selection.definition)
+      if (selection.update !== undefined)
+        selection.update = z.boolean().parse(selection.update)
       selection.item.kit = kitSchema.parse(selection.item.kit)
       if (selection.item.origin)
         selection.item.origin = catalogOriginSchema.parse(selection.item.origin)
@@ -445,9 +500,53 @@ export class LoadoutService {
     const summary: string[] = []
     const seen = new Set<string>()
     const sources: LoadedKit[] = []
-    let listing: CatalogListing | undefined
+    const installed = this.installed()
+    const listing = await loadCatalogListing(
+      previous.catalogs,
+      this.repository,
+      {
+        installed: [
+          ...new Map(
+            [
+              ...installed,
+              ...selections
+                .filter(
+                  (selection) =>
+                    selection.definition !== "saved" &&
+                    selection.scope !== "none",
+                )
+                .map((selection) => selection.item),
+            ].map((item) => [canonical([item.origin?.source, item.key]), item]),
+          ).values(),
+        ],
+        forceRefresh: true,
+      },
+    )
+    const drift = await inspectDrift(previous, this.repository, listing)
+    const updates: KitUpdate[] = drift.kits.flatMap((entry) => {
+      const snapshot = installed.find((item) => item.key === entry.key)
+      if (entry.status !== "changed" || !entry.latest || !snapshot) return []
+      const selection = selections.find(
+        (selection) => selection.item.key === entry.key,
+      )
+      return [
+        {
+          key: entry.key,
+          scope: entry.scope,
+          installed: snapshot,
+          latest: entry.latest,
+          decision:
+            selection?.scope === "none"
+              ? ("remove" as const)
+              : selection && sameSourceContent(selection.item, entry.latest)
+                ? ("update" as const)
+                : ("keep" as const),
+        },
+      ]
+    })
     const sourceCache = new Map<string, Promise<CatalogListing>>()
-    for (const { item, scope, answers } of selections) {
+    sourceCache.set(this.repository, Promise.resolve(listing))
+    for (const { item, scope, answers, definition, update } of selections) {
       if (seen.has(item.key))
         throw new Error(`Duplicate selection: ${item.key}`)
       if (
@@ -465,10 +564,11 @@ export class LoadoutService {
           (saved) =>
             saved &&
             canonical(saved.kit) === canonical(item.kit) &&
-            (!item.origin ||
-              canonical(saved.origin) === canonical(item.origin)),
+            (!item.origin || sameSourceContent(saved, item)),
         )
-        if (saved) {
+        if (definition === "saved" && !saved)
+          throw new Error(`Saved snapshot is unavailable: ${item.key}`)
+        if (saved && definition !== "catalog") {
           // Configuring an unchanged saved snapshot works offline and keeps its original provenance.
           item.origin = saved.origin
         } else {
@@ -477,11 +577,6 @@ export class LoadoutService {
             previous.global[item.key] ??
             previous.repositories[this.repository]?.[item.key]
           )?.origin
-          listing ??= await loadCatalogListing(
-            previous.catalogs,
-            this.repository,
-          )
-          sourceCache.set(this.repository, Promise.resolve(listing))
           const current = await sourceKit(
             item,
             listing,
@@ -490,7 +585,12 @@ export class LoadoutService {
           )
           // Untracked, originless programmatic kits remain supported; live catalog selections must match.
           if (item.origin || current.status !== "untracked") {
-            if (current.status !== "current")
+            if (
+              current.status !== "current" ||
+              (item.origin &&
+                current.latest &&
+                !sameSourceContent(item, current.latest))
+            )
               throw new Error(
                 `Kit source changed or is unavailable; select and review its current definition: ${item.key}: ${current.reason}`,
               )
@@ -505,13 +605,28 @@ export class LoadoutService {
         answers: scope === "none" ? {} : validateAnswers(item.kit, answers),
         ...(item.origin ? { origin: item.origin } : {}),
       }
-      if (scope === "global" || scope === "both") next.global[item.key] = config
+      if (scope === "global" || scope === "both")
+        next.global[item.key] = structuredClone(config)
       else delete next.global[item.key]
-      if (scope === "repository" || scope === "both") repo[item.key] = config
-      else delete repo[item.key]
+      if (scope === "repository" || scope === "both") {
+        const fallback = previous.repositories[this.repository]?.[item.key]
+        repo[item.key] =
+          update && scope === "both" && previous.global[item.key] && fallback
+            ? structuredClone(fallback)
+            : structuredClone(config)
+      } else delete repo[item.key]
       summary.push(
         `${item.kit.name}: ${scope === "none" ? "remove from global and this repository" : scope}`,
       )
+      if (
+        update &&
+        scope === "both" &&
+        previous.global[item.key] &&
+        previous.repositories[this.repository]?.[item.key]
+      )
+        summary.push(
+          `${item.kit.name}: update the active global installation; retain this repository's independent fallback definition and answers`,
+        )
     }
     const previousSettings = this.settings()
     const effectiveSettings = structuredClone(
@@ -605,6 +720,7 @@ export class LoadoutService {
         this.repository,
       ]),
       ignore: structuredClone(ignore.report),
+      updates: structuredClone(updates),
     }
     this.plans.set(plan, {
       before: beforeState,
@@ -615,6 +731,7 @@ export class LoadoutService {
       ignore: structuredClone(ignore),
       repositoryOutputs: structuredClone(repositoryOutputs),
       previousState: structuredClone(previous),
+      updates: structuredClone(updates),
       materializedSources: new Set(
         Object.entries(previous.managed).flatMap(([path, managed]) =>
           managed.type === "symlink" &&
@@ -643,21 +760,24 @@ export class LoadoutService {
       throw new Error("This review belongs to a different Loadout session")
     return createHash("sha256")
       .update(
-        canonical({
-          home: this.home,
-          repository: this.repository,
-          before: data.before,
-          state: data.state,
-          changes: data.changes,
-          sources: data.sources,
-          files: data.files,
-          materializedSources: [...data.materializedSources].sort(),
-          linkSources: [...data.linkSources].sort(),
-          ignore: data.ignore,
-          repositoryOutputs: [...data.repositoryOutputs]
-            .map(([root, paths]) => [root, [...paths].sort()])
-            .sort(([a], [b]) => String(a).localeCompare(String(b))),
-        }),
+        canonical(
+          stableReviewData({
+            home: this.home,
+            repository: this.repository,
+            before: data.before,
+            state: data.state,
+            changes: data.changes,
+            sources: data.sources,
+            updates: data.updates,
+            files: data.files,
+            materializedSources: [...data.materializedSources].sort(),
+            linkSources: [...data.linkSources].sort(),
+            ignore: data.ignore,
+            repositoryOutputs: [...data.repositoryOutputs]
+              .map(([root, paths]) => [root, [...paths].sort()])
+              .sort(([a], [b]) => String(a).localeCompare(String(b))),
+          }),
+        ),
       )
       .digest("hex")
   }
@@ -674,6 +794,7 @@ export class LoadoutService {
         const listing = await loadCatalogListing(
           this.state.catalogs,
           this.repository,
+          { installed: data.sources, forceRefresh: true },
         )
         const cache = new Map<string, Promise<CatalogListing>>([
           [this.repository, Promise.resolve(listing)],
@@ -685,7 +806,11 @@ export class LoadoutService {
             this.state.catalogs,
             cache,
           )
-          if (current.status !== "current")
+          if (
+            current.status !== "current" ||
+            !current.latest ||
+            !sameSourceContent(item, current.latest)
+          )
             throw new Error(
               `Kit source changed since review; review again: ${item.key}: ${current.reason}`,
             )
@@ -737,7 +862,26 @@ export class LoadoutService {
         }
         expectedNodes.set(change.path, current)
       }
-      const after = JSON.stringify(data.state, null, 2) + "\n"
+      const committed = structuredClone(data.state)
+      const installedAt = new Date().toISOString()
+      const stamp = (
+        configs: State["global"],
+        previous: State["global"] = {},
+      ) => {
+        for (const [key, config] of Object.entries(configs)) {
+          const saved = previous[key]
+          if (saved && sameSourceContent(saved, config)) {
+            if (saved.installedAt) config.installedAt = saved.installedAt
+            else delete config.installedAt
+          } else config.installedAt = installedAt
+        }
+      }
+      stamp(committed.global, data.previousState.global)
+      for (const [repository, configs] of Object.entries(
+        committed.repositories,
+      ))
+        stamp(configs, data.previousState.repositories[repository])
+      const after = JSON.stringify(committed, null, 2) + "\n"
       const changes = data.changes
       const journal = { before: data.before, after, changes }
       await atomicWrite(

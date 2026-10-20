@@ -1,0 +1,8 @@
+{
+  "type": "remote-skills",
+  "id": "matt-pocock",
+  "name": "Matt Pocock",
+  "repo": "mattpocock/skills",
+  "directory": "skills",
+  "license": "LICENSE"
+}

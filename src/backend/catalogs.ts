@@ -12,6 +12,17 @@ import {
 } from "../domain/kit"
 import { repositoryCatalogId } from "../domain/catalog"
 import { assertSafeDirectory } from "./files"
+import { remoteSkillsSourceSchema } from "../domain/catalog-source"
+import {
+  contentHash,
+  defaultRemoteDescriptor,
+  defaultRemoteSources,
+  githubSource,
+  loadRemoteCatalog,
+  type CatalogLoadOptions,
+} from "./remote-catalogs"
+export { defaultRemoteSources } from "./remote-catalogs"
+export type { CatalogLoadOptions } from "./remote-catalogs"
 
 declare const LOADOUT_BUNDLED: boolean
 export const builtin = fileURLToPath(
@@ -26,7 +37,11 @@ const maxSize = 2_000_000
 
 async function readSource(source: string): Promise<string> {
   if (source.startsWith("https://")) {
+    const url = new URL(source)
+    if (url.username || url.password || url.hash)
+      throw new Error("Source URLs must not contain credentials or fragments")
     const response = await fetch(source, {
+      cache: "no-store",
       signal: AbortSignal.timeout(15_000),
       redirect: "error",
     })
@@ -47,14 +62,19 @@ async function readSource(source: string): Promise<string> {
     } finally {
       await reader.cancel()
     }
-    return Buffer.concat(chunks).toString("utf8")
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      Buffer.concat(chunks),
+    )
   }
   if (/^[a-z]+:/i.test(source))
     throw new Error("Catalog sources must be local paths or HTTPS URLs")
   const info = await stat(source)
   if (!info.isFile()) throw new Error(`Source is not a regular file: ${source}`)
   if (info.size > maxSize) throw new Error(`Source is too large: ${source}`)
-  const text = await readFile(source, "utf8")
+  const text = new TextDecoder("utf-8", {
+    fatal: true,
+    ignoreBOM: true,
+  }).decode(await readFile(source))
   if (Buffer.byteLength(text) > maxSize)
     throw new Error(`Source is too large: ${source}`)
   return text
@@ -71,7 +91,13 @@ export async function normalizeSource(
   source: string,
   cwd: string,
 ): Promise<string> {
-  if (source.startsWith("https://")) return new URL(source).href
+  if (source.startsWith("https://")) {
+    const url = new URL(source)
+    if (url.username || url.password || url.hash)
+      throw new Error("Source URLs must not contain credentials or fragments")
+    if (url.hostname === "github.com") githubSource(url.href)
+    return url.href
+  }
   if (/^[a-z]+:/i.test(source)) throw new Error("Use a local path or HTTPS URL")
   return realpath(resolve(cwd, source))
 }
@@ -109,8 +135,30 @@ export async function loadCatalog(
   source: string,
   permanent = false,
   origin?: CatalogOrigin,
+  options?: CatalogLoadOptions,
 ): Promise<Catalog> {
-  const catalog = catalogSchema.parse(JSON.parse(await readSource(source)))
+  const remote = async (
+    descriptor: ReturnType<typeof remoteSkillsSourceSchema.parse>,
+  ) => {
+    if (
+      !permanent &&
+      (descriptor.id === "loadout" || /^repo-[a-f0-9]{64}$/.test(descriptor.id))
+    )
+      throw new Error("The Loadout and automatic Repo catalog IDs are reserved")
+    return loadRemoteCatalog(source, descriptor, permanent, origin, options)
+  }
+  const direct = githubSource(source)
+  if (direct) return remote(direct)
+  const parsed: unknown = JSON.parse(await readSource(source))
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    "type" in parsed &&
+    parsed.type === "remote-skills"
+  ) {
+    return remote(remoteSkillsSourceSchema.parse(parsed))
+  }
+  const catalog = catalogSchema.parse(parsed)
   if (
     !permanent &&
     (catalog.id === "loadout" || /^repo-[a-f0-9]{64}$/.test(catalog.id))
@@ -120,9 +168,8 @@ export async function loadCatalog(
   const results = await Promise.all(
     catalog.kits.map(async (entry) => {
       try {
-        const kit = parseKit(
-          await readSource(await kitSource(source, entry.source)),
-        )
+        const raw = await readSource(await kitSource(source, entry.source))
+        const kit = parseKit(raw)
         if (kit.id !== entry.id)
           throw new Error(
             `Kit ID mismatch: expected ${entry.id}, got ${kit.id}`,
@@ -130,7 +177,13 @@ export async function loadCatalog(
         return {
           key: `${catalog.id}/${kit.id}`,
           kit,
-          origin: origin ? { ...origin, catalogId: catalog.id } : undefined,
+          origin: origin
+            ? {
+                ...origin,
+                catalogId: catalog.id,
+                contentHash: contentHash({ "kit.yaml": Buffer.from(raw) }),
+              }
+            : undefined,
         }
       } catch (error) {
         unavailableKits.push({
@@ -213,7 +266,8 @@ export async function loadRepositoryCatalog(repository: string): Promise<{
         throw new Error(
           "Repo kit symlinks must stay within .loadout/kits and the checkout",
         )
-      const kit = parseKit(await readSource(path))
+      const raw = await readSource(path)
+      const kit = parseKit(raw)
       const key = `${id}/${kit.id}`
       inventory.set(file, { key })
       candidates.push({
@@ -227,6 +281,7 @@ export async function loadRepositoryCatalog(repository: string): Promise<{
             scope: "repository",
             repository,
             file,
+            contentHash: contentHash({ "kit.yaml": Buffer.from(raw) }),
           },
         },
       })
@@ -260,6 +315,7 @@ export async function loadRepositoryCatalog(repository: string): Promise<{
 export async function loadCatalogListing(
   globalSources: string[],
   repository?: string,
+  options: CatalogLoadOptions = {},
 ): Promise<CatalogListing> {
   const catalogs: Catalog[] = []
   const errors: string[] = []
@@ -290,12 +346,48 @@ export async function loadCatalogListing(
     failures.set(builtin, message(error))
     errors.push(`${builtin}: ${message(error)}`)
   }
-  for (const source of new Set(globalSources)) {
+  for (const source of defaultRemoteSources) {
     try {
-      const catalog = await loadCatalog(source, false, {
+      const catalog = await loadCatalog(
         source,
-        scope: "global",
+        true,
+        { source, scope: "global" },
+        { ...options, hydrateSources: options.hydrateSources ?? [] },
+      )
+      catalogs.push(catalog)
+      errors.push(
+        ...(catalog.issues ?? []).map((issue) => `${source}: ${issue}`),
+      )
+    } catch (error) {
+      // Retain a browseable header even when an installed remote source is offline.
+      const descriptor = defaultRemoteDescriptor(source)!
+      catalogs.push({
+        id: descriptor.id,
+        name: descriptor.name,
+        source,
+        permanent: true,
+        automatic: true,
+        kind: "remote",
+        hydration: "deferred",
+        kits: [],
+        issues: [message(error)],
       })
+      failures.set(source, message(error))
+      errors.push(`${source}: ${message(error)}`)
+    }
+  }
+  for (const source of new Set(globalSources)) {
+    if (defaultRemoteSources.includes(source)) continue
+    try {
+      const catalog = await loadCatalog(
+        source,
+        false,
+        {
+          source,
+          scope: "global",
+        },
+        { ...options, hydrateSources: options.hydrateSources ?? [] },
+      )
       if (catalogs.some((c) => c.id === catalog.id))
         throw new Error(
           `Conflicting catalog ID ${catalog.id} from different sources; refusing ${source}`,

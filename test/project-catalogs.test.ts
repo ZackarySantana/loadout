@@ -238,7 +238,7 @@ describe("shared project catalogs and drift", () => {
     const saved = service.installed()[0]!
     const statePath = join(home, ".loadout/state.json")
     const stateBefore = await text(statePath)
-    // YAML/object mapping order is not a semantic definition change.
+    // Even a YAML mapping-order change changes the reviewed source bytes.
     await put(
       join(repository, ".loadout/kits/guide.yaml"),
       stringify(reverseKeys(original)),
@@ -246,7 +246,7 @@ describe("shared project catalogs and drift", () => {
     expect(
       (await service.status()).drift.kits.find((kit) => kit.key === saved.key)
         ?.status,
-    ).toBe("current")
+    ).toBe("changed")
     const latestKit = guide("guide", "Updated")
     latestKit.questions.push(
       {
@@ -513,7 +513,9 @@ describe("shared project catalogs and drift", () => {
     await select(a, originalA, "both", { project: "Alpha" })
     const b = await open(otherRepository)
     expect((await available(b)).kit.name).toBe("From B guide")
-    expect(b.installed()).toEqual([originalA])
+    expect(b.installed().map(({ installedAt, ...item }) => item)).toEqual([
+      originalA,
+    ])
     expect(
       (await b.status()).drift.kits.find((kit) => kit.key === originalA.key),
     ).toMatchObject({
@@ -530,7 +532,9 @@ describe("shared project catalogs and drift", () => {
     expect(changed.status).toBe("changed")
     expect(changed.latest?.kit.name).toBe("Changed A guide")
     expect(changed.latest?.origin?.source).toBe(sourceA)
-    expect(b.installed()).toEqual([originalA])
+    expect(b.installed().map(({ installedAt, ...item }) => item)).toEqual([
+      originalA,
+    ])
     expect(await text(join(home, "context/guide.txt"))).toBe("From A: Alpha\n")
     // Leave the catalog subscribed but take A's YAML offline. B must not fill the gap.
     await rm(join(repository, ".loadout/kits/guide.yaml"))
@@ -545,7 +549,9 @@ describe("shared project catalogs and drift", () => {
       scope: "repository",
       answers: { project: "Alpha" },
     })
-    expect(a.installed()).toEqual([originalA])
+    expect(a.installed().map(({ installedAt, ...item }) => item)).toEqual([
+      originalA,
+    ])
     expect(await text(join(home, "context/guide.txt"))).toBeNull()
     expect(await text(join(repository, "context/guide.txt"))).toBe(
       "From A: Alpha\n",

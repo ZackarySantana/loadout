@@ -12,6 +12,7 @@ const configuredSchema = z
     kit: kitSchema,
     answers: answerSchema,
     origin: catalogOriginSchema.optional(),
+    installedAt: z.iso.datetime().optional(),
   })
   .strict()
 const selectionSchema = z.record(z.string(), configuredSchema)

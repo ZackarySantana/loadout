@@ -1,0 +1,8 @@
+{
+  "type": "remote-skills",
+  "id": "ponytail",
+  "name": "Ponytail",
+  "repo": "DietrichGebert/ponytail",
+  "directory": "skills",
+  "license": "LICENSE"
+}

@@ -33,7 +33,11 @@ export function CatalogPreview(props: {
           wrapMode="word"
           flexShrink={0}
         >
-          {props.catalog.kind === "repo" ? "Repo catalog" : "External catalog"}
+          {props.catalog.kind === "remote"
+            ? "Remote catalog"
+            : props.catalog.kind === "repo"
+              ? "Repo catalog"
+              : "External catalog"}
         </text>
         <Show when={props.catalog.kind === "repo"}>
           <text fg={color.muted} wrapMode="word" flexShrink={0}>
@@ -42,7 +46,10 @@ export function CatalogPreview(props: {
         </Show>
       </Show>
       <text fg={color.sage} flexShrink={0}>
-        KITS · {props.catalog.kits.length}
+        {props.catalog.hydration === "deferred" ||
+        props.catalog.hydration === "partial"
+          ? "REMOTE SKILLS · Browse to load"
+          : `KITS · ${props.catalog.kits.length}`}
       </text>
       <For each={props.catalog.kits}>
         {({ kit }) => (

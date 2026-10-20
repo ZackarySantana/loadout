@@ -2,9 +2,12 @@ import { createMemo, For, Show, type JSX } from "solid-js"
 import { diffLines } from "diff"
 import type { DriftReport, Plan, Selection } from "../backend/service"
 import { sourceLabels } from "./DriftPreview"
+import { sameSourceContent } from "../domain/content-identity"
 import { scopeColor, theme } from "./theme"
 import { displayKitKey } from "../domain/catalog"
 import { destinationGroups } from "../domain/settings"
+import type { LoadedKit } from "../domain/kit"
+import { UpdatePreview } from "./UpdatePreview"
 
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
@@ -19,6 +22,7 @@ export interface ReviewPreviewProps {
   changeIndex?: number
   drift?: DriftReport
   errors?: string[]
+  installed?: readonly LoadedKit[]
 }
 
 function Section(props: {
@@ -47,6 +51,34 @@ function Section(props: {
 
 /** Read-only review data: no filesystem work and no Markdown parsing. */
 export function ReviewPreview(props: ReviewPreviewProps) {
+  const updates = createMemo(
+    () =>
+      props.plan?.updates ??
+      props.drift?.kits.flatMap((issue) => {
+        const installed = props.installed?.find(
+          (item) => item.key === issue.key,
+        )
+        if (issue.status !== "changed" || !issue.latest || !installed) return []
+        const selection = props.selections.find(
+          (item) => item.item.key === issue.key,
+        )
+        return [
+          {
+            key: issue.key,
+            installed,
+            latest: issue.latest,
+            scope: issue.scope,
+            decision:
+              selection?.scope === "none"
+                ? "remove"
+                : selection && !sameSourceContent(selection.item, installed)
+                  ? "update"
+                  : "keep",
+          },
+        ]
+      }) ??
+      [],
+  )
   const locationScopes = createMemo(() => {
     const scopes = new Map<
       string,
@@ -116,6 +148,33 @@ export function ReviewPreview(props: ReviewPreviewProps) {
       flexShrink={0}
       gap={1}
     >
+      <Show when={!change() && updates().length}>
+        <Section title="Kit updates" accent={theme.warning}>
+          <For each={updates()}>
+            {(issue) => {
+              const selection = () =>
+                props.selections.find((item) => item.item.key === issue.key)
+              return (
+                <box flexDirection="column" flexShrink={0} marginBottom={1}>
+                  <UpdatePreview
+                    installed={issue.installed}
+                    latest={issue.latest}
+                    scope={selection()?.scope ?? issue.scope}
+                    staged={issue.decision === "update"}
+                    removing={issue.decision === "remove"}
+                    preservesFallback={
+                      issue.decision === "update" &&
+                      issue.scope === "both" &&
+                      selection()?.scope === "both" &&
+                      selection()?.update === true
+                    }
+                  />
+                </box>
+              )
+            }}
+          </For>
+        </Section>
+      </Show>
       <Show
         when={change()}
         fallback={

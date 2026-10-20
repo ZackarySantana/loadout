@@ -78,7 +78,9 @@ export function renderState(
           for (const [file, content] of Object.entries(output.files))
             add(join(location, output.name, file), {
               type: "file",
-              content: text(content),
+              // Adapted upstream resources are literal files, not Loadout templates.
+              // They use exact-file management, so instruction-block markers are data too.
+              content: config.origin?.remote ? content : text(content),
             })
       } else if (output.type === "agent") {
         for (const [harness, location] of Object.entries(nativeRoots)) {
