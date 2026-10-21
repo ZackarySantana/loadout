@@ -11,6 +11,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { basename, dirname, join, relative } from "node:path"
 import { stringify } from "yaml"
 import { LoadoutService } from "../src/backend/service"
@@ -29,7 +30,7 @@ afterEach(async () => {
 })
 
 async function fixture() {
-  const root = await mkdtemp("/tmp/opencode/loadout-project-catalogs-")
+  const root = await mkdtemp(join(tmpdir(), "loadout-project-catalogs-"))
   fixtures.push(root)
   const home = join(root, "member-a")
   const otherHome = join(root, "member-b")

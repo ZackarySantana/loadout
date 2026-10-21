@@ -11,6 +11,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { stringify } from "yaml"
 import { LoadoutService } from "../src/backend/service"
@@ -29,7 +30,7 @@ afterEach(async () => {
 })
 
 async function fixture() {
-  const root = await mkdtemp("/tmp/opencode/loadout-backend-")
+  const root = await mkdtemp(join(tmpdir(), "loadout-backend-"))
   fixtures.push(root)
   const home = join(root, "home")
   const repository = join(root, "repo-a")
@@ -626,7 +627,7 @@ describe("backend integration flows", () => {
     const before = await snapshot(root)
     for (const path of [
       "../escaped.txt",
-      "/tmp/opencode/escaped.txt",
+      join(outside, "escaped.txt"),
       "context/../../escaped.txt",
     ]) {
       await expect(

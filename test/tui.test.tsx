@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { testRender } from "@opentui/solid"
 import { TestRecorder } from "@opentui/core/testing"
@@ -39,7 +40,7 @@ async function fixture(
   richPreview = false,
   neighbors = false,
 ) {
-  const root = await mkdtemp("/tmp/opencode/loadout-tui-")
+  const root = await mkdtemp(join(tmpdir(), "loadout-tui-"))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const home = join(root, "home")
   const repository = join(root, "repo")

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { stripVTControlCharacters } from "node:util"
@@ -113,7 +114,7 @@ function terminalScreen(cols: number, rows: number) {
 test("built CLI navigates bundled kits and updates a live answer in a real PTY outside the checkout", async () => {
   const cli = await bundle()
 
-  const root = await mkdtemp("/tmp/opencode/loadout-cli-")
+  const root = await mkdtemp(join(tmpdir(), "loadout-cli-"))
   const home = join(root, "home")
   const repository = join(root, "external-repo")
   await Promise.all([home, repository].map((path) => mkdir(path)))
@@ -248,7 +249,7 @@ test("built CLI navigates bundled kits and updates a live answer in a real PTY o
 
 test("CLI catalogs follow the repository and status reports source/output drift without writing", async () => {
   const cli = await bundle()
-  const root = await mkdtemp("/tmp/opencode/loadout-cli-status-")
+  const root = await mkdtemp(join(tmpdir(), "loadout-cli-status-"))
   try {
     const home = join(root, "home"),
       repository = join(root, "repo-a"),
