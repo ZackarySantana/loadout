@@ -43,10 +43,10 @@ jobs:
           github-token: ${{ github.token }}
           version: mise exec -- bun scripts/version.ts
           commitMode: github-api
-          title: "Release Loadout"
+          title: "chore(release): publish Loadout"
           commit: "chore: version Loadout"
           createGithubReleases: false
-      - name: Explain automatic publishing in release PR
+      - name: Update release PR title and publishing instructions
         if: steps.changesets.outputs.pullRequestNumber != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -57,11 +57,17 @@ jobs:
           import { readFileSync, writeFileSync } from "node:fs";
           import { join } from "node:path";
 
+          // Changesets has already written the proposed version to the working tree.
+          const { name, version } = JSON.parse(readFileSync("package.json", "utf8"));
+          if (name !== "@lidtop/loadout" || typeof version !== "string" || !version || /\s/.test(version)) {
+            throw new Error("Expected the proposed @lidtop/loadout version in package.json");
+          }
+          const title = `chore(release): publish Loadout v${version}`;
           const body = readFileSync(join(process.env.RUNNER_TEMP, "release-pr-body.md"), "utf8").replace(
             "publish to npm yourself or [setup this action to publish automatically](https://github.com/changesets/action#with-publishing)",
             "the package will be published to npm automatically by this workflow's OIDC-protected publish job",
           );
-          writeFileSync(join(process.env.RUNNER_TEMP, "release-pr-body.json"), JSON.stringify({ body }));
+          writeFileSync(join(process.env.RUNNER_TEMP, "release-pr-body.json"), JSON.stringify({ title, body }));
           NODE
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --input "$RUNNER_TEMP/release-pr-body.json" > /dev/null
 

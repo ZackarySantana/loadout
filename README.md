@@ -83,10 +83,12 @@ Bun runs source development and tests, and builds the Node-targeted CLI; npm man
 The CI and release workflows mirror Opcode’s pinned actions, mise setup, release PRs, and npm OIDC publishing, adapted to this single package and npm lockfile.
 
 1. Include a release note with a code change using `mise exec -- npm run changeset`. Select a patch, minor, or major bump and commit the generated `.changeset/*.md` file with your change.
-2. After merging to `main`, `.github/workflows/release.yml` opens or updates **Release Loadout**, proposing the combined version bump and changelog.
+2. After merging to `main`, `.github/workflows/release.yml` opens or updates a versioned release PR, such as **chore(release): publish Loadout v0.5.1**, proposing the combined version bump and changelog. Its title is refreshed automatically as the proposed version changes.
 3. Review and merge that release PR to publish. The publish job reruns checks, builds the package, and publishes only an unpublished version using npm provenance. Already published versions are skipped on subsequent pushes. Stable releases use `latest`; prerelease versions use `next`.
 
 Creating a GitHub Release or pushing a tag is not required. The workflow does not automatically create GitHub Releases.
+
+For matching commits on `main`, configure squash merging to use the **pull request title and description**. The bot's intermediate versioning commit can remain generic; the final squash commit inherits the versioned PR title and release notes.
 
 One-time setup:
 
