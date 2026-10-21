@@ -8,7 +8,7 @@ import {
   Show,
 } from "solid-js"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
-import type { ScrollBoxRenderable } from "@opentui/core"
+import type { ScrollBoxRenderable, InputRenderable } from "@opentui/core"
 import { pages, ScreenModel, type Row } from "./model"
 import { KitPreview } from "./KitPreview"
 import { CatalogPreview } from "./CatalogPreview"
@@ -23,6 +23,7 @@ import type { Scope } from "../domain/kit"
 import { canonical } from "../domain/content"
 import { UpdatePreview } from "./UpdatePreview"
 import { catalogCacheLabel } from "./cache-label"
+import { catalogProgressText } from "./CatalogProgress"
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
 const rowDescription = (row: Row) =>
@@ -225,6 +226,12 @@ export function App(props: {
     revision()
     return Boolean(model.form || model.settingsForm)
   })
+  const [searchInput, setSearchInput] = createSignal<InputRenderable>()
+  createEffect(() => {
+    const input = searchInput()
+    const locked = formOpen()
+    if (input && !input.isDestroyed) input.focusable = !locked
+  })
   const isEditing = (row: Row) => {
     const editor = editing()
     return (
@@ -266,7 +273,18 @@ export function App(props: {
         ? guideMessage()
         : walkthrough()
           ? "A quick tour. No kits, settings, or outputs are changed."
-          : `${model.busy ? "Working… " : ""}${safeText(model.message)}`
+          : model.catalogProgress
+            ? catalogProgressText(model.catalogProgress, dimensions().width - 2)
+            : `${model.busy ? "Working… " : ""}${safeText(model.message)}`
+  })
+  const progressVisible = createMemo(() => {
+    revision()
+    return (
+      !!model.catalogProgress &&
+      !exitPrompt() &&
+      !guideMessage() &&
+      !walkthrough()
+    )
   })
   let list: ScrollBoxRenderable | undefined
   let info: ScrollBoxRenderable | undefined
@@ -286,21 +304,61 @@ export function App(props: {
       setSavingGuidePreference(false)
     }
   }
+  let previousQuestions = new Set<string>()
+  let pendingReveal: { anchor: string; question: string } | undefined
+  let scrollSelectionIntoView = () => {}
   createEffect(() => {
-    const row = rows()[active()]
+    const currentRows = rows()
+    const row = currentRows[active()]
+    const revealed =
+      row?.kind === "input"
+        ? currentRows
+            .slice(active() + 1)
+            .find(
+              (candidate) =>
+                candidate.question && !previousQuestions.has(candidate.id),
+            )
+        : undefined
+    previousQuestions = new Set(
+      currentRows
+        .filter((candidate) => candidate.question)
+        .map((candidate) => candidate.id),
+    )
+    if (revealed && row)
+      pendingReveal = { anchor: row.id, question: revealed.id }
+    if (pendingReveal?.anchor !== row?.id) pendingReveal = undefined
     if (row?.kind === "search") {
       // Search stays pinned above the list while results start at the top.
-      list?.scrollTo(0)
+      scrollSelectionIntoView = () => {
+        if (list && !list.isDestroyed) list.scrollTo(0)
+      }
+      scrollSelectionIntoView()
       return
     }
     const id = row?.choices
       ? `${row.id}:option:${row.focusedOptionIndex ?? 0}`
-      : row?.id
+      : row?.kind === "input" ||
+          row?.kind === "source" ||
+          row?.kind === "location-input"
+        ? `${row.id}:input`
+        : row?.id
     dimensions()
-    if (id)
-      queueMicrotask(() => {
-        if (list && !list.isDestroyed) list.scrollChildIntoView(id)
-      })
+    const revealedId = pendingReveal?.question
+    scrollSelectionIntoView = () => {
+      if (id) {
+        if (!list || list.isDestroyed) return
+        const labelId = row ? `${row.id}:label` : undefined
+        if (labelId && list.findDescendantById(labelId))
+          list.scrollChildIntoView(labelId)
+        list.scrollChildIntoView(id)
+        if (revealedId && list.findDescendantById(`${revealedId}:label`)) {
+          list.scrollChildIntoView(`${revealedId}:label`)
+          // The active control wins if the newly revealed question cannot fit too.
+          list.scrollChildIntoView(id)
+        }
+      }
+    }
+    queueMicrotask(() => scrollSelectionIntoView())
   })
   createEffect(() => {
     // Keep the current contribution visible while its answers update live.
@@ -524,7 +582,7 @@ export function App(props: {
             backgroundColor={color.panel}
             flexDirection="column"
           >
-            <Show when={rows()[0]?.kind === "search" && !formOpen()}>
+            <Show when={rows()[0]?.kind === "search"}>
               <box
                 id="catalog-search"
                 width="100%"
@@ -541,20 +599,27 @@ export function App(props: {
                   flexShrink={0}
                 >
                   {`${isActive(0) ? "›" : " "} Search kits `}
-                  <span style={{ fg: color.muted }}>· / to focus</span>
+                  <span style={{ fg: color.muted }}>
+                    {formOpen() ? "· kit locked" : "· / to focus"}
+                  </span>
                 </text>
                 <box paddingLeft={2} flexShrink={0}>
                   <input
                     id="catalog-search:input"
-                    focused={editing()?.kind === "search"}
+                    ref={setSearchInput}
+                    focused={!formOpen() && editing()?.kind === "search"}
                     width="100%"
                     value={rows()[0]?.value ?? ""}
                     onInput={(value) => {
-                      if (editing()?.kind === "search") model.edit(value)
+                      if (!formOpen() && editing()?.kind === "search")
+                        model.edit(value)
                     }}
-                    onSubmit={() => void model.finishInput()}
+                    onSubmit={() => {
+                      if (!formOpen() && editing()?.kind === "search")
+                        void model.finishInput()
+                    }}
                     backgroundColor={isActive(0) ? color.selected : color.panel}
-                    textColor={color.text}
+                    textColor={formOpen() ? color.muted : color.text}
                     cursorColor={color.sage}
                     placeholder="Name, ID, or description"
                   />
@@ -569,7 +634,10 @@ export function App(props: {
               flexGrow={1}
               minHeight={0}
               scrollX={false}
-              contentOptions={{ flexDirection: "column", paddingX: 1 }}
+              contentOptions={{
+                flexDirection: "column",
+                paddingX: 1,
+              }}
             >
               <Show when={rows().length === 0}>
                 <text fg={color.muted}>
@@ -611,6 +679,7 @@ export function App(props: {
                     >
                       <Show when={row().label}>
                         <text
+                          id={`${row().id}:label`}
                           wrapMode="word"
                           flexShrink={0}
                           fg={rowColor(row(), isActive(index))}
@@ -937,7 +1006,9 @@ export function App(props: {
         </Show>
       </box>
       <text
+        height={progressVisible() ? 2 : undefined}
         minHeight={2}
+        maxHeight={progressVisible() ? 2 : undefined}
         wrapMode="word"
         flexShrink={0}
         fg={exitPrompt() ? color.warning : color.muted}

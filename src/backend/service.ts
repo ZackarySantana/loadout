@@ -12,6 +12,7 @@ import { dirname, join, relative, isAbsolute, resolve } from "node:path"
 import { hostname } from "node:os"
 import { createHash, randomUUID } from "node:crypto"
 import { outputSettingsSchema, type OutputSettings } from "../domain/settings"
+import type { CatalogFetchProgress } from "../domain/catalog-progress"
 import {
   defaultOutputSettings,
   inside,
@@ -300,7 +301,11 @@ export class LoadoutService {
 
   async browseCatalog(
     source: string,
-    options?: { fresh?: boolean; signal?: AbortSignal },
+    options?: {
+      fresh?: boolean
+      signal?: AbortSignal
+      onProgress?: (event: CatalogFetchProgress) => void
+    },
   ): Promise<Catalog> {
     options?.signal?.throwIfAborted()
     await this.refresh()
@@ -324,6 +329,12 @@ export class LoadoutService {
         cacheDirectory: this.cacheDirectory,
         purpose: "browse",
         signal: options?.signal,
+        onProgress: options?.onProgress
+          ? (event) => {
+              if (event.source === source && !options.signal?.aborted)
+                options.onProgress?.(event)
+            }
+          : undefined,
       },
     )
     const catalog = listing.catalogs.find(

@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url"
 import { parseDocument } from "yaml"
 import { z } from "zod"
 import { canonical } from "../domain/content"
+import type { CatalogFetchProgress } from "../domain/catalog-progress"
+export type { CatalogFetchProgress } from "../domain/catalog-progress"
 import {
   kitSchema,
   type Catalog,
@@ -22,6 +24,7 @@ import {
 } from "./remote-cache"
 
 export interface CatalogLoadOptions {
+  onProgress?: (event: CatalogFetchProgress) => void
   hydrateSources?: string[]
   installed?: LoadedKit[]
   forceRefresh?: boolean
@@ -29,6 +32,19 @@ export interface CatalogLoadOptions {
   purpose?: "browse" | "validate"
   cachedOnly?: boolean
   signal?: AbortSignal
+}
+
+/** Observers cannot affect source content, cache writes, or fetch outcomes. */
+export function reportCatalogProgress(
+  options: Pick<CatalogLoadOptions, "onProgress" | "signal"> | undefined,
+  event: CatalogFetchProgress,
+): void {
+  if (options?.signal?.aborted) return
+  try {
+    options?.onProgress?.(event)
+  } catch {
+    /* presentation is best-effort */
+  }
 }
 
 const defaults: RemoteSkillsSource[] = [
@@ -319,6 +335,33 @@ export async function loadRemoteCatalog(
   options: CatalogLoadOptions = {},
 ): Promise<Catalog> {
   options.signal?.throwIfAborted()
+  reportCatalogProgress(options, { source, stage: "cache" })
+  const progress = { signal: options.signal }
+  const catalog = await loadRemoteCatalogContent(
+    source,
+    descriptor,
+    permanent,
+    origin,
+    options,
+    progress,
+  )
+  options.signal?.throwIfAborted()
+  reportCatalogProgress(
+    { onProgress: options.onProgress, signal: progress.signal },
+    { source, stage: "complete" },
+  )
+  return catalog
+}
+
+async function loadRemoteCatalogContent(
+  source: string,
+  descriptor: RemoteSkillsSource,
+  permanent: boolean,
+  origin: CatalogOrigin | undefined,
+  options: CatalogLoadOptions,
+  progress: { signal?: AbortSignal },
+): Promise<Catalog> {
+  options.signal?.throwIfAborted()
   descriptor = remoteSkillsSourceSchema.parse(descriptor)
   let saved = await readRemoteCache(
     options.cacheDirectory,
@@ -437,6 +480,7 @@ export async function loadRemoteCatalog(
       origin,
       options,
       saved,
+      progress,
     )
   } catch (error) {
     options.signal?.throwIfAborted()
@@ -453,6 +497,7 @@ async function buildRemoteCatalog(
   origin: CatalogOrigin | undefined,
   options: CatalogLoadOptions,
   saved?: RemoteCacheRecord,
+  progress?: { signal?: AbortSignal },
 ): Promise<Catalog> {
   descriptor = remoteSkillsSourceSchema.parse(descriptor)
   const catalog = remoteCatalogHeader(source, descriptor, permanent)
@@ -472,6 +517,8 @@ async function buildRemoteCatalog(
   const signal = options.signal
     ? AbortSignal.any([options.signal, AbortSignal.timeout(90_000)])
     : AbortSignal.timeout(90_000)
+  if (progress) progress.signal = signal
+  const progressOptions = { onProgress: options.onProgress, signal }
   // Per-operation deduplication also applies when bypassing the shared TTL cache.
   const pending = new Map<string, Promise<Buffer>>()
   let downloaded = 0
@@ -573,6 +620,7 @@ async function buildRemoteCatalog(
     return bytes
   }
   const api = `https://api.github.com/repos/${descriptor.repo}`
+  reportCatalogProgress(progressOptions, { source, stage: "checking" })
   const commit = z
     .array(
       z.object({
@@ -616,6 +664,7 @@ async function buildRemoteCatalog(
       warning,
     )
   }
+  reportCatalogProgress(progressOptions, { source, stage: "discovering" })
   const tree = treeSchema.parse(
     JSON.parse(
       text(
@@ -734,6 +783,13 @@ async function buildRemoteCatalog(
     choices = choices.filter((choice) =>
       installed.some((item) => item.kit.id === choice.id),
     )
+  let completed = 0
+  reportCatalogProgress(progressOptions, {
+    source,
+    stage: "loading",
+    completed,
+    total: choices.length,
+  })
   for (const choice of choices) {
     signal.throwIfAborted()
     const key = `${descriptor.id}/${choice.id}`
@@ -950,6 +1006,12 @@ async function buildRemoteCatalog(
       })
       catalog.issues!.push(`${key}: ${failure}`)
     }
+    reportCatalogProgress(progressOptions, {
+      source,
+      stage: "loading",
+      completed: ++completed,
+      total: choices.length,
+    })
   }
   catalog.hydration = browse ? "loaded" : "partial"
   signal.throwIfAborted()

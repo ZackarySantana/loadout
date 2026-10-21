@@ -23,11 +23,13 @@ mise exec -- npm run dev -- --repo /path/to/project
 
 Browse with arrows and Space; configure a kit, accept its draft, then review. Only explicitly choosing **Apply changes** writes the plan. **Esc accepts** an open kit; use its **Cancel** action to discard edits. Press **q twice** to exit.
 
-While browsing a catalog, **Search kits** filters names, IDs, and descriptions; it hides during configuration and returns after Accept/Cancel with the query retained. Press **/** outside forms/text editing to type; Enter/Esc keeps the filter and returns to browsing. Up/Down navigates matches. Search is case-insensitive; every space-separated term must match. This helps browse larger remote catalogs without searching resource contents.
+While browsing a catalog, **Search kits** filters names, IDs, and descriptions. The bar and query stay in place during kit configuration; search editing is locked until Accept/Cancel. Press **/** outside forms/text editing to type; Enter/Esc keeps the filter and returns to browsing. Up/Down navigates matches. Search is case-insensitive; every space-separated term must match. This helps browse larger remote catalogs without searching resource contents.
 
 Matt Pocock, Anthropic, and Ponytail have separate remote catalogs: browse a catalog to load its upstream skill directories, without requiring upstream catalog JSON. They are not vendored Loadout kits. Updates use file-content hashes, not commit IDs or dates; Review keeps installed content by default and asks before adopting an update. See [remote sources](site/reference.html#catalogs) and [update safety](site/reference.html#drift).
 
 Remote inventories are cached across launches. A previously loaded catalog opens immediately while a lightweight upstream check runs in the background when due; unchanged files are reused rather than downloaded again. Cache status is shown separately from installation state. Review and Apply still validate current upstream content before accepting an update.
+
+Remote catalog loading reports its current stage in the status area. Once discovery determines the inventory, a progress bar counts kits checked, including those reported unavailable; it is not an estimate of bytes or time remaining.
 
 ## Read the docs locally
 

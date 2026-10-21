@@ -73,8 +73,8 @@
             typing but retains the filter. From search, Down selects the first
             matching kit and Up the last; kit navigation wraps among matches
             without focusing search. With no matches, search stays available.
-            The field hides during kit configuration and returns after
-            Accept/Cancel with the query retained. Refresh and tab switches
+            The field and query stay in place during kit configuration, with
+            search editing locked until Accept/Cancel. Refresh and tab switches
             preserve search text. Each catalog retains its own query for the
             session; queries are not saved to disk.
           </p>
@@ -224,6 +224,14 @@ mise exec -- bun src/cli.tsx catalog add https://github.com/owner/repo/tree/main
               the source has moved. If unchanged, skill files are not downloaded
               again. If it changed, current tree entries identify which resource
               bytes can be reused and which must be fetched.
+            </p>
+            <p>
+              Loading progress uses the existing status area rather than moving
+              the catalog layout. Before inventory is known, it shows the
+              current stage without an invented percentage. After discovery, the
+              bar counts kits checked, including unavailable kits—not bytes
+              transferred or time remaining. Completion follows cache
+              persistence; failure or cancellation clears the indicator.
             </p>
             <p>
               Commit and blob IDs are cache validators, not kit-update identity.

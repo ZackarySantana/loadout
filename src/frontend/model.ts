@@ -13,6 +13,7 @@ import type { DriftReport, FileDrift, KitDrift } from "../backend/service"
 import { canonical } from "../domain/content"
 import { sameSourceContent } from "../domain/content-identity"
 import { catalogCacheLabel } from "./cache-label"
+import type { CatalogFetchProgress } from "../domain/catalog-progress"
 import { answersForUpdate } from "./answers"
 import {
   destinationGroups,
@@ -108,6 +109,9 @@ export class ScreenModel {
   private browsedCatalog?: Catalog
   private catalogRefreshGeneration = 0
   private catalogRefreshAbort?: AbortController
+  catalogProgress?: CatalogFetchProgress
+  private pendingCatalogProgress?: CatalogFetchProgress
+  private catalogProgressTimer?: ReturnType<typeof setTimeout>
   private catalogFilters = new Map<string, string>()
   catalogs: Catalog[] = []
   errors: string[] = []
@@ -270,12 +274,85 @@ export class ScreenModel {
     this.catalogRefreshGeneration++
     this.catalogRefreshAbort?.abort()
     this.catalogRefreshAbort = undefined
+    this.clearCatalogProgress()
   }
-  private async revalidateCatalog(catalog: Catalog): Promise<void> {
+  private clearCatalogProgress(): void {
+    if (this.catalogProgressTimer !== undefined)
+      clearTimeout(this.catalogProgressTimer)
+    this.catalogProgressTimer = undefined
+    this.pendingCatalogProgress = undefined
+    this.catalogProgress = undefined
+  }
+  private startCatalogFetch(source: string) {
     this.cancelCatalogRefresh()
     const generation = this.catalogRefreshGeneration
     const controller = new AbortController()
     this.catalogRefreshAbort = controller
+    const onProgress = (event: CatalogFetchProgress) => {
+      if (
+        generation !== this.catalogRefreshGeneration ||
+        this.catalogRefreshAbort !== controller ||
+        controller.signal.aborted ||
+        event.source !== source
+      )
+        return
+      if (event.stage === "complete") {
+        const visible = !!this.catalogProgress
+        this.clearCatalogProgress()
+        if (visible) this.changed()
+        return
+      }
+      this.pendingCatalogProgress = { ...event }
+      if (this.catalogProgress) {
+        this.catalogProgress = this.pendingCatalogProgress
+        this.changed()
+      } else if (this.catalogProgressTimer === undefined) {
+        // Fast cache hits never paint a transient progress indicator.
+        this.catalogProgressTimer = setTimeout(() => {
+          this.catalogProgressTimer = undefined
+          if (
+            generation !== this.catalogRefreshGeneration ||
+            controller.signal.aborted ||
+            !this.pendingCatalogProgress
+          )
+            return
+          this.catalogProgress = this.pendingCatalogProgress
+          this.changed()
+        }, 120)
+      }
+    }
+    return { generation, controller, onProgress }
+  }
+  private finishCatalogFetch(
+    controller: AbortController,
+    generation: number,
+  ): void {
+    if (this.catalogRefreshAbort === controller)
+      this.catalogRefreshAbort = undefined
+    if (generation !== this.catalogRefreshGeneration) return
+    const visible = !!this.catalogProgress
+    this.clearCatalogProgress()
+    if (visible) this.changed()
+  }
+  private async fetchCatalog(source: string, fresh = false): Promise<Catalog> {
+    const { generation, controller, onProgress } =
+      this.startCatalogFetch(source)
+    try {
+      return await this.backendOperation(() =>
+        this.backend.browseCatalog(source, {
+          fresh,
+          signal: controller.signal,
+          onProgress,
+        }),
+      )
+    } finally {
+      this.finishCatalogFetch(controller, generation)
+    }
+  }
+  private async revalidateCatalog(catalog: Catalog): Promise<void> {
+    const { generation, controller, onProgress } = this.startCatalogFetch(
+      catalog.source,
+    )
     const canReceive = () =>
       generation === this.catalogRefreshGeneration &&
       !controller.signal.aborted &&
@@ -290,6 +367,7 @@ export class ScreenModel {
       const result = await this.backendOperation(() =>
         this.backend.browseCatalog(catalog.source, {
           signal: controller.signal,
+          onProgress,
         }),
       )
       if (
@@ -351,8 +429,7 @@ export class ScreenModel {
       )
       this.changed()
     } finally {
-      if (this.catalogRefreshAbort === controller)
-        this.catalogRefreshAbort = undefined
+      this.finishCatalogFetch(controller, generation)
     }
   }
   private enterCatalog(catalog: Catalog): void {
@@ -516,11 +593,7 @@ export class ScreenModel {
       this.optionFocus.delete("review-actions")
       if (browsing && this.catalog?.source === browsing) {
         try {
-          this.showCatalog(
-            await this.backendOperation(() =>
-              this.backend.browseCatalog(browsing, { fresh: true }),
-            ),
-          )
+          this.showCatalog(await this.fetchCatalog(browsing, true))
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error)
           const warning = `Source refresh failed; showing previously browsed inventory. ${reason}`
@@ -751,7 +824,7 @@ export class ScreenModel {
           catalog: this.catalog,
         }
         const rows: Row[] = [
-          ...(!this.form ? [search] : []),
+          search,
           ...(this.catalog.issues ?? []).map((issue, index): Row => ({
             id: `catalog-issue:${this.catalog!.id}:${index}`,
             kind: "heading",
@@ -1469,11 +1542,7 @@ export class ScreenModel {
       } else {
         this.message = "Loading catalog…"
         await this.run(async () => {
-          this.enterCatalog(
-            await this.backendOperation(() =>
-              this.backend.browseCatalog(row.catalog!.source),
-            ),
-          )
+          this.enterCatalog(await this.fetchCatalog(row.catalog!.source))
         })
       }
     } else if (row.kind === "search") {

@@ -20,10 +20,12 @@ import {
   defaultRemoteSources,
   githubSource,
   loadRemoteCatalog,
+  reportCatalogProgress,
   type CatalogLoadOptions,
 } from "./remote-catalogs"
 export { defaultRemoteSources } from "./remote-catalogs"
 export type { CatalogLoadOptions } from "./remote-catalogs"
+export type { CatalogFetchProgress } from "../domain/catalog-progress"
 
 declare const LOADOUT_BUNDLED: boolean
 export const builtin = fileURLToPath(
@@ -161,6 +163,7 @@ export async function loadCatalog(
   const direct = githubSource(source)
   if (direct) return remote(direct)
   let parsed: unknown
+  reportCatalogProgress(options, { source, stage: "cache" })
   // Registered HTTPS descriptors can be opened offline without fetching their
   // definition first. This is presentation only: validation always reads it live.
   const saved =
@@ -180,6 +183,7 @@ export async function loadCatalog(
   )
     return remote(saved.descriptor)
   try {
+    reportCatalogProgress(options, { source, stage: "checking" })
     parsed = JSON.parse(await readSource(source, options?.signal))
     if (saved) {
       if (
@@ -264,6 +268,8 @@ export async function loadCatalog(
       catalog.kits.findIndex((kit) => kit.id === a.id) -
       catalog.kits.findIndex((kit) => kit.id === b.id),
   )
+  options?.signal?.throwIfAborted()
+  reportCatalogProgress(options, { source, stage: "complete" })
   return {
     id: catalog.id,
     name: catalog.name,
