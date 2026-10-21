@@ -13,11 +13,7 @@ export function catalogUnavailableReason(
     )?.[1]
   if (!resource) return entry.reason
   const name = resource.split("/").pop() || resource
-  const binary =
-    /\.(?:ttf|otf|woff2?|pdf|tar|tgz|zip|gz|png|jpe?g|gif|webp|ico)$/i.test(
-      name,
-    )
-  return `Needs a ${binary ? "binary" : "non-UTF-8"} resource (${name}); this adapter currently supports UTF-8 text resources only.`
+  return `Could not read required text resource (${name}). Raw supporting assets are copied unchanged.`
 }
 
 /** Match the complete source/key/reason tuple, never a broad error substring. */

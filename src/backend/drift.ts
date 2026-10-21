@@ -8,7 +8,7 @@ import {
   message,
   type CatalogListing,
 } from "./catalogs"
-import { snapshotNode, reconcile, type NodeSnapshot } from "./files"
+import { snapshotNode, reconcileNode, type NodeSnapshot } from "./files"
 import { assertLink } from "./outputs"
 import type { State } from "./state"
 import { canonical } from "../domain/content"
@@ -199,16 +199,16 @@ export async function inspectDrift(
         if (source.kind !== "file")
           throw new Error("Managed link source is missing")
         const baseline = state.managed[managed.source]!
-        reconcile(
+        reconcileNode(
           managed.source,
-          source.content,
+          source,
           baseline,
           structuredClone(baseline),
         )
       } else {
         if (node.kind !== "file")
           throw new Error("Managed output is not a regular file")
-        reconcile(path, node.content, managed, structuredClone(managed))
+        reconcileNode(path, node, managed, structuredClone(managed))
       }
       files.push({
         path,

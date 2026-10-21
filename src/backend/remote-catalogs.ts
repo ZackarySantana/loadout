@@ -4,6 +4,17 @@ import { parseDocument } from "yaml"
 import { z } from "zod"
 import { canonical } from "../domain/content"
 import { catalogFreshnessMs } from "../domain/catalog-freshness"
+import {
+  mandatoryResource,
+  assetResource,
+  needsResourceRebuild,
+  resourceCachedView,
+} from "./remote-resources"
+import {
+  resourceBytes,
+  resourceFromBytes,
+  type Resource,
+} from "../domain/resource"
 import type { CatalogFetchProgress } from "../domain/catalog-progress"
 export type { CatalogFetchProgress } from "../domain/catalog-progress"
 import {
@@ -392,9 +403,10 @@ async function loadRemoteCatalogContent(
           )!
           for (const [name, content] of Object.entries(output.files)) {
             if (!safePath(name)) throw new Error("Unsafe cached resource path")
-            const bytes = Buffer.from(content)
+            const bytes = resourceBytes(content)
             if (
-              text(bytes) !== content ||
+              (typeof content === "string" && text(bytes) !== content) ||
+              (mandatoryResource(name) && typeof content !== "string") ||
               saved.blobs[gitBlobHash(bytes)] !== bytes.toString("base64")
             )
               throw new Error("Invalid cached resource bytes")
@@ -409,9 +421,10 @@ async function loadRemoteCatalogContent(
               throw new Error("Oversized cached skill inventory")
             files[`${path}/${name}`] = bytes
           }
-          const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(
-            output.files["SKILL.md"]!,
-          )
+          const skillText = output.files["SKILL.md"]
+          if (typeof skillText !== "string")
+            throw new Error("Invalid cached skill metadata")
+          const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(skillText)
           if (!match) throw new Error("Invalid cached skill metadata")
           const doc = parseDocument(match[1]!, { uniqueKeys: true })
           const meta = doc.toJS({ maxAliasCount: 20 })
@@ -445,6 +458,7 @@ async function loadRemoteCatalogContent(
   const browse =
     options.hydrateSources === undefined ||
     options.hydrateSources.includes(source)
+  const reuseSnapshot = !!saved && !needsResourceRebuild(saved)
   const installed = options.installed?.some(
     (item) => item.origin?.source === source,
   )
@@ -459,10 +473,13 @@ async function loadRemoteCatalogContent(
     )
   if (options.cachedOnly)
     return saved
-      ? cachedCatalog(
-          saved,
-          permanent,
-          age < catalogFreshnessMs ? "cached" : "stale",
+      ? resourceCachedView(
+          cachedCatalog(
+            saved,
+            permanent,
+            age < catalogFreshnessMs ? "cached" : "stale",
+          ),
+          descriptor,
         )
       : remoteCatalogHeader(source, descriptor, permanent)
   if (
@@ -470,12 +487,15 @@ async function loadRemoteCatalogContent(
     ((!browse && !installed) ||
       (!options.forceRefresh &&
         options.purpose === "browse" &&
-        (!browse || age < catalogFreshnessMs)))
+        (!browse || (reuseSnapshot && age < catalogFreshnessMs))))
   )
-    return cachedCatalog(
-      saved,
-      permanent,
-      age < catalogFreshnessMs ? "cached" : "stale",
+    return resourceCachedView(
+      cachedCatalog(
+        saved,
+        permanent,
+        age < catalogFreshnessMs ? "cached" : "stale",
+      ),
+      descriptor,
     )
   try {
     return await buildRemoteCatalog(
@@ -486,11 +506,15 @@ async function loadRemoteCatalogContent(
       options,
       saved,
       progress,
+      reuseSnapshot,
     )
   } catch (error) {
     options.signal?.throwIfAborted()
     if (saved && options.purpose === "browse" && !options.forceRefresh)
-      return cachedCatalog(saved, permanent, "stale", reason(error))
+      return resourceCachedView(
+        cachedCatalog(saved, permanent, "stale", reason(error)),
+        descriptor,
+      )
     throw error
   }
 }
@@ -503,6 +527,7 @@ async function buildRemoteCatalog(
   options: CatalogLoadOptions,
   saved?: RemoteCacheRecord,
   progress?: { signal?: AbortSignal },
+  reuseSnapshot = true,
 ): Promise<Catalog> {
   descriptor = remoteSkillsSourceSchema.parse(descriptor)
   const catalog = remoteCatalogHeader(source, descriptor, permanent)
@@ -650,6 +675,7 @@ async function buildRemoteCatalog(
   // identity remains the file-byte hash. Validate mode always rebuilds below.
   if (
     saved &&
+    reuseSnapshot &&
     saved.commit === commit.sha &&
     options.purpose === "browse" &&
     !options.forceRefresh
@@ -662,11 +688,14 @@ async function buildRemoteCatalog(
       record,
       signal,
     )
-    return cachedCatalog(
-      { ...record, integrity: saved.integrity },
-      permanent,
-      "cached",
-      warning,
+    return resourceCachedView(
+      cachedCatalog(
+        { ...record, integrity: saved.integrity },
+        permanent,
+        "cached",
+        warning,
+      ),
+      descriptor,
     )
   }
   reportCatalogProgress(progressOptions, { source, stage: "discovering" })
@@ -811,7 +840,7 @@ async function buildRemoteCatalog(
       const outputs: {
         type: "skill"
         name: string
-        files: Record<string, string>
+        files: Record<string, Resource>
       }[] = []
       let total = 0
       let count = 0
@@ -872,6 +901,13 @@ async function buildRemoteCatalog(
         }
         if (!selected.some(({ target }) => target === "SKILL.md"))
           throw new Error("Missing SKILL.md")
+        const required = ({
+          entry,
+          target,
+        }: {
+          entry: Entry
+          target: string
+        }) => mandatoryResource(target) || entry.path === license
         assertPortableTargets(selected.map(({ target }) => target))
         for (const { entry, target } of selected) {
           if (
@@ -882,15 +918,17 @@ async function buildRemoteCatalog(
             throw new Error(
               `Unsupported symlink, submodule, or special file: ${entry.path}`,
             )
-          if (entry.size === undefined || entry.size > maxFile)
-            throw new Error(`Oversized/unknown-size skill file: ${entry.path}`)
+          if (entry.size === undefined)
+            throw new Error(`Unknown-size skill file: ${entry.path}`)
+          if (entry.size > maxFile)
+            throw new Error(`Oversized skill file: ${entry.path}`)
           total += entry.size
           if (++count > maxFiles || total > maxKit)
             throw new Error(
-              "Skill kit exceeds 200 files or 8 MiB; no files were omitted",
+              "Skill kit exceeds 200 files or 8 MiB; all resources must fit",
             )
         }
-        const files: Record<string, string> = Object.create(null)
+        const files: Record<string, Resource> = Object.create(null)
         for (let start = 0; start < selected.length; start += 6) {
           const results = await Promise.allSettled(
             selected.slice(start, start + 6).map(async ({ entry, target }) => {
@@ -925,14 +963,16 @@ async function buildRemoteCatalog(
                   `GitHub content checksum/size mismatch: ${entry.path}`,
                 )
               }
-              blobs[entry.sha] = bytes.toString("base64")
-              try {
-                return { target, bytes, content: text(bytes) }
-              } catch (error) {
+              const content = required({ entry, target })
+                ? resourceFromBytes(bytes)
+                : assetResource(bytes, target)
+              if (required({ entry, target }) && typeof content !== "string") {
                 throw new Error(
-                  `Cannot adapt upstream resource ${entry.path}: expected UTF-8 text; ${reason(error)}`,
+                  `Cannot adapt required resource ${entry.path}: SKILL.md and license/notice resources require UTF-8 text`,
                 )
               }
+              blobs[entry.sha] = bytes.toString("base64")
+              return { target, bytes, content }
             }),
           )
           const failure = results.find((result) => result.status === "rejected")
@@ -944,9 +984,10 @@ async function buildRemoteCatalog(
             rawFiles[`${skill.path}/${target}`] = bytes
           }
         }
-        const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(
-          files["SKILL.md"]!,
-        )
+        const skillText = files["SKILL.md"]
+        if (typeof skillText !== "string")
+          throw new Error("SKILL.md requires UTF-8 text")
+        const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(skillText)
         if (!match)
           throw new Error("SKILL.md requires name and description frontmatter")
         const doc = parseDocument(match[1]!, { uniqueKeys: true })
@@ -1024,11 +1065,14 @@ async function buildRemoteCatalog(
   transientFailure ||= !!catalogBudgetError || requests > 1500 || signal.aborted
   if (transientFailure) {
     if (saved && options.purpose === "browse" && !options.forceRefresh)
-      return cachedCatalog(
-        saved,
-        permanent,
-        "stale",
-        "Upstream refresh was incomplete; showing the last complete cached inventory",
+      return resourceCachedView(
+        cachedCatalog(
+          saved,
+          permanent,
+          "stale",
+          "Upstream refresh was incomplete; showing the last complete cached inventory",
+        ),
+        descriptor,
       )
     catalog.cache = {
       status: "stale",

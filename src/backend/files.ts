@@ -4,6 +4,12 @@ import { dirname, parse, resolve } from "node:path"
 import type { Managed } from "./state"
 import { z } from "zod"
 import { reconcileIgnore } from "./ignore-section"
+import {
+  encodedBytes,
+  resourceContent,
+  resourceFromBytes,
+  validEncodedContent,
+} from "../domain/resource"
 
 export const nodeSnapshotSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("missing") }).strict(),
@@ -11,9 +17,11 @@ export const nodeSnapshotSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("file"),
       content: z.string(),
+      encoding: z.literal("base64").optional(),
       mode: z.number().int().min(0).max(0o7777),
     })
-    .strict(),
+    .strict()
+    .refine(validEncodedContent, "Use canonical base64"),
   z.object({ kind: z.literal("symlink"), target: z.string().min(1) }).strict(),
 ])
 export type NodeSnapshot = z.infer<typeof nodeSnapshotSchema>
@@ -23,7 +31,9 @@ export function sameNode(a: NodeSnapshot, b: NodeSnapshot): boolean {
     ? b.kind === "missing"
     : a.kind === "symlink"
       ? b.kind === "symlink" && a.target === b.target
-      : b.kind === "file" && a.content === b.content && a.mode === b.mode
+      : b.kind === "file" &&
+        encodedBytes(a).equals(encodedBytes(b)) &&
+        a.mode === b.mode
 }
 
 /** Parents are always real directories. A leaf link is only read, never followed. */
@@ -51,9 +61,7 @@ export async function snapshotNode(
     if (!opened.isFile() || opened.ino !== stat.ino || opened.dev !== stat.dev)
       throw new Error(`File changed while reading: ${path}`)
     const bytes = await handle.readFile()
-    const content = bytes.toString("utf8")
-    if (!bytes.equals(Buffer.from(content, "utf8")))
-      throw new Error(`Cannot safely preserve non-UTF-8 file content: ${path}`)
+    const content = resourceContent(resourceFromBytes(bytes))
     await assertSafePath(path)
     const current = await lstat(path)
     if (
@@ -64,7 +72,7 @@ export async function snapshotNode(
       current.ctimeMs !== opened.ctimeMs
     )
       throw new Error(`File changed while reading: ${path}`)
-    return { kind: "file", content, mode: opened.mode & 0o7777 }
+    return { kind: "file", ...content, mode: opened.mode & 0o7777 }
   } finally {
     await handle.close()
   }
@@ -113,23 +121,70 @@ function block(key: string, content: string): string {
   return `<!-- loadout:${key} -->\n${content.trimEnd()}\n<!-- /loadout:${key} -->`
 }
 
+/** Byte-aware reconciliation; text section management never consumes binary data. */
+export function reconcileNode(
+  path: string,
+  before: NodeSnapshot,
+  previous: Managed | undefined,
+  desired: Managed | undefined,
+): NodeSnapshot {
+  if (
+    before.kind === "symlink" ||
+    previous?.type === "symlink" ||
+    desired?.type === "symlink"
+  )
+    throw new Error(`Links must be reconciled without following them: ${path}`)
+  if (previous && desired && previous.type !== desired.type)
+    throw new Error(`Output type conflict: ${path}`)
+  const mode = before.kind === "file" ? before.mode : 0o600
+  if (previous?.type === "file" || desired?.type === "file") {
+    if (
+      previous?.type === "file" &&
+      (before.kind !== "file" ||
+        !encodedBytes(before).equals(encodedBytes(previous)))
+    )
+      throw new Error(
+        `Managed file was edited or removed; restore it before applying: ${path}`,
+      )
+    if (!previous && before.kind !== "missing")
+      throw new Error(`Will not overwrite an unmanaged file: ${path}`)
+    return desired?.type === "file"
+      ? {
+          kind: "file",
+          content: desired.content,
+          ...(desired.encoding ? { encoding: desired.encoding } : {}),
+          mode,
+        }
+      : { kind: "missing" }
+  }
+  if (before.kind === "file" && before.encoding === "base64")
+    throw new Error(`Cannot reconcile text sections in a binary file: ${path}`)
+  const content = reconcile(
+    path,
+    before.kind === "file" ? before.content : null,
+    previous,
+    desired,
+  )
+  return content === null
+    ? { kind: "missing" }
+    : { kind: "file", content, mode }
+}
+
 export function reconcile(
   path: string,
   before: string | null,
   previous: Managed | undefined,
   desired: Managed | undefined,
 ): string | null {
+  if (
+    (previous?.type === "file" && previous.encoding) ||
+    (desired?.type === "file" && desired.encoding)
+  )
+    throw new Error(`Binary files require byte-aware reconciliation: ${path}`)
   if (previous?.type === "symlink" || desired?.type === "symlink")
     throw new Error(`Links must be reconciled without following them: ${path}`)
   if (previous && desired && previous.type !== desired.type)
     throw new Error(`Output type conflict: ${path}`)
-  if (previous?.type === "ignore" || desired?.type === "ignore")
-    return reconcileIgnore(
-      path,
-      before,
-      previous?.type === "ignore" ? previous : undefined,
-      desired?.type === "ignore" ? desired : undefined,
-    )
   if (previous?.type === "file" || desired?.type === "file") {
     if (previous?.type === "file" && before !== previous.content)
       throw new Error(
@@ -139,6 +194,18 @@ export function reconcile(
       throw new Error(`Will not overwrite an unmanaged file: ${path}`)
     return desired?.type === "file" ? desired.content : null
   }
+  if (
+    before !== null &&
+    typeof resourceFromBytes(Buffer.from(before, "utf8")) !== "string"
+  )
+    throw new Error(`Cannot reconcile text sections in a binary file: ${path}`)
+  if (previous?.type === "ignore" || desired?.type === "ignore")
+    return reconcileIgnore(
+      path,
+      before,
+      previous?.type === "ignore" ? previous : undefined,
+      desired?.type === "ignore" ? desired : undefined,
+    )
   let text = before ?? ""
   const oldInstructions =
     previous?.type === "instructions" ? previous : undefined

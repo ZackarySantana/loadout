@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { catalogOriginSchema, kitSchema } from "../domain/kit"
 import { outputSettingsSchema } from "../domain/settings"
+import { validEncodedContent } from "../domain/resource"
 
 const answerSchema = z.record(
   z.string(),
@@ -43,7 +44,14 @@ const managedSchema = z.discriminatedUnion("type", [
         .optional(),
     })
     .strict(),
-  z.object({ type: z.literal("file"), content: z.string() }).strict(),
+  z
+    .object({
+      type: z.literal("file"),
+      content: z.string(),
+      encoding: z.literal("base64").optional(),
+    })
+    .strict()
+    .refine(validEncodedContent, "Use canonical base64"),
   z
     .object({
       type: z.literal("symlink"),

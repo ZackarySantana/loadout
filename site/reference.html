@@ -197,21 +197,22 @@ mise exec -- bun src/cli.tsx catalog add https://github.com/owner/repo/tree/main
               Remote fetching is bounded HTTPS data retrieval with bounded
               concurrency, without redirects or embedded credentials. Loadout
               does not clone repositories, extract archives, or run hooks.
-              Selected directories include regular UTF-8 supporting files,
-              including scripts copied as data, never executed by Loadout.
-              Binary files, symlinks, invalid UTF-8, exceeded bounds, and
-              truncated tree responses fail clearly rather than producing a
-              partial skill copy. Not every upstream skill is therefore
-              installable. Files fetched within an operation use a consistent
-              commit; that retrieval pin is not update identity.
+              Selected directories preserve regular supporting files, including
+              scripts, fonts, PDFs, and archives, byte-for-byte. Raw assets are
+              copied as data without interpretation or previews, never executed
+              or extracted by Loadout. Invalid required text definitions or
+              license notices, unsafe paths, symlinks, source-integrity
+              failures, exceeded resource bounds, and truncated inventories
+              still fail clearly. Files fetched within an operation use a
+              consistent commit; that retrieval pin is not update identity.
             </p>
             <p>
-              Unavailable catalog entries are not installation failures. For
-              example, a skill needing a font, PDF, or archive is unavailable to
-              the current text-only adapter, but does not make another installed
-              skill unhealthy. Installed status covers actual installed-source
-              and managed-output drift; catalog availability details stay with
-              their catalog.
+              Raw assets do not create catalog availability warnings or disable
+              a skill. Source-content identity covers every included path and
+              its actual bytes, including raw assets. Review shows raw-file
+              sizes and hashes rather than interpreting their contents.
+              Installed status continues to report actual installed-source and
+              managed-output drift.
             </p>
             <p>
               Adapted upstream <code>SKILL.md</code> and supporting resources
@@ -501,8 +502,11 @@ outputs:
     references/checklist.md: |
       Check tests, deployment approval, and recovery readiness.</code></pre>
             <p>
-              <code>files</code> maps fixed relative paths to inline strings and
-              must contain <code>SKILL.md</code>. Give the entry useful
+              <code>files</code> maps fixed relative paths to inline text or raw
+              resources represented as
+              <code>{ encoding: base64, content: CANONICAL_BASE64 }</code>.
+              <code>SKILL.md</code> must be text. Raw resources are never
+              interpolated or parsed for previews. Give the entry useful
               name/description frontmatter and link its supporting Markdown.
               Files materialize under configured skill locations as
               <code>&lt;name&gt;/&lt;file&gt;</code>. Link mode keeps real files

@@ -207,7 +207,8 @@ export async function loadCatalog(
       origin,
       { ...options, cachedOnly: true },
     )
-    if (catalog.hydration !== "loaded") throw error
+    if (catalog.hydration !== "loaded" && catalog.hydration !== "partial")
+      throw error
     catalog.cache = {
       status: "stale",
       checkedAt: saved.checkedAt,

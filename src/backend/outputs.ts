@@ -1,6 +1,12 @@
 import { dirname, isAbsolute, resolve } from "node:path"
 import type { State, Managed } from "./state"
-import { reconcile, snapshotNode, type NodeSnapshot } from "./files"
+import {
+  reconcileNode,
+  sameNode,
+  snapshotNode,
+  type NodeSnapshot,
+} from "./files"
+import { encodedBytes } from "../domain/resource"
 
 /** Snapshot all dependencies, including real sources used to materialize old links. */
 export async function planOutputs(
@@ -26,7 +32,14 @@ export async function planOutputs(
       throw new Error(
         `Output type conflicts with an owned ignore file: ${path}`,
       )
-    const node = await snapshotNode(path, managed?.type === "symlink")
+    let node = await snapshotNode(path, managed?.type === "symlink")
+    // A raw asset can happen to contain valid text bytes. Preserve its opacity in reviews.
+    if (node.kind === "file" && managed?.type === "file" && managed.encoding)
+      node = {
+        ...node,
+        content: encodedBytes(node).toString("base64"),
+        encoding: "base64",
+      }
     if (managed?.type === "symlink") {
       if (node.kind !== "symlink" || node.target !== managed.target)
         throw new Error(
@@ -34,12 +47,7 @@ export async function planOutputs(
         )
       assertLink(path, managed, previous)
     } else if (managed) {
-      reconcile(
-        path,
-        node.kind === "file" ? node.content : null,
-        managed,
-        structuredClone(managed),
-      )
+      reconcileNode(path, node, managed, structuredClone(managed))
     }
     before.set(path, node)
   }
@@ -59,30 +67,9 @@ export async function planOutputs(
         throw new Error(
           `Managed link source is not a safe managed regular file: ${path}`,
         )
-      const content = reconcile(path, source.content, baseline, next)
-      after.set(
-        path,
-        content === null
-          ? { kind: "missing" }
-          : { kind: "file", content, mode: source.mode },
-      )
+      after.set(path, reconcileNode(path, source, baseline, next))
     } else {
-      const content = reconcile(
-        path,
-        node.kind === "file" ? node.content : null,
-        old,
-        next,
-      )
-      after.set(
-        path,
-        content === null
-          ? { kind: "missing" }
-          : {
-              kind: "file",
-              content,
-              mode: node.kind === "file" ? node.mode : 0o600,
-            },
-      )
+      after.set(path, reconcileNode(path, node, old, next))
     }
   }
   // Resolve real files first so a former primary can prove its notes survive reordering.
@@ -97,12 +84,7 @@ export async function planOutputs(
           `Will not overwrite an unmanaged file with a link: ${path}`,
         )
       if (old.type === "instructions") {
-        const remainder = reconcile(
-          path,
-          node.kind === "file" ? node.content : null,
-          old,
-          undefined,
-        )
+        const remainder = reconcileNode(path, node, old, undefined)
         const oldTarget = previous[next.source]
         const newTarget = desired[next.source]
         const materialized = after.get(next.source)
@@ -112,16 +94,13 @@ export async function planOutputs(
           oldTarget.source === path &&
           newTarget?.type === "instructions" &&
           materialized?.kind === "file" &&
-          materialized.content ===
-            reconcile(
-              next.source,
-              node.content,
-              old,
-              structuredClone(newTarget),
-            )
+          sameNode(
+            materialized,
+            reconcileNode(next.source, node, old, structuredClone(newTarget)),
+          )
         if (
           (!old.originallyAbsent ||
-            (remainder !== null && remainder.trim() !== "")) &&
+            (remainder.kind === "file" && remainder.content.trim() !== "")) &&
           !preservedCanonical
         )
           throw new Error(

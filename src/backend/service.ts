@@ -39,13 +39,18 @@ import {
   type CatalogListing,
 } from "./catalogs"
 import { canonical, inspectDrift, sourceKit, type DriftReport } from "./drift"
+import {
+  encodedBytes,
+  encodedResource,
+  resourcePreview,
+} from "../domain/resource"
 import { sameSourceContent, stableReviewData } from "../domain/content-identity"
 export type { DriftReport, KitDrift, KitDriftStatus, FileDrift } from "./drift"
 import {
   assertSafePath,
   readOptional,
   readOptionalBytes,
-  reconcile,
+  reconcileNode,
   assertSafeDirectory,
   snapshotNode,
   sameNode,
@@ -134,7 +139,7 @@ function displayNode(node: NodeSnapshot): string | null {
   return node.kind === "missing"
     ? null
     : node.kind === "file"
-      ? node.content
+      ? resourcePreview(encodedResource(node))
       : `-> ${node.target}`
 }
 
@@ -163,7 +168,7 @@ async function atomicNodeWrite(
   try {
     if (desired.kind === "symlink") await symlink(desired.target, temp)
     else {
-      await writeFile(temp, desired.content, { flag: "wx", mode: 0o600 })
+      await writeFile(temp, encodedBytes(desired), { flag: "wx", mode: 0o600 })
       await chmod(temp, desired.mode)
     }
     await check()
@@ -900,12 +905,7 @@ export class LoadoutService {
               `File changed since review; review again (including link targets): ${change.path}`,
             )
           // Preserve unrelated edits on untouched instruction files, unless their bytes were copied elsewhere.
-          reconcile(
-            change.path,
-            current.content,
-            managed,
-            structuredClone(managed),
-          )
+          reconcileNode(change.path, current, managed, structuredClone(managed))
         }
         expectedNodes.set(change.path, current)
       }
@@ -1100,7 +1100,7 @@ export class LoadoutService {
       (legacy &&
         current.kind === "file" &&
         expected.kind === "file" &&
-        current.content === expected.content)
+        encodedBytes(current).equals(encodedBytes(expected)))
     for (const change of changes) {
       this.assertOwnedPath(change.path, state, previous, ignorePaths)
       const content = await snapshotNode(

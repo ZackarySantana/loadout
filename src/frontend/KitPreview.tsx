@@ -23,6 +23,7 @@ import {
 import { theme as color, harnessColors } from "./theme"
 import { displayKitKey } from "../domain/catalog"
 import type { AgentHarness } from "../domain/subagents"
+import { resourceSize, type Resource } from "../domain/resource"
 
 const harnessLabels: Record<AgentHarness, string> = {
   codex: "Codex",
@@ -97,7 +98,7 @@ interface Contribution {
   metadata?: AgentMetadata[]
   files: {
     path: string
-    content: string
+    content: Resource
     markdown: boolean
     included: boolean
   }[]
@@ -648,12 +649,25 @@ export function KitPreview(props: KitPreviewProps) {
                       {safeText(file().path)}
                     </text>
                   </Show>
-                  <Content
-                    content={file().content}
-                    markdown={file().markdown}
-                    included={file().included}
-                    skill={card().nested && file().path === "SKILL.md"}
-                  />
+                  <Show
+                    when={typeof file().content === "string"}
+                    fallback={
+                      <text
+                        fg={file().included ? color.muted : color.excluded}
+                        wrapMode="word"
+                        flexShrink={0}
+                      >
+                        {`Raw asset · ${resourceSize(file().content).toLocaleString("en-US")} bytes · copied unchanged`}
+                      </text>
+                    }
+                  >
+                    <Content
+                      content={file().content as string}
+                      markdown={file().markdown}
+                      included={file().included}
+                      skill={card().nested && file().path === "SKILL.md"}
+                    />
+                  </Show>
                 </box>
               )}
             </Index>

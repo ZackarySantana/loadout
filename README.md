@@ -29,7 +29,7 @@ Matt Pocock, Anthropic, and Ponytail have separate remote catalogs: browse a cat
 
 Remote inventories are cached across launches. Catalog rows show colored names, available kit counts, and, only after a full day since checking, **stale by N days** on the same line. In the TUI, opening a stale catalog asks whether to update its inventory: **No** keeps the current inventory without fetching; **Yes** refreshes it. Younger catalogs open immediately without a background refresh. Unchanged resource bytes are reused, and installed kits never update merely because a catalog was refreshed. Review and Apply still validate current upstream content before accepting a kit update.
 
-Some upstream entries require fonts, PDFs, archives, or other non-text resources that this adapter cannot yet install. Those entries are listed as unavailable in their catalog; they are not problems with unrelated installed kits. Installed status reports actual source or managed-file issues for your installations.
+Remote skills preserve their supporting files, including fonts, PDFs, and archives, byte-for-byte. Raw assets are copied without interpretation, previews, execution, or extraction; their presence does not raise warnings or disable a skill. Required text definitions and license notices, source integrity, and resource bounds remain validated normally. Installed status reports actual source or managed-file issues for your installations.
 
 Remote catalog loading reports its current stage in the status area. Once discovery determines the inventory, a progress bar counts kits checked, including those reported unavailable; it is not an estimate of bytes or time remaining.
 

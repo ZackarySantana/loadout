@@ -15,7 +15,11 @@ const preferencesSchema = z
 
 function preferences(node: NodeSnapshot): z.infer<typeof preferencesSchema> {
   if (node.kind === "missing") return { walkthroughSeen: false }
-  if (node.kind !== "file" || Buffer.byteLength(node.content) > 16_384)
+  if (
+    node.kind !== "file" ||
+    node.encoding !== undefined ||
+    Buffer.byteLength(node.content) > 16_384
+  )
     throw new Error("Loadout preferences must be a small regular JSON file")
   return preferencesSchema.parse(JSON.parse(node.content))
 }

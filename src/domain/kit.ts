@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { agentFields } from "./subagents"
 import { remoteProvenanceSchema } from "./catalog-source"
+import { resourceSchema } from "./resource"
 
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]*$/)
 const value = z.union([z.string(), z.boolean()])
@@ -98,8 +99,11 @@ export const outputSchema = z.discriminatedUnion("type", [
       type: z.literal("skill"),
       name: id,
       files: z
-        .record(relativePath, z.string())
-        .refine((files) => "SKILL.md" in files, "A skill requires SKILL.md"),
+        .record(relativePath, resourceSchema)
+        .refine(
+          (files) => typeof files["SKILL.md"] === "string",
+          "A skill requires text SKILL.md",
+        ),
       when: conditionSchema.optional(),
     })
     .strict(),

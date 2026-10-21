@@ -80,7 +80,9 @@ export function renderState(
               type: "file",
               // Adapted upstream resources are literal files, not Loadout templates.
               // They use exact-file management, so instruction-block markers are data too.
-              content: config.origin?.remote ? content : text(content),
+              ...(typeof content === "string"
+                ? { content: config.origin?.remote ? content : text(content) }
+                : content),
             })
       } else if (output.type === "agent") {
         for (const [harness, location] of Object.entries(nativeRoots)) {
