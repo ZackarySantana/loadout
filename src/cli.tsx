@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S node --experimental-ffi
 import { homedir } from "node:os"
 import { resolve } from "node:path"
 import { parseArgs } from "node:util"

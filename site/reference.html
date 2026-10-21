@@ -1166,10 +1166,10 @@ mise exec -- npm install
 mise run dev
 mise run check
 mise run build
-mise exec -- bun dist/cli.js --help</code></pre>
+mise exec -- node --experimental-ffi dist/cli.js --help</code></pre>
           <p>
-            Dependencies stay local; Bun runs OpenTUI’s Solid integration, while
-            npm owns the dependency lockfile.
+            Dependencies stay local. Bun runs source development and tests and
+            builds the Node-targeted release; npm owns the dependency lockfile.
           </p>
           <ul>
             <li>
@@ -1231,8 +1231,12 @@ mise exec -- bun dist/cli.js --help</code></pre>
           </p>
           <p>
             The npm package includes the built CLI and catalog data. Users need
-            Bun 1.4.3 or newer on their <code>PATH</code>, even when installing
-            with <code>npm install --global @lidtop/loadout</code>.
+            Node.js 26.4 or newer, as required by the current OpenTUI native
+            backend, and install with
+            <code>npm install --global @lidtop/loadout</code>. No separate Bun
+            installation is required. Bun is only a development/build tool. The
+            CLI enables Node’s experimental FFI API for OpenTUI automatically;
+            Node may print an experimental-feature warning.
           </p>
           <h3>Read these docs locally</h3>
           <p>

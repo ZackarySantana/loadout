@@ -1,5 +1,5 @@
 import { createSignal, For, Show } from "solid-js"
-import type { BoxRenderable } from "@opentui/core"
+import { measureEditText, type BoxRenderable } from "@opentui/core"
 import type { Catalog, Kit } from "../domain/kit"
 import { theme as color } from "./theme"
 import { catalogCacheLabel, catalogKitCountLabel } from "./cache-label"
@@ -14,7 +14,10 @@ function CatalogKit(props: { kit: Kit }) {
   const name = () => safeText(props.kit.name)
   const wrappedTitle = () =>
     /[\r\n\t]/.test(name()) ||
-    (width() > 0 && Bun.stringWidth(name()) > Math.max(0, width() - 4))
+    (width() > 0 &&
+      measureEditText(name(), {
+        widthMethod: section?.ctx.widthMethod ?? "wcwidth",
+      }) > Math.max(0, width() - 4))
   return (
     <box
       ref={(ref: BoxRenderable) => {

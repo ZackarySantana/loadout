@@ -134,7 +134,7 @@ test("built CLI navigates bundled kits and updates a live answer in a real PTY o
       screen.write(chunk)
     },
   })
-  const child = Bun.spawn(["bun", cli], {
+  const child = Bun.spawn(["node", "--experimental-ffi", cli], {
     cwd: repository,
     env: {
       ...process.env,
@@ -274,7 +274,7 @@ test("CLI catalogs follow the repository and status reports source/output drift 
       }),
     )
     const run = async (args: string[], cwd = repository) => {
-      const proc = Bun.spawn(["bun", cli, ...args], {
+      const proc = Bun.spawn(["node", "--experimental-ffi", cli, ...args], {
         cwd,
         env: {
           ...process.env,

@@ -6,14 +6,16 @@ Compose project and user-wide agent context from declarative kits. Choose instru
 
 ## Install from npm
 
-After a release is published, install [Bun](https://bun.sh/) 1.4.3 or newer, then:
+After this version is released, use Node.js **26.4 or newer**, then:
 
 ```sh
 npm install --global @lidtop/loadout
 loadout
 ```
 
-Bun must be on your `PATH`; installing with npm does not make this a Node.js-only CLI. The package includes the built CLI and bundled catalog, not this development checkout.
+The npm CLI runs on Node.js; **Bun is not required by users**. The package includes the built CLI and bundled catalog, not this development checkout. Bun is used only for development, testing, and building releases.
+
+OpenTUI currently uses Node’s experimental FFI API. The CLI enables it automatically; Node may print an experimental-feature warning.
 
 ## Run from this checkout
 
@@ -71,10 +73,10 @@ Initial inspection shows cached inventory where available and lazy headers other
 ```sh
 mise run check
 mise run build
-mise exec -- bun dist/cli.js --help
+mise exec -- node --experimental-ffi dist/cli.js --help
 ```
 
-Bun runs OpenTUI’s Solid integration; npm manages the local dependency lockfile. See [architecture](site/reference.html#development), [kit authoring](site/reference.html#kits), [output settings](site/reference.html#settings), and [safety/recovery](site/reference.html#safety).
+Bun runs source development and tests, and builds the Node-targeted CLI; npm manages the local dependency lockfile. See [architecture](site/reference.html#development), [kit authoring](site/reference.html#kits), [output settings](site/reference.html#settings), and [safety/recovery](site/reference.html#safety).
 
 ## Release to npm
 

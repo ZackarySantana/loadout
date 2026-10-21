@@ -199,10 +199,10 @@
           <div class="eyebrow">From this checkout</div>
           <h2>Get started, locally.</h2>
           <p>
-            Loadout currently runs from the repository with Bun. It is not an
-            npm-published CLI to install with <code>npx</code>. Use
-            <a href="https://mise.jdx.dev/">mise</a> for the runtimes pinned in
-            <code>.mise.toml</code> in the checkout.
+            The npm release runs on Node.js 26.4 or newer, without a separate
+            Bun installation. To develop from this checkout, use
+            <a href="https://mise.jdx.dev/">mise</a> for the Node and Bun
+            runtimes pinned in <code>.mise.toml</code>.
           </p>
           <pre><code>mise trust
 mise install
@@ -217,16 +217,16 @@ mise run dev</code></pre>
             <div>
               <h3>Build and inspect</h3>
               <pre><code>mise run build
-mise exec -- bun dist/cli.js --help
+mise exec -- node --experimental-ffi dist/cli.js --help
 mise exec -- bun src/cli.tsx status</code></pre>
             </div>
             <div>
               <h3>Know what runs</h3>
               <p>
-                OpenTUI’s Solid integration runs on Bun. npm manages the local
-                dependency lockfile. <code>status</code> is read-only and
-                returns nonzero for source or output drift; it does not repair
-                files.
+                Bun is used for source development, tests, and building the
+                Node-targeted CLI. npm manages the local dependency lockfile.
+                <code>status</code> is read-only and returns nonzero for source
+                or output drift; it does not repair files.
               </p>
               <p class="small">
                 Developing Loadout? Use <code>mise run check</code>.
