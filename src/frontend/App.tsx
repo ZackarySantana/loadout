@@ -998,6 +998,7 @@ export function App(props: {
                               <CatalogPreview
                                 catalog={catalog()}
                                 repository={model.backend.repository}
+                                home={model.backend.home}
                               />
                             )}
                           </Show>

@@ -442,6 +442,13 @@ export function cachedCatalog(
 ): Catalog {
   return {
     ...structuredClone(record.catalog),
+    upstream: {
+      repo: record.descriptor.repo,
+      ...(record.descriptor.ref ? { ref: record.descriptor.ref } : {}),
+      ...(record.descriptor.directory
+        ? { directory: record.descriptor.directory }
+        : {}),
+    },
     permanent,
     automatic: permanent,
     cache: {

@@ -21,6 +21,7 @@ import {
   defaultRemoteSources,
   githubSource,
   loadRemoteCatalog,
+  remoteCatalogHeader,
   reportCatalogProgress,
   type CatalogLoadOptions,
 } from "./remote-catalogs"
@@ -451,14 +452,7 @@ export async function loadCatalogListing(
       // Retain a browseable header even when an installed remote source is offline.
       const descriptor = defaultRemoteDescriptor(source)!
       catalogs.push({
-        id: descriptor.id,
-        name: descriptor.name,
-        source,
-        permanent: true,
-        automatic: true,
-        kind: "remote",
-        hydration: "deferred",
-        kits: [],
+        ...remoteCatalogHeader(source, descriptor, true),
         issues: [message(error)],
       })
       failures.set(source, message(error))

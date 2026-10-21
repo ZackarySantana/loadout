@@ -325,6 +325,7 @@ export function remoteCatalogHeader(
   descriptor: RemoteSkillsSource,
   permanent = false,
 ): Catalog {
+  descriptor = remoteSkillsSourceSchema.parse(descriptor)
   return {
     id: descriptor.id,
     name: descriptor.name,
@@ -332,6 +333,11 @@ export function remoteCatalogHeader(
     permanent,
     automatic: permanent,
     kind: "remote",
+    upstream: {
+      repo: descriptor.repo,
+      ...(descriptor.ref ? { ref: descriptor.ref } : {}),
+      ...(descriptor.directory ? { directory: descriptor.directory } : {}),
+    },
     hydration: "deferred",
     kits: [],
     unavailableKits: [],
@@ -1082,7 +1088,8 @@ async function buildRemoteCatalog(
   } else {
     catalog.cache = { status: "fresh", checkedAt }
     if (browse) {
-      const { cache: _, ...snapshot } = catalog
+      // Presentation metadata is rehydrated from the descriptor, not persisted.
+      const { cache: _, upstream: _upstream, ...snapshot } = catalog
       const warning = await writeRemoteCache(
         options.cacheDirectory,
         {

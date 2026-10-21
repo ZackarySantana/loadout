@@ -4,6 +4,7 @@ import type { Catalog, Kit } from "../domain/kit"
 import { theme as color } from "./theme"
 import { catalogCacheLabel, catalogKitCountLabel } from "./cache-label"
 import { catalogUnavailableReason } from "./catalog-warnings"
+import { catalogSourceLabel } from "./source-label"
 
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
@@ -83,11 +84,8 @@ function CatalogKit(props: { kit: Kit }) {
 export function CatalogPreview(props: {
   catalog: Catalog
   repository?: string
+  home?: string
 }) {
-  const source = () =>
-    props.repository && props.catalog.source.startsWith(`${props.repository}/`)
-      ? `./${props.catalog.source.slice(props.repository.length + 1)}`
-      : props.catalog.source
   return (
     <box
       width="100%"
@@ -97,9 +95,9 @@ export function CatalogPreview(props: {
       gap={1}
     >
       <text fg={color.muted} wrapMode="word" flexShrink={0}>
-        {props.catalog.kind === "builtin"
-          ? "Built into Loadout."
-          : safeText(source())}
+        {safeText(
+          catalogSourceLabel(props.catalog, props.repository, props.home),
+        )}
       </text>
       <Show when={props.catalog.kind !== "builtin"}>
         <text

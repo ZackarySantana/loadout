@@ -1,6 +1,9 @@
 import { z } from "zod"
 import { agentFields } from "./subagents"
-import { remoteProvenanceSchema } from "./catalog-source"
+import {
+  remoteProvenanceSchema,
+  type RemoteSkillsSource,
+} from "./catalog-source"
 import { resourceSchema } from "./resource"
 
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]*$/)
@@ -227,6 +230,8 @@ export interface Catalog {
   permanent: boolean
   kits: LoadedKit[]
   kind?: "repo" | "builtin" | "external" | "remote"
+  /** Display-only metadata, derived from the validated remote descriptor. */
+  upstream?: Pick<RemoteSkillsSource, "repo" | "ref" | "directory">
   hydration?: "deferred" | "partial" | "loaded"
   cache?: {
     status: "cached" | "fresh" | "stale"
