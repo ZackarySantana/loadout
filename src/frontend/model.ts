@@ -140,6 +140,12 @@ export class ScreenModel {
   source = ""
   private optionFocus = new Map<string, number>()
   private listeners = new Set<() => void>()
+  private installedSnapshot?: Map<string, LoadedKit>
+  private installedView?: LoadedKit[]
+  private kitRowCache = new Map<
+    string,
+    { row: Row; description: string; driftStatus?: KitDrift["status"] }
+  >()
 
   constructor(readonly backend: Backend) {}
   subscribe(listener: () => void): () => void {
@@ -151,6 +157,29 @@ export class ScreenModel {
   private changed(): void {
     for (const listener of this.listeners) listener()
   }
+  private installedItems(): Map<string, LoadedKit> {
+    // installed() defensively clones every saved file. Share one snapshot across
+    // row/selection reads, not one whole-inventory clone per visible kit.
+    return (this.installedSnapshot ??= new Map(
+      this.backend.installed().map((item) => [item.key, item]),
+    ))
+  }
+  installedKits(): LoadedKit[] {
+    // Keep exposed working definitions separate from the saved comparison base:
+    // callers can mutate a row's kit without changing what counts as installed.
+    this.installedView ??= structuredClone([...this.installedItems().values()])
+    return [...this.installedView]
+  }
+  private async backendOperation<T>(action: () => Promise<T>): Promise<T> {
+    try {
+      return await action()
+    } finally {
+      // Status, browsing, planning and writes can reload concurrent intent, even
+      // before failing. Never retain a snapshot across those service operations.
+      this.installedSnapshot = undefined
+      this.installedView = undefined
+    }
+  }
   async initialize(): Promise<void> {
     await this.loadStatus()
     this.message = this.issueCount()
@@ -159,7 +188,9 @@ export class ScreenModel {
     this.changed()
   }
   private async loadStatus(fresh = false): Promise<void> {
-    const { catalogs, errors, drift } = await this.backend.status({ fresh })
+    const { catalogs, errors, drift } = await this.backendOperation(() =>
+      this.backend.status({ fresh }),
+    )
     this.catalogs = catalogs
     this.errors = errors
     this.drift = drift
@@ -256,9 +287,11 @@ export class ScreenModel {
       this.catalog?.id === catalog.id &&
       this.catalog.source === catalog.source
     try {
-      const result = await this.backend.browseCatalog(catalog.source, {
-        signal: controller.signal,
-      })
+      const result = await this.backendOperation(() =>
+        this.backend.browseCatalog(catalog.source, {
+          signal: controller.signal,
+        }),
+      )
       if (
         !canReceive() ||
         result.id !== catalog.id ||
@@ -344,6 +377,7 @@ export class ScreenModel {
       .toLowerCase()
       .split(/\s+/)
       .filter(Boolean)
+    if (!terms.length) return catalog?.kits ?? []
     return (catalog?.kits ?? []).filter((item) => {
       const text =
         `${item.kit.name} ${item.kit.id} ${item.key} ${item.kit.description}`.toLowerCase()
@@ -375,20 +409,19 @@ export class ScreenModel {
   }
   updateStaged(key: string): boolean {
     const draft = this.drafts.get(key)
-    const saved = this.backend.installed().find((item) => item.key === key)
+    if (!draft || draft.scope === "none") return false
+    const saved = this.installedItems().get(key)
     return (
-      !!draft &&
-      draft.scope !== "none" &&
-      !!saved &&
-      !sameSourceContent(draft.item, saved)
+      !!saved && draft.item !== saved && !sameSourceContent(draft.item, saved)
     )
   }
   canUpdate(item: LoadedKit): boolean {
     const latest = this.updateSource(item)
     return (
       !!latest &&
-      !sameSourceContent(item, latest) &&
-      (!item.origin || item.origin.source === latest.origin?.source)
+      item !== latest &&
+      (!item.origin || item.origin.source === latest.origin?.source) &&
+      !sameSourceContent(item, latest)
     )
   }
   private updateSource(item: LoadedKit): LoadedKit | undefined {
@@ -427,7 +460,7 @@ export class ScreenModel {
       (issue) =>
         issue.status === "changed" &&
         !!issue.latest &&
-        this.backend.installed().some((item) => item.key === issue.key),
+        this.installedItems().has(issue.key),
     )
   }
   private updateRows(): Row[] {
@@ -484,7 +517,9 @@ export class ScreenModel {
       if (browsing && this.catalog?.source === browsing) {
         try {
           this.showCatalog(
-            await this.backend.browseCatalog(browsing, { fresh: true }),
+            await this.backendOperation(() =>
+              this.backend.browseCatalog(browsing, { fresh: true }),
+            ),
           )
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error)
@@ -510,9 +545,8 @@ export class ScreenModel {
         this.page === 2 &&
         (this.stagedCount() || this.updateOffers().length)
       ) {
-        this.plan = await this.backend.plan(
-          [...this.drafts.values()],
-          this.settingsDraft,
+        this.plan = await this.backendOperation(() =>
+          this.backend.plan([...this.drafts.values()], this.settingsDraft),
         )
       }
       this.cursor = Math.max(
@@ -533,29 +567,60 @@ export class ScreenModel {
   }
   private kitRows(items: LoadedKit[], fromCatalog = false): Row[] {
     const rows: Row[] = []
+    const nextCache: typeof this.kitRowCache = new Map()
     const inventory = new Map(items.map((item) => [item.key, item]))
     // Keep the working copy visible even if status removes/replaces its source
     // or installation. Only Accept or explicit Cancel ends the form's lifetime.
     if (this.form) inventory.set(this.form.item.key, this.form.item)
     for (const item of inventory.values()) {
       const config = this.configuration(item)
-      rows.push({
-        id: `kit:${item.key}`,
-        kind: "kit",
-        label: `${config.scope === "none" ? "○" : "●"} ${item.kit.name}  ${config.scope === "none" ? "" : `[${config.scope}]`}${this.drafts.has(item.key) ? " *" : ""}`,
-        item,
-        scope: config.scope,
-        staged: this.drafts.has(item.key),
-        fromCatalog:
-          this.form?.item.key === item.key
-            ? this.form.fromCatalog
-            : fromCatalog,
-        sourceDrift: this.sourceDrift(item.key),
-        updateStaged: this.updateStaged(item.key),
-      })
+      const id = `kit:${item.key}`
+      const staged = this.drafts.has(item.key)
+      const label = `${config.scope === "none" ? "○" : "●"} ${item.kit.name}  ${config.scope === "none" ? "" : `[${config.scope}]`}${staged ? " *" : ""}`
+      const rowFromCatalog =
+        this.form?.item.key === item.key ? this.form.fromCatalog : fromCatalog
+      const sourceDrift = this.sourceDrift(item.key)
+      const updateStaged = this.updateStaged(item.key)
+      const cached = this.kitRowCache.get(id)
+      const previous = cached?.row
+      if (
+        previous &&
+        previous.item === item &&
+        previous.scope === config.scope &&
+        previous.label === label &&
+        previous.staged === staged &&
+        previous.fromCatalog === rowFromCatalog &&
+        previous.sourceDrift === sourceDrift &&
+        previous.updateStaged === updateStaged &&
+        cached.description === item.kit.description &&
+        cached.driftStatus === sourceDrift?.status
+      ) {
+        nextCache.set(id, cached)
+        rows.push(previous)
+      } else {
+        const row: Row = {
+          id,
+          kind: "kit",
+          label,
+          item,
+          scope: config.scope,
+          staged,
+          fromCatalog: rowFromCatalog,
+          sourceDrift,
+          updateStaged,
+        }
+        nextCache.set(id, {
+          row,
+          description: item.kit.description,
+          driftStatus: sourceDrift?.status,
+        })
+        rows.push(row)
+      }
       if (this.form?.item.key === item.key)
         rows.push(...this.formRows(this.form))
     }
+    // Bound retained definitions to this list, including any locked working form.
+    this.kitRowCache = nextCache
     return rows
   }
   private formRows(form: Form): Row[] {
@@ -668,6 +733,8 @@ export class ScreenModel {
   }
 
   rows(): Row[] {
+    if (this.page !== 1 && !(this.page === 0 && (this.catalog || this.form)))
+      this.kitRowCache.clear()
     if (this.page === 0) {
       if (this.catalog) {
         const matches = this.matchingKits()
@@ -740,7 +807,7 @@ export class ScreenModel {
     }
     if (this.page === 1) {
       const items = new Map(
-        this.backend.installed().map((item) => [item.key, item]),
+        this.installedKits().map((item) => [item.key, item]),
       )
       for (const draft of this.drafts.values())
         items.set(draft.item.key, draft.item)
@@ -1242,9 +1309,8 @@ export class ScreenModel {
           "No staged changes. Choose a kit or configure settings to get started."
         return
       }
-      this.plan = await this.backend.plan(
-        [...this.drafts.values()],
-        this.settingsDraft,
+      this.plan = await this.backendOperation(() =>
+        this.backend.plan([...this.drafts.values()], this.settingsDraft),
       )
       if (focusId)
         this.cursor = Math.max(
@@ -1361,7 +1427,9 @@ export class ScreenModel {
   async finishInput(): Promise<void> {
     if (this.editing?.kind === "catalog") {
       await this.run(async () => {
-        const catalog = await this.backend.register(this.source.trim())
+        const catalog = await this.backendOperation(() =>
+          this.backend.register(this.source.trim()),
+        )
         this.registering = false
         this.editing = undefined
         this.source = ""
@@ -1402,7 +1470,9 @@ export class ScreenModel {
         this.message = "Loading catalog…"
         await this.run(async () => {
           this.enterCatalog(
-            await this.backend.browseCatalog(row.catalog!.source),
+            await this.backendOperation(() =>
+              this.backend.browseCatalog(row.catalog!.source),
+            ),
           )
         })
       }
@@ -1461,9 +1531,7 @@ export class ScreenModel {
       this.cancelCatalogRefresh()
       const config = this.configuration(row.item)
       const draft = this.drafts.get(row.item.key)
-      const installed = this.backend
-        .installed()
-        .find((item) => item.key === row.item!.key)
+      const installed = this.installedItems().get(row.item.key)
       const scopeChanged = !!draft && this.scopeChangedDrafts.has(row.item.key)
       const updating =
         !scopeChanged &&
@@ -1508,9 +1576,7 @@ export class ScreenModel {
       const key = this.form.item.key
       await this.run(async () => {
         await this.loadStatus()
-        const removed = !this.backend
-          .installed()
-          .some((item) => item.key === key)
+        const removed = !this.installedItems().has(key)
         const latest = this.updateSource(this.form!.item)
         if (!latest)
           throw new Error(
@@ -1569,7 +1635,7 @@ export class ScreenModel {
       } else {
         const plan = this.plan
         await this.run(async () => {
-          await this.backend.apply(plan)
+          await this.backendOperation(() => this.backend.apply(plan))
           this.drafts.clear()
           this.scopeChangedDrafts.clear()
           this.settingsDraft = undefined

@@ -1,6 +1,7 @@
 import {
   createEffect,
   createMemo,
+  createSelector,
   createSignal,
   Index,
   onCleanup,
@@ -19,6 +20,7 @@ import { Walkthrough, walkthroughPages } from "./Walkthrough"
 import { DriftPreview, SourceNotice, sourceLabels } from "./DriftPreview"
 import { theme as color, scopeColor } from "./theme"
 import type { Scope } from "../domain/kit"
+import { canonical } from "../domain/content"
 import { UpdatePreview } from "./UpdatePreview"
 import { catalogCacheLabel } from "./cache-label"
 const safeText = (text: string) =>
@@ -92,29 +94,52 @@ export function App(props: {
     revision()
     return model.cursor
   })
+  const isActive = createSelector(active)
   const preview = createMemo(() => {
     revision()
     return details(model, rows()[active()])
   })
-  const kitSelection = createMemo(() => {
-    revision()
-    const item = rows()[active()]?.item
-    if (!item) return undefined
-    const config = model.configuration(item)
-    const form = model.form?.item.key === item.key ? model.form : undefined
-    return {
-      item,
-      answers: form?.answers ?? config.answers,
-      scope: form?.scope ?? config.scope,
-    }
-  })
+  const kitSelection = createMemo(
+    () => {
+      revision()
+      const item = rows()[active()]?.item
+      if (!item) return undefined
+      const config = model.configuration(item)
+      const form = model.form?.item.key === item.key ? model.form : undefined
+      const answers = form?.answers ?? config.answers
+      return {
+        item,
+        // Forms mutate their answer map in place. Keep a value snapshot so an
+        // unchanged focus move is cheap without hiding real input edits.
+        answers:
+          answers &&
+          Object.fromEntries(
+            Object.entries(answers).map(([key, value]) => [
+              key,
+              Array.isArray(value) ? [...value] : value,
+            ]),
+          ),
+        scope: form?.scope ?? config.scope,
+      }
+    },
+    undefined,
+    {
+      equals: (before, after) =>
+        before === after ||
+        (!!before &&
+          !!after &&
+          before.item === after.item &&
+          before.scope === after.scope &&
+          canonical(before.answers) === canonical(after.answers)),
+    },
+  )
   const updateSelection = createMemo(() => {
     revision()
     const row = rows()[active()]
     if (row?.kind !== "update-offer" || !row.sourceDrift?.latest)
       return undefined
-    const installed = model.backend
-      .installed()
+    const installed = model
+      .installedKits()
       .find((item) => item.key === row.sourceDrift!.key)
     const draft = installed ? model.drafts.get(installed.key) : undefined
     const form =
@@ -154,22 +179,31 @@ export function App(props: {
       ? {
           issue,
           staged,
-          installed: model.backend
-            .installed()
+          installed: model
+            .installedKits()
             .find((item) => item.key === row.item!.key),
           previewingLatest: form?.fromCatalog ?? row.fromCatalog,
         }
       : undefined
   })
+  const emptyReviewSelection = {
+    plan: undefined,
+    selections: [],
+    changeIndex: undefined,
+    drift: undefined,
+    errors: [],
+    installed: [],
+  }
   const reviewSelection = createMemo(() => {
     revision()
+    if (model.page !== 2) return emptyReviewSelection
     return {
       plan: model.plan,
       selections: [...model.drafts.values()],
       changeIndex: rows()[active()]?.changeIndex,
       drift: model.drift,
       errors: model.errors,
-      installed: model.backend.installed(),
+      installed: model.installedKits(),
     }
   })
   const previewIdentity = createMemo(() => {
@@ -499,14 +533,14 @@ export function App(props: {
                 flexShrink={0}
                 paddingX={1}
                 marginBottom={1}
-                backgroundColor={active() === 0 ? color.selected : color.panel}
+                backgroundColor={isActive(0) ? color.selected : color.panel}
               >
                 <text
-                  fg={active() === 0 ? color.sage : color.text}
+                  fg={isActive(0) ? color.sage : color.text}
                   wrapMode="word"
                   flexShrink={0}
                 >
-                  {`${active() === 0 ? "›" : " "} Search kits `}
+                  {`${isActive(0) ? "›" : " "} Search kits `}
                   <span style={{ fg: color.muted }}>· / to focus</span>
                 </text>
                 <box paddingLeft={2} flexShrink={0}>
@@ -519,9 +553,7 @@ export function App(props: {
                       if (editing()?.kind === "search") model.edit(value)
                     }}
                     onSubmit={() => void model.finishInput()}
-                    backgroundColor={
-                      active() === 0 ? color.selected : color.panel
-                    }
+                    backgroundColor={isActive(0) ? color.selected : color.panel}
                     textColor={color.text}
                     cursorColor={color.sage}
                     placeholder="Name, ID, or description"
@@ -574,22 +606,22 @@ export function App(props: {
                       }
                       marginBottom={row().kind === "actions" ? 1 : 0}
                       backgroundColor={
-                        index === active() ? color.selected : color.panel
+                        isActive(index) ? color.selected : color.panel
                       }
                     >
                       <Show when={row().label}>
                         <text
                           wrapMode="word"
                           flexShrink={0}
-                          fg={rowColor(row(), index === active())}
+                          fg={rowColor(row(), isActive(index))}
                         >
                           <Show
                             when={row().kind === "kit" && row().item}
-                            fallback={`${index === active() ? "›" : " "} ${safeText(row().label)}`}
+                            fallback={`${isActive(index) ? "›" : " "} ${safeText(row().label)}`}
                           >
                             {(item) => (
                               <span>
-                                {`${index === active() ? "›" : " "} ${row().scope === "none" ? "○" : "●"} ${safeText(item().kit.name)}  `}
+                                {`${isActive(index) ? "›" : " "} ${row().scope === "none" ? "○" : "●"} ${safeText(item().kit.name)}  `}
                                 <Show when={row().scope !== "none"}>
                                   <span
                                     style={{
@@ -649,7 +681,7 @@ export function App(props: {
                       <Show
                         when={
                           row().choices &&
-                          (row().kind !== "location" || index === active())
+                          (row().kind !== "location" || isActive(index))
                         }
                       >
                         <box
@@ -672,10 +704,10 @@ export function App(props: {
                                 maxWidth="100%"
                                 wrapMode="word"
                                 bg={
-                                  index === active() &&
+                                  isActive(index) &&
                                   optionIndex === row().focusedOptionIndex
                                     ? color.optionFocus
-                                    : index === active()
+                                    : isActive(index)
                                       ? color.selected
                                       : color.panel
                                 }
@@ -741,7 +773,7 @@ export function App(props: {
                             }}
                             onSubmit={() => void model.finishInput()}
                             backgroundColor={
-                              index === active() ? color.selected : color.panel
+                              isActive(index) ? color.selected : color.panel
                             }
                             textColor={color.text}
                             cursorColor={color.sage}
