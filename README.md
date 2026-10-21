@@ -4,9 +4,20 @@ Compose project and user-wide agent context from declarative kits. Choose instru
 
 **[Read the documentation →](site/index.html)** · [Technical reference](site/reference.html) · [Team example](examples/team-catalog/)
 
+## Install from npm
+
+After a release is published, install [Bun](https://bun.sh/) 1.4.3 or newer, then:
+
+```sh
+npm install --global @lidtop/loadout
+loadout
+```
+
+Bun must be on your `PATH`; installing with npm does not make this a Node.js-only CLI. The package includes the built CLI and bundled catalog, not this development checkout.
+
 ## Run from this checkout
 
-Use the pinned runtimes with [mise](https://mise.jdx.dev/). Loadout is not an npm-published CLI.
+Use the pinned runtimes with [mise](https://mise.jdx.dev/).
 
 ```sh
 mise trust
@@ -64,6 +75,29 @@ mise exec -- bun dist/cli.js --help
 ```
 
 Bun runs OpenTUI’s Solid integration; npm manages the local dependency lockfile. See [architecture](site/reference.html#development), [kit authoring](site/reference.html#kits), [output settings](site/reference.html#settings), and [safety/recovery](site/reference.html#safety).
+
+## Release to npm
+
+The CI and release workflows mirror Opcode’s pinned actions, mise setup, release PRs, and npm OIDC publishing, adapted to this single package and npm lockfile.
+
+1. Include a release note with a code change using `mise exec -- npm run changeset`. Select a patch, minor, or major bump and commit the generated `.changeset/*.md` file with your change.
+2. After merging to `main`, `.github/workflows/release.yml` opens or updates **Release Loadout**, proposing the combined version bump and changelog.
+3. Review and merge that release PR to publish. The publish job reruns checks, builds the package, and publishes only an unpublished version using npm provenance. Already published versions are skipped on subsequent pushes. Stable releases use `latest`; prerelease versions use `next`.
+
+Creating a GitHub Release or pushing a tag is not required. The workflow does not automatically create GitHub Releases.
+
+One-time setup:
+
+1. In GitHub **Settings → Actions → General → Workflow permissions**, enable **Allow GitHub Actions to create and approve pull requests**. The workflow grants the release-PR job its required write permissions; the default repository token can remain read-only. No bot approval of release PRs is configured.
+2. Create the GitHub environment **`npm`**; optionally require maintainer approval. If restricting deployment branches, allow **`main`**.
+3. In the npm package’s **Settings → Trusted publishing**, authorize GitHub user **`ZackarySantana`**, repository **`loadout`**, workflow filename **`release.yml`**, and environment **`npm`**. Enable **Allow npm publish**; leave **npm dist-tag** disabled. Stage-only permission would require a separate approval on npm and is not used here. No `NPM_TOKEN` secret is needed.
+4. npm requires a new trusted-publisher configuration to complete its first successful publish within two days; recreate it if it expires.
+
+Protect `main` with required pull-request review if release approval must be mandatory. As in Opcode, any unpublished version committed to `main` is eligible for publication; do not bypass the release PR by manually committing an unpublished version.
+
+**Before the first release:** this checkout’s `0.0.0` remains a placeholder and is skipped. Restore an already-published baseline in both `package.json` and `package-lock.json` (npm currently has `0.4.4`) before adding your first changeset. Then let the release PR propose the new version. The publish script refuses to move `latest` backwards. No version has been changed or published as part of adding this automation.
+
+GitHub’s default token may not trigger CI on the bot-created release PR. If branch protection requires the CI check, manually run the **CI** workflow on the release PR’s branch (`changeset-release/main`) from Actions. CI supports manual dispatch for this reason; publication also runs the checks after merge.
 
 Historical context-comparison fixtures and licenses live under `site/evidence/`, separate from runtime catalogs. Regenerate their measurement inventory and downloadable extract offline with `mise exec -- bun scripts/measure-context.ts`; review the static HTML tables against the result. This never fetches remote content or generates kit YAML.
 

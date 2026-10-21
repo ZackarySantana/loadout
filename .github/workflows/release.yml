@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      hasChangesets: ${{ steps.changesets.outputs.hasChangesets }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
+        with:
+          cache: false
+      - run: mise exec -- npm ci --ignore-scripts
+      - name: Open or update release PR
+        id: changesets
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1 (Changesets CLI 2)
+        with:
+          github-token: ${{ github.token }}
+          version: mise exec -- bun scripts/version.ts
+          commitMode: github-api
+          title: "Release Loadout"
+          commit: "chore: version Loadout"
+          createGithubReleases: false
+      - name: Explain automatic publishing in release PR
+        if: steps.changesets.outputs.pullRequestNumber != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.changesets.outputs.pullRequestNumber }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .body > "$RUNNER_TEMP/release-pr-body.md"
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          const body = readFileSync(join(process.env.RUNNER_TEMP, "release-pr-body.md"), "utf8").replace(
+            "publish to npm yourself or [setup this action to publish automatically](https://github.com/changesets/action#with-publishing)",
+            "the package will be published to npm automatically by this workflow's OIDC-protected publish job",
+          );
+          writeFileSync(join(process.env.RUNNER_TEMP, "release-pr-body.json"), JSON.stringify({ body }));
+          NODE
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --input "$RUNNER_TEMP/release-pr-body.json" > /dev/null
+
+  publish:
+    needs: version
+    if: needs.version.outputs.hasChangesets == 'false'
+    runs-on: ubuntu-latest
+    environment: npm
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
+        with:
+          cache: false
+      - run: mise exec -- npm ci --ignore-scripts
+      - run: mise exec -- npm run check
+      - name: Publish only unpublished versions using npm OIDC
+        run: mise exec -- bun scripts/publish.ts --publish

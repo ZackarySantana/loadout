@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+.release/
 **/.loadout/catalogs.json.lock
 **/.loadout/catalogs.json.loadout-*
 *.log

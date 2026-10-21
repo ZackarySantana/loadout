@@ -1194,6 +1194,46 @@ mise exec -- bun dist/cli.js --help</code></pre>
               keyboard flows.
             </li>
           </ul>
+          <h3>Publishing the npm CLI</h3>
+          <p>
+            The CI and release workflows mirror Opcode’s pinned actions and mise
+            setup, adapted to the npm lockfile and single package. Run
+            <code>mise exec -- npm run changeset</code> to add a release note
+            and bump type alongside a change. On <code>main</code>,
+            <code>.github/workflows/release.yml</code> opens or updates a
+            release PR with the combined version and changelog. Review and merge
+            that PR to publish the unpublished version with npm trusted
+            publishing and provenance. Stable versions use <code>latest</code>;
+            prereleases use <code>next</code>. GitHub Releases and release tags
+            are not required.
+          </p>
+          <p>
+            Allow GitHub Actions to create pull requests in repository settings.
+            Configure the GitHub environment <code>npm</code> for
+            <code>main</code> and the npm package’s trusted publisher for
+            <code>ZackarySantana/loadout</code>, workflow filename
+            <code>release.yml</code>, environment <code>npm</code>, with direct
+            <code>npm publish</code> allowed. No stored npm token is required.
+            New trusted-publisher configurations must complete a successful
+            publish within two days. See the README for setup and release
+            instructions. Do not publish merely to validate the workflow.
+          </p>
+          <p>
+            The current <code>0.0.0</code> placeholder is skipped; npm’s
+            existing release is <code>0.4.4</code>. Restore an already-published
+            baseline before adding the first changeset. Let the release PR
+            propose the new version: any unpublished version committed to main
+            is eligible for publication. Protect main with required PR review if
+            that approval must be enforced. Publication refuses to move
+            <code>latest</code> backwards and skips already published versions.
+            Bot-created PRs may need a manual CI run on their branch when branch
+            protection requires it. See the README for the exact setup.
+          </p>
+          <p>
+            The npm package includes the built CLI and catalog data. Users need
+            Bun 1.4.3 or newer on their <code>PATH</code>, even when installing
+            with <code>npm install --global @lidtop/loadout</code>.
+          </p>
           <h3>Read these docs locally</h3>
           <p>
             Open <code>site/index.html</code> directly in a browser; all site
