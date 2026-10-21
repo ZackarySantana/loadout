@@ -1,10 +1,79 @@
-import { For, Show } from "solid-js"
-import type { Catalog } from "../domain/kit"
+import { createSignal, For, Show } from "solid-js"
+import type { BoxRenderable } from "@opentui/core"
+import type { Catalog, Kit } from "../domain/kit"
 import { theme as color } from "./theme"
 import { catalogCacheLabel } from "./cache-label"
 
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
+
+function CatalogKit(props: { kit: Kit }) {
+  const [width, setWidth] = createSignal(0)
+  let section: BoxRenderable | undefined
+  const name = () => safeText(props.kit.name)
+  const wrappedTitle = () =>
+    /[\r\n\t]/.test(name()) ||
+    (width() > 0 && Bun.stringWidth(name()) > Math.max(0, width() - 4))
+  return (
+    <box
+      ref={(ref: BoxRenderable) => {
+        section = ref
+        setWidth(ref.width)
+      }}
+      onSizeChange={() => setWidth(section?.width ?? 0)}
+      width="100%"
+      minWidth={0}
+      flexDirection="column"
+      flexShrink={0}
+      border={["top"]}
+      borderStyle="single"
+      borderColor={color.border}
+      title={wrappedTitle() ? undefined : name()}
+      titleColor={color.sage}
+      titleAlignment="center"
+      paddingX={1}
+    >
+      <Show when={wrappedTitle()}>
+        <text
+          width="100%"
+          minWidth={0}
+          fg={color.sage}
+          wrapMode="char"
+          flexShrink={0}
+        >
+          {name()}
+        </text>
+      </Show>
+      <text
+        width="100%"
+        minWidth={0}
+        fg={color.text}
+        wrapMode="word"
+        flexShrink={0}
+      >
+        {safeText(props.kit.description) || "No description provided."}
+      </text>
+      <text width="100%" minWidth={0} wrapMode="word" flexShrink={0}>
+        <For
+          each={[...new Set(props.kit.outputs.map((output) => output.type))]}
+        >
+          {(type) => (
+            <span style={{ fg: color[type === "agent" ? "skill" : type] }}>
+              {
+                {
+                  instructions: "Instructions",
+                  skill: "Skills",
+                  file: "Files",
+                  agent: "Agents",
+                }[type]
+              }{" "}
+            </span>
+          )}
+        </For>
+      </text>
+    </box>
+  )
+}
 
 /** Read-only catalog summary, with one visually distinct entry per kit. */
 export function CatalogPreview(props: {
@@ -78,45 +147,7 @@ export function CatalogPreview(props: {
           : `KITS · ${props.catalog.kits.length}`}
       </text>
       <For each={props.catalog.kits}>
-        {({ kit }) => (
-          <box
-            width="100%"
-            minWidth={0}
-            flexDirection="column"
-            flexShrink={0}
-            border
-            borderStyle="rounded"
-            borderColor={color.border}
-            paddingX={1}
-          >
-            <text fg={color.sage} wrapMode="word" flexShrink={0}>
-              <b>{safeText(kit.name)}</b>
-            </text>
-            <text fg={color.text} wrapMode="word" flexShrink={0}>
-              {safeText(kit.description) || "No description provided."}
-            </text>
-            <text wrapMode="word" flexShrink={0}>
-              <For
-                each={[...new Set(kit.outputs.map((output) => output.type))]}
-              >
-                {(type) => (
-                  <span
-                    style={{ fg: color[type === "agent" ? "skill" : type] }}
-                  >
-                    {
-                      {
-                        instructions: "Instructions",
-                        skill: "Skills",
-                        file: "Files",
-                        agent: "Agents",
-                      }[type]
-                    }{" "}
-                  </span>
-                )}
-              </For>
-            </text>
-          </box>
-        )}
+        {({ kit }) => <CatalogKit kit={kit} />}
       </For>
       <Show when={props.catalog.unavailableKits?.length}>
         <text fg={color.warning} flexShrink={0}>

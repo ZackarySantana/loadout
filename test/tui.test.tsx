@@ -640,12 +640,11 @@ describe("rendered keyboard workflows", () => {
     await ui.go("catalog:loadout")
     expect(ui.frame()).toContain("◆ Loadout")
     const catalogCards = ["Greenfield", "No em dashes"].map((name) => {
-      const title = descendants(ui.setup.renderer.root).find(
-        (node) => node instanceof TextRenderable && node.plainText === name,
-      )!
-      expect(title.parent).toBeInstanceOf(BoxRenderable)
-      const card = title.parent as BoxRenderable
-      expect(card.border).toBe(true)
+      const card = descendants(ui.setup.renderer.root).find(
+        (node) => node instanceof BoxRenderable && node.title === name,
+      ) as BoxRenderable
+      expect(card).toBeInstanceOf(BoxRenderable)
+      expect(card.border).toEqual(["top"])
       expect(
         descendants(card).some(
           (node) =>
@@ -653,7 +652,7 @@ describe("rendered keyboard workflows", () => {
             node.plainText.includes("Instructions"),
         ),
       ).toBe(true)
-      expect(card.getChildren().length).toBeGreaterThanOrEqual(3)
+      expect(card.getChildren().length).toBeGreaterThanOrEqual(2)
       return card
     })
     expect(catalogCards[0]!.parent).toBe(catalogCards[1]!.parent)
