@@ -118,13 +118,13 @@ export function CatalogPreview(props: {
       <Show when={props.catalog.cache}>
         {(cache) => (
           <box flexDirection="column" flexShrink={0}>
-            <text
-              fg={cache().status === "stale" ? color.warning : color.muted}
-              wrapMode="word"
-              flexShrink={0}
-            >
-              {catalogCacheLabel(cache())}
-            </text>
+            <Show when={catalogCacheLabel(cache())}>
+              {(label) => (
+                <text fg={color.warning} wrapMode="word" flexShrink={0}>
+                  {label()}
+                </text>
+              )}
+            </Show>
             <Show when={cache().checkedAt}>
               <text fg={color.muted} wrapMode="word" flexShrink={0}>
                 Checked · {safeText(cache().checkedAt)}

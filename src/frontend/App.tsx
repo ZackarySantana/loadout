@@ -224,7 +224,7 @@ export function App(props: {
   })
   const formOpen = createMemo(() => {
     revision()
-    return Boolean(model.form || model.settingsForm)
+    return Boolean(model.form || model.settingsForm || model.catalogRefreshForm)
   })
   const [searchInput, setSearchInput] = createSignal<InputRenderable>()
   createEffect(() => {
@@ -261,7 +261,7 @@ export function App(props: {
     revision()
     return model.page === 0
       ? model.catalog
-        ? `Catalogs / ${model.catalog.name}${model.catalog.cache ? ` · ${catalogCacheLabel(model.catalog.cache)}` : ""}`
+        ? `Catalogs / ${model.catalog.name}`
         : "Catalogs"
       : (pages[model.page] ?? "Loadout")
   })
@@ -371,6 +371,7 @@ export function App(props: {
     setExitPrompt(true)
   }
   const rowColor = (row: Row, focused: boolean): string => {
+    if (row.kind === "catalog") return color.sage
     if (row.kind === "health" || row.kind === "drift-file") return color.warning
     if (row.kind === "update" || row.kind === "update-offer") return color.file
     if (row.kind === "heading") return color.muted
@@ -438,7 +439,12 @@ export function App(props: {
     // form must be explicitly accepted/cancelled before opening the guide.
     if ((key.sequence === "?" || key.name === "?") && !editing()) {
       key.preventDefault()
-      if (model.form || model.settingsForm || model.registering)
+      if (
+        model.form ||
+        model.settingsForm ||
+        model.registering ||
+        model.catalogRefreshForm
+      )
         setGuideMessage(
           "Accept or cancel the open form before replaying the walkthrough.",
         )
@@ -668,6 +674,7 @@ export function App(props: {
                                 (row().item ||
                                   row().settingsGroup ||
                                   model.settingsForm ||
+                                  model.catalogRefreshForm ||
                                   model.registering)
                               ? 1
                               : 0
@@ -686,7 +693,32 @@ export function App(props: {
                         >
                           <Show
                             when={row().kind === "kit" && row().item}
-                            fallback={`${isActive(index) ? "›" : " "} ${safeText(row().label)}`}
+                            fallback={
+                              <Show
+                                when={row().kind === "catalog" && row().catalog}
+                                fallback={`${isActive(index) ? "›" : " "} ${safeText(row().label)}`}
+                              >
+                                {(catalog) => (
+                                  <span>
+                                    <span
+                                      style={{ fg: color.muted }}
+                                    >{`${isActive(index) ? "›" : " "} ${catalog().permanent ? "◆" : "◇"} `}</span>
+                                    <span style={{ fg: color.sage }}>
+                                      {safeText(catalog().name)}
+                                    </span>
+                                    <Show
+                                      when={catalogCacheLabel(catalog().cache)}
+                                    >
+                                      {(label) => (
+                                        <span
+                                          style={{ fg: color.warning }}
+                                        >{` · ${label()}`}</span>
+                                      )}
+                                    </Show>
+                                  </span>
+                                )}
+                              </Show>
+                            }
                           >
                             {(item) => (
                               <span>
@@ -1028,9 +1060,11 @@ export function App(props: {
                   ? "Type an external catalog path or URL · Enter register · Esc stop editing"
                   : model.settingsForm
                     ? "↑↓/jk rows · ←→/hl actions · Space select · Esc accept group · Cancel discards"
-                    : formOpen()
-                      ? "↑↓/jk questions · ←→/hl options · Space select/toggle · Esc accept kit · Cancel discards"
-                      : `${currentPage() === 0 && model.catalog ? "/ search · " : ""}↑↓/jk rows · ←→/hl options · Space select · Tab pages · ? walkthrough · r refresh · Esc back · Shift+↑↓/PgUp/PgDn details · q q quit`}
+                    : model.catalogRefreshForm
+                      ? "↑↓/jk questions · ←→/hl options · Space select · Esc accept · Cancel discards"
+                      : formOpen()
+                        ? "↑↓/jk questions · ←→/hl options · Space select/toggle · Esc accept kit · Cancel discards"
+                        : `${currentPage() === 0 && model.catalog ? "/ search · " : ""}↑↓/jk rows · ←→/hl options · Space select · Tab pages · ? walkthrough · r refresh · Esc back · Shift+↑↓/PgUp/PgDn details · q q quit`}
       </text>
     </box>
   )

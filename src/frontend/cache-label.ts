@@ -1,8 +1,9 @@
 import type { Catalog } from "../domain/kit"
+import { catalogStaleDays } from "../domain/catalog-freshness"
 
 export function catalogCacheLabel(cache: Catalog["cache"]): string | undefined {
-  if (!cache) return undefined
-  if (cache.status === "stale")
-    return cache.reason ? "Cached · refresh unavailable" : "Cached · check due"
-  return cache.status === "cached" ? "Cached" : "Source checked"
+  const days = catalogStaleDays(cache)
+  return days >= 1
+    ? `stale by ${days} ${days === 1 ? "day" : "days"}`
+    : undefined
 }

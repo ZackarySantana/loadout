@@ -11,6 +11,7 @@ import {
   type LoadedKit,
 } from "../domain/kit"
 import { repositoryCatalogId } from "../domain/catalog"
+import { catalogFreshnessMs } from "../domain/catalog-freshness"
 import { assertSafeDirectory } from "./files"
 import { remoteSkillsSourceSchema } from "../domain/catalog-source"
 import { readRemoteCacheForSource } from "./remote-cache"
@@ -179,7 +180,7 @@ export async function loadCatalog(
   if (
     saved &&
     (options?.cachedOnly ||
-      Date.now() - Date.parse(saved.checkedAt) < 5 * 60_000)
+      Date.now() - Date.parse(saved.checkedAt) < catalogFreshnessMs)
   )
     return remote(saved.descriptor)
   try {

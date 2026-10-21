@@ -217,13 +217,29 @@ mise exec -- bun src/cli.tsx catalog add https://github.com/owner/repo/tree/main
             <summary>Fast remote browsing cache</summary>
             <p>
               Previously loaded remote catalogs open from a persistent local
-              inventory without waiting for a network request. You can search
-              and browse while a background source check runs when due. A
-              recently checked browse cache is reused for five minutes; after
-              that, a compact upstream commit-metadata request checks whether
-              the source has moved. If unchanged, skill files are not downloaded
-              again. If it changed, current tree entries identify which resource
-              bytes can be reused and which must be fetched.
+              inventory without waiting for a network request. Catalog rows show
+              colored names, without cache/type/count suffixes. An inventory is
+              not labeled stale until a full 24 hours have elapsed since its
+              last check. It then shows
+              <strong>stale by N days</strong>, counting whole elapsed days.
+              Opening it in the TUI asks
+              <strong>Update this catalog?</strong> with Yes/No choices and
+              Accept/Cancel, defaulting to No. No opens the existing inventory
+              without fetching; Yes explicitly refreshes it. Cancel returns to
+              the catalog list. Younger catalogs open without a background
+              refresh.
+            </p>
+            <p>
+              Checking only installed skills for Review is not a full catalog
+              refresh and does not reset the browsing inventory's age.
+            </p>
+            <p>
+              Refreshing catalog inventory never updates installed kit
+              snapshots; those still require Review and Apply. Source checks use
+              compact metadata and current tree entries, reusing verified
+              resource bytes rather than downloading unchanged files again.
+              Failed refreshes retain the existing inventory so you can choose
+              to keep it.
             </p>
             <p>
               Loading progress uses the existing status area rather than moving
@@ -244,11 +260,12 @@ mise exec -- bun src/cli.tsx catalog add https://github.com/owner/repo/tree/main
               an installation.
             </p>
             <p>
-              Cache status and its last check time are shown in the catalog
-              preview. When a background check fails, the last complete cached
-              inventory remains browsable with a stale indication. This does not
-              make unverified updates applicable. Existing installed snapshots
-              retain their separate offline behavior.
+              The last check time and any refresh failure reason remain
+              available in the catalog preview. Stale labels are based on age,
+              not merely a failed check; a catalog younger than one day receives
+              no stale-age label. This does not make unverified updates
+              applicable. Existing installed snapshots retain their separate
+              offline behavior.
               <code>r</code> explicitly requests a fresh check. For CLI
               discovery, use
               <code>inspect --json --catalog SOURCE_OR_ID --fresh</code>.

@@ -161,7 +161,9 @@ test("built CLI navigates bundled kits and updates a live answer in a real PTY o
     await Bun.sleep(60)
   }
   try {
-    await waitFor("show the bundled catalog", () => text().includes("built-in"))
+    await waitFor("show the bundled catalog", () =>
+      text().includes("◆ Loadout"),
+    )
     await send("\u001b[B")
     await send(" ")
     await waitFor(

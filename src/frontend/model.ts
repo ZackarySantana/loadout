@@ -13,6 +13,7 @@ import type { DriftReport, FileDrift, KitDrift } from "../backend/service"
 import { canonical } from "../domain/content"
 import { sameSourceContent } from "../domain/content-identity"
 import { catalogCacheLabel } from "./cache-label"
+import { catalogStaleDays } from "../domain/catalog-freshness"
 import type { CatalogFetchProgress } from "../domain/catalog-progress"
 import { answersForUpdate } from "./answers"
 import {
@@ -131,6 +132,7 @@ export class ScreenModel {
   }
   private nextLocationId = 0
   form?: Form
+  catalogRefreshForm?: { catalog: Catalog; update: boolean }
   plan?: Plan
   busy = false
   message =
@@ -192,10 +194,62 @@ export class ScreenModel {
     this.changed()
   }
   private async loadStatus(fresh = false): Promise<void> {
+    const key = (catalog: Catalog) => `${catalog.id}\0${catalog.source}`
+    const inventories = new Map(
+      this.catalogs
+        .filter((catalog) => catalog.hydration === "loaded")
+        .map((catalog) => [key(catalog), catalog]),
+    )
+    if (
+      this.browsedCatalog?.hydration === "loaded" &&
+      !inventories.has(key(this.browsedCatalog))
+    )
+      inventories.set(key(this.browsedCatalog), this.browsedCatalog)
     const { catalogs, errors, drift } = await this.backendOperation(() =>
       this.backend.status({ fresh }),
     )
-    this.catalogs = catalogs
+    this.catalogs = catalogs.map((current) => {
+      const inventory = inventories.get(key(current))
+      if (
+        current.kind !== "remote" ||
+        current.hydration === "loaded" ||
+        !inventory
+      )
+        return current
+      // Installed-subset validation must not replace or re-date a full browsing
+      // inventory. Only incoming sources remain visible; no removed source returns.
+      const reasons = [
+        ...new Set(
+          [
+            ...(inventory.cache?.reason?.split("\n") ?? []),
+            ...(current.cache?.reason?.split("\n") ?? []),
+          ].filter(Boolean),
+        ),
+      ]
+      return {
+        ...current,
+        hydration: "loaded" as const,
+        kits: inventory.kits,
+        cache: inventory.cache
+          ? { ...inventory.cache, reason: reasons.join("\n") || undefined }
+          : undefined,
+        unavailableKits: [
+          ...new Map(
+            [
+              ...(inventory.unavailableKits ?? []),
+              ...(current.unavailableKits ?? []),
+            ].map((item) => [item.key ?? `${item.name}\0${item.source}`, item]),
+          ).values(),
+        ],
+        issues: [
+          ...new Set([
+            ...(inventory.issues ?? []),
+            ...(current.issues ?? []),
+            ...reasons,
+          ]),
+        ],
+      }
+    })
     this.errors = errors
     this.drift = drift
     const previousSettings = this.settingsDraft ?? this.savedSettings
@@ -216,51 +270,22 @@ export class ScreenModel {
       ? rebasedSettings
       : undefined
     this.defaultsSettings = this.backend.defaultSettings()
+    if (
+      this.browsedCatalog &&
+      !this.catalogs.some(
+        (catalog) => key(catalog) === key(this.browsedCatalog!),
+      )
+    )
+      this.browsedCatalog = undefined
     if (this.catalog) {
-      const current = catalogs.find(
+      const current = this.catalogs.find(
         (catalog) =>
           catalog.id === this.catalog!.id &&
           catalog.source === this.catalog!.source,
       )
-      const inventory = this.browsedCatalog
-      if (
-        current &&
-        current.kind === "remote" &&
-        current.hydration !== "loaded" &&
-        inventory?.hydration === "loaded" &&
-        inventory.id === current.id &&
-        inventory.source === current.source
-      ) {
-        // Status intentionally inspects only installed remote kits. Its header is
-        // not a replacement for a complete inventory explicitly browsed by the user.
-        this.catalog = {
-          ...current,
-          kits: inventory.kits,
-          hydration: current.issues?.length ? "partial" : "loaded",
-          unavailableKits: [
-            ...(inventory.unavailableKits ?? []),
-            ...(current.unavailableKits ?? []),
-          ],
-          issues: [
-            ...new Set([
-              ...(current.issues?.length
-                ? [
-                    "Showing previously browsed inventory; source inspection reported issues.",
-                  ]
-                : []),
-              ...(inventory.issues ?? []),
-              ...(current.issues ?? []),
-            ]),
-          ],
-        }
-        this.catalogs = catalogs.map((catalog) =>
-          catalog === current ? this.catalog! : catalog,
-        )
-      } else {
-        this.catalog = current
-        if (!current) this.browsedCatalog = undefined
-        else if (current.hydration === "loaded") this.browsedCatalog = current
-      }
+      this.catalog = current
+      if (!current) this.browsedCatalog = undefined
+      else if (current.hydration === "loaded") this.browsedCatalog = current
     }
   }
   private showCatalog(catalog: Catalog): void {
@@ -349,88 +374,14 @@ export class ScreenModel {
       this.finishCatalogFetch(controller, generation)
     }
   }
-  private async revalidateCatalog(catalog: Catalog): Promise<void> {
-    const { generation, controller, onProgress } = this.startCatalogFetch(
-      catalog.source,
-    )
-    const canReceive = () =>
-      generation === this.catalogRefreshGeneration &&
-      !controller.signal.aborted &&
-      !this.busy &&
-      !this.form &&
-      !this.settingsForm &&
-      !this.registering &&
-      this.page === 0 &&
-      this.catalog?.id === catalog.id &&
-      this.catalog.source === catalog.source
-    try {
-      const result = await this.backendOperation(() =>
-        this.backend.browseCatalog(catalog.source, {
-          signal: controller.signal,
-          onProgress,
-        }),
+  private requireFreshCatalog(catalog: Catalog): Catalog {
+    if (catalog.hydration !== "loaded" || catalog.cache?.status === "stale") {
+      const reason = catalog.cache?.reason ?? catalog.issues?.[0]
+      throw new Error(
+        `Catalog refresh was incomplete. Existing inventory is kept.${reason ? ` ${reason}` : " Try refreshing again when the source is available."}`,
       )
-      if (
-        !canReceive() ||
-        result.id !== catalog.id ||
-        result.source !== catalog.source
-      )
-        return
-      const selection = this.selected()
-      const selected = selection?.id
-      const previous = new Map(
-        this.catalog!.kits.map((item) => [item.key, item]),
-      )
-      const next = {
-        ...result,
-        kits: result.kits.map((item) => {
-          const saved = previous.get(item.key)
-          if (!saved || !sameSourceContent(saved, item)) return item
-          return canonical(saved) === canonical(item)
-            ? saved
-            : { ...item, kit: saved.kit }
-        }),
-      }
-      // A source change must not move a reader away from their selected kit.
-      // The refreshed backend cache remains available on the next explicit browse.
-      if (
-        selection?.kind === "kit" &&
-        !this.matchingKits(next).some(
-          (item) => item.key === selection.item?.key,
-        )
-      )
-        return
-      this.showCatalog(next)
-      const index = this.rows().findIndex((row) => row.id === selected)
-      this.cursor =
-        index >= 0
-          ? index
-          : Math.max(
-              0,
-              this.rows().findIndex((row) => row.kind === "kit"),
-            )
-      this.changed()
-    } catch (error) {
-      if (!canReceive()) return
-      const current = this.catalog!
-      const reason = error instanceof Error ? error.message : String(error)
-      this.showCatalog(
-        current.cache
-          ? { ...current, cache: { ...current.cache, status: "stale", reason } }
-          : {
-              ...current,
-              issues: [
-                ...new Set([
-                  ...(current.issues ?? []),
-                  "Source check unavailable; previously browsed inventory retained.",
-                ]),
-              ],
-            },
-      )
-      this.changed()
-    } finally {
-      this.finishCatalogFetch(controller, generation)
     }
+    return catalog
   }
   private enterCatalog(catalog: Catalog): void {
     this.showCatalog(catalog)
@@ -463,7 +414,12 @@ export class ScreenModel {
   }
   focusSearch(): void {
     if (this.busy || this.page !== 0 || !this.catalog) return
-    if (this.form || this.settingsForm || this.registering) {
+    if (
+      this.form ||
+      this.settingsForm ||
+      this.registering ||
+      this.catalogRefreshForm
+    ) {
       this.message = "Accept or cancel the open form before searching kits."
       this.changed()
       return
@@ -577,12 +533,18 @@ export class ScreenModel {
   }
   async refreshStatus(): Promise<void> {
     if (this.busy) return
-    if (this.form || this.settingsForm || this.registering) {
+    if (
+      this.form ||
+      this.settingsForm ||
+      this.registering ||
+      this.catalogRefreshForm
+    ) {
       this.message = "Accept or cancel the open form before refreshing sources."
       this.changed()
       return
     }
     const selected = this.selected()?.id
+    const previousCatalog = this.catalog
     const browsing =
       this.page === 0 && this.catalog?.kind === "remote"
         ? this.catalog.source
@@ -593,23 +555,30 @@ export class ScreenModel {
       this.optionFocus.delete("review-actions")
       if (browsing && this.catalog?.source === browsing) {
         try {
-          this.showCatalog(await this.fetchCatalog(browsing, true))
+          this.showCatalog(
+            this.requireFreshCatalog(await this.fetchCatalog(browsing, true)),
+          )
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error)
           const warning = `Source refresh failed; showing previously browsed inventory. ${reason}`
-          this.catalog = {
-            ...this.catalog,
-            hydration: "partial",
-            issues: [...new Set([...(this.catalog.issues ?? []), warning])],
-          }
-          if (this.browsedCatalog?.hydration === "loaded")
-            this.browsedCatalog = {
-              ...this.browsedCatalog,
-              issues: this.catalog.issues,
-            }
-          this.catalogs = this.catalogs.map((catalog) =>
-            catalog.source === browsing ? this.catalog! : catalog,
-          )
+          const retained =
+            previousCatalog?.id === this.catalog.id &&
+            previousCatalog.source === this.catalog.source
+              ? previousCatalog
+              : this.catalog
+          this.showCatalog({
+            ...retained,
+            ...(retained.cache
+              ? {
+                  cache: {
+                    ...retained.cache,
+                    status: "stale" as const,
+                    reason,
+                  },
+                }
+              : {}),
+            issues: [...new Set([...(retained.issues ?? []), warning])],
+          })
           this.errors.push(`${browsing}: ${reason}`)
           throw error
         }
@@ -805,6 +774,74 @@ export class ScreenModel {
     return rows
   }
 
+  private catalogRefreshRows(catalog: Catalog): Row[] {
+    const update = this.catalogRefreshForm!.update
+    return [
+      {
+        id: "catalog-refresh:choice",
+        kind: "choice",
+        label: "Update this catalog?",
+        indent: true,
+        catalog,
+        choices: [
+          { value: true, label: "Yes", selected: update },
+          { value: false, label: "No", selected: !update },
+        ],
+        focusedOptionIndex: this.optionFocus.get("catalog-refresh:choice") ?? 1,
+        description:
+          "Refresh catalog inventory only; installed kits are unchanged.",
+      },
+      {
+        id: "catalog-refresh:actions",
+        kind: "actions",
+        label: "",
+        indent: true,
+        catalog,
+        choices: [
+          { value: "accept", label: "Accept", selected: false },
+          { value: "cancel", label: "Cancel", selected: false },
+        ],
+        focusedOptionIndex:
+          this.optionFocus.get("catalog-refresh:actions") ?? 0,
+      },
+    ]
+  }
+  private cancelCatalogRefreshForm(): void {
+    const catalog = this.catalogRefreshForm?.catalog
+    this.catalogRefreshForm = undefined
+    if (!catalog) return
+    this.cursor = Math.max(
+      0,
+      this.rows().findIndex(
+        (row) =>
+          row.kind === "catalog" &&
+          row.catalog?.id === catalog.id &&
+          row.catalog?.source === catalog.source,
+      ),
+    )
+    this.message = "Catalog refresh cancelled. Installed kits are unchanged."
+  }
+  private async acceptCatalogRefresh(): Promise<void> {
+    const form = this.catalogRefreshForm
+    if (!form || this.busy) return
+    if (!form.update) {
+      this.catalogRefreshForm = undefined
+      this.enterCatalog(form.catalog)
+      this.message =
+        "Using the existing catalog inventory. Installed kits are unchanged."
+      this.changed()
+      return
+    }
+    await this.run(async () => {
+      const catalog = this.requireFreshCatalog(
+        await this.fetchCatalog(form.catalog.source, true),
+      )
+      this.catalogRefreshForm = undefined
+      this.enterCatalog(catalog)
+      this.message = "Catalog refreshed. Installed kits are unchanged."
+    })
+  }
+
   rows(): Row[] {
     if (this.page !== 1 && !(this.page === 0 && (this.catalog || this.form)))
       this.kitRowCache.clear()
@@ -851,12 +888,18 @@ export class ScreenModel {
         return rows
       }
       if (this.form) return this.kitRows([], this.form.fromCatalog)
-      const rows: Row[] = this.catalogs.map((catalog) => ({
-        id: `catalog:${catalog.id}`,
-        kind: "catalog",
-        label: `${catalog.permanent ? "◆" : "◇"} ${catalog.name}  ·  ${catalog.hydration === "deferred" || catalog.hydration === "partial" ? "Browse to load" : `${catalog.kits.length} kits`}${catalog.kind === "remote" ? "  ·  remote catalog" : catalog.kind === "repo" ? "  ·  automatic" : catalog.permanent ? "  ·  built-in" : "  ·  registered"}${catalog.cache ? `  ·  ${catalogCacheLabel(catalog.cache)}` : ""}`,
-        catalog,
-      }))
+      const rows: Row[] = this.catalogs.flatMap((catalog): Row[] => [
+        {
+          id: `catalog:${catalog.id}`,
+          kind: "catalog",
+          label: `${catalog.permanent ? "◆" : "◇"} ${catalog.name}${catalogCacheLabel(catalog.cache) ? ` · ${catalogCacheLabel(catalog.cache)}` : ""}`,
+          catalog,
+        },
+        ...(this.catalogRefreshForm?.catalog.id === catalog.id &&
+        this.catalogRefreshForm.catalog.source === catalog.source
+          ? this.catalogRefreshRows(catalog)
+          : []),
+      ])
       if (this.issueCount())
         rows.push({
           id: "health",
@@ -1314,6 +1357,7 @@ export class ScreenModel {
       (!this.form ||
         (row.item?.key === this.form.item.key && row.kind !== "kit")) &&
       (!this.registering || row.kind === "source") &&
+      (!this.catalogRefreshForm || row.id.startsWith("catalog-refresh:")) &&
       (!this.settingsForm ||
         (this.settingsForm.group === "restore"
           ? row.id === "settings:restore:actions"
@@ -1356,7 +1400,12 @@ export class ScreenModel {
   }
   async cycle(backward = false): Promise<void> {
     if (this.busy) return
-    if (this.form || this.settingsForm || this.registering) {
+    if (
+      this.form ||
+      this.settingsForm ||
+      this.registering ||
+      this.catalogRefreshForm
+    ) {
       this.message = "Accept or cancel the inline form before changing tabs."
       this.changed()
       return
@@ -1397,6 +1446,10 @@ export class ScreenModel {
   }
   back(): void {
     if (this.busy) return
+    if (this.catalogRefreshForm) {
+      void this.acceptCatalogRefresh()
+      return
+    }
     if (this.settingsForm) {
       this.acceptSettings()
       return
@@ -1527,6 +1580,19 @@ export class ScreenModel {
     if (this.busy || this.editing) return
     const row = this.selected()
     if (!row) return
+    if (this.catalogRefreshForm) {
+      if (row.id === "catalog-refresh:choice") {
+        this.catalogRefreshForm.update =
+          row.choices![row.focusedOptionIndex ?? 1]!.value === true
+        this.optionFocus.set(row.id, row.focusedOptionIndex ?? 1)
+      } else if (row.id === "catalog-refresh:actions") {
+        if (row.choices![row.focusedOptionIndex ?? 0]!.value === "cancel")
+          this.cancelCatalogRefreshForm()
+        else await this.acceptCatalogRefresh()
+      }
+      this.changed()
+      return
+    }
     if (this.page === 3) {
       this.activateSettings(row)
       this.changed()
@@ -1535,10 +1601,22 @@ export class ScreenModel {
     if (row.kind === "catalog") {
       if (
         row.catalog?.kind === "remote" &&
+        catalogStaleDays(row.catalog.cache) >= 1
+      ) {
+        this.cancelCatalogRefresh()
+        this.catalogRefreshForm = { catalog: row.catalog, update: false }
+        this.optionFocus.delete("catalog-refresh:choice")
+        this.optionFocus.delete("catalog-refresh:actions")
+        this.cursor = this.rows().findIndex(
+          (candidate) => candidate.id === "catalog-refresh:choice",
+        )
+        this.message =
+          "Choose whether to refresh this catalog. Installed kits are unchanged."
+      } else if (
+        row.catalog?.kind === "remote" &&
         row.catalog.hydration === "loaded"
       ) {
         this.enterCatalog(row.catalog)
-        void this.revalidateCatalog(row.catalog)
       } else {
         this.message = "Loading catalog…"
         await this.run(async () => {
@@ -1734,12 +1812,19 @@ export class ScreenModel {
             0,
             this.rows().findIndex((row) => row.id === "scope"),
           )
-        : this.registering
+        : this.catalogRefreshForm
           ? Math.max(
               0,
-              this.rows().findIndex((row) => row.kind === "source"),
+              this.rows().findIndex(
+                (row) => row.id === "catalog-refresh:choice",
+              ),
             )
-          : 0
+          : this.registering
+            ? Math.max(
+                0,
+                this.rows().findIndex((row) => row.kind === "source"),
+              )
+            : 0
     } finally {
       this.busy = false
       this.changed()

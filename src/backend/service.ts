@@ -337,6 +337,8 @@ export class LoadoutService {
           : undefined,
       },
     )
+    const failure = listing.failures.get(source)
+    if (failure) throw new Error(failure)
     const catalog = listing.catalogs.find(
       (catalog) => catalog.source === source,
     )

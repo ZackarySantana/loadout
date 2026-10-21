@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url"
 import { parseDocument } from "yaml"
 import { z } from "zod"
 import { canonical } from "../domain/content"
+import { catalogFreshnessMs } from "../domain/catalog-freshness"
 import type { CatalogFetchProgress } from "../domain/catalog-progress"
 export type { CatalogFetchProgress } from "../domain/catalog-progress"
 import {
@@ -458,19 +459,23 @@ async function loadRemoteCatalogContent(
     )
   if (options.cachedOnly)
     return saved
-      ? cachedCatalog(saved, permanent, age < 5 * 60_000 ? "cached" : "stale")
+      ? cachedCatalog(
+          saved,
+          permanent,
+          age < catalogFreshnessMs ? "cached" : "stale",
+        )
       : remoteCatalogHeader(source, descriptor, permanent)
   if (
     saved &&
     ((!browse && !installed) ||
       (!options.forceRefresh &&
         options.purpose === "browse" &&
-        (!browse || age < 5 * 60_000)))
+        (!browse || age < catalogFreshnessMs)))
   )
     return cachedCatalog(
       saved,
       permanent,
-      age < 5 * 60_000 ? "cached" : "stale",
+      age < catalogFreshnessMs ? "cached" : "stale",
     )
   try {
     return await buildRemoteCatalog(
