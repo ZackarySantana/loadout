@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      auth_diagnostics:
+        description: Non-publishing npm auth diagnostics
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -14,7 +19,7 @@ concurrency:
 
 jobs:
   version:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && !inputs.auth_diagnostics
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -62,7 +67,7 @@ jobs:
 
   publish:
     needs: version
-    if: needs.version.outputs.hasChangesets == 'false'
+    if: needs.version.outputs.hasChangesets == 'false' && !inputs.auth_diagnostics
     runs-on: ubuntu-latest
     environment: npm
     timeout-minutes: 25
@@ -80,3 +85,68 @@ jobs:
       - run: mise exec -- npm run check
       - name: Publish only unpublished versions using npm OIDC
         run: mise exec -- bun scripts/publish.ts --publish
+
+  auth-diagnostics:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.auth_diagnostics
+    runs-on: ubuntu-latest
+    environment: npm
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
+        with:
+          cache: false
+      - run: mise exec -- npm ci --ignore-scripts
+      - name: Inspect public OIDC identity without logging credentials
+        run: |
+          mise exec -- node --version
+          mise exec -- npm --version
+          mise exec -- node --input-type=module <<'NODE'
+          const env = process.env;
+          console.log(JSON.stringify({
+            repository: env.GITHUB_REPOSITORY,
+            ref: env.GITHUB_REF,
+            workflow_ref: env.GITHUB_WORKFLOW_REF,
+            sha: env.GITHUB_SHA,
+            GITHUB_ACTIONS: Boolean(env.GITHUB_ACTIONS),
+            CI_is_false: env.CI === "false",
+            ACTIONS_ID_TOKEN_REQUEST_URL: Boolean(env.ACTIONS_ID_TOKEN_REQUEST_URL),
+            ACTIONS_ID_TOKEN_REQUEST_TOKEN: Boolean(env.ACTIONS_ID_TOKEN_REQUEST_TOKEN),
+            NPM_ID_TOKEN: Boolean(env.NPM_ID_TOKEN),
+            NODE_AUTH_TOKEN: Boolean(env.NODE_AUTH_TOKEN),
+          }, null, 2));
+          if (env.ACTIONS_ID_TOKEN_REQUEST_URL && env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
+            try {
+              const url = new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);
+              url.searchParams.set("audience", "npm:registry.npmjs.org");
+              const response = await fetch(url, {
+                headers: { Authorization: `Bearer ${env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` },
+                signal: AbortSignal.timeout(20_000),
+              });
+              if (!response.ok) {
+                console.error(`GitHub OIDC request failed: HTTP ${response.status}`);
+              } else {
+                const { value } = await response.json();
+                const payload = JSON.parse(Buffer.from(value.split(".")[1], "base64url").toString("utf8"));
+                const claims = ["iss", "aud", "sub", "repository", "repository_owner", "ref", "workflow_ref", "job_workflow_ref", "environment"];
+                console.log(JSON.stringify(Object.fromEntries(claims.map((key) => [key, payload[key] ?? null])), null, 2));
+              }
+            } catch {
+              console.error("GitHub OIDC request or public-claim decoding failed (details withheld)");
+            }
+          }
+          NODE
+      - name: Build and pack without publishing
+        run: mise exec -- bun scripts/publish.ts --dry-run
+      - name: Diagnose npm OIDC exchange without publishing
+        run: |
+          version="$(mise exec -- node -p 'require("./package.json").version')"
+          tarball=".release/tarballs/lidtop-loadout-${version}.tgz"
+          echo "Dry-run auth diagnostics only; success does not prove publish permission."
+          mise exec -- npm publish "$tarball" --dry-run --ignore-scripts --access public --provenance --registry https://registry.npmjs.org/ --tag latest --loglevel verbose
