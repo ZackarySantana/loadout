@@ -1,6 +1,6 @@
 {
   "name": "@lidtop/loadout",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "description": "Compose agent instructions and skills from declarative kits.",
   "type": "module",
   "bin": {
