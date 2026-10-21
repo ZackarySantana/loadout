@@ -206,6 +206,14 @@ mise exec -- bun src/cli.tsx catalog add https://github.com/owner/repo/tree/main
               commit; that retrieval pin is not update identity.
             </p>
             <p>
+              Unavailable catalog entries are not installation failures. For
+              example, a skill needing a font, PDF, or archive is unavailable to
+              the current text-only adapter, but does not make another installed
+              skill unhealthy. Installed status covers actual installed-source
+              and managed-output drift; catalog availability details stay with
+              their catalog.
+            </p>
+            <p>
               Adapted upstream <code>SKILL.md</code> and supporting resources
               are copied literally, including <code>{{...}}</code> templates.
               These placeholders are never interpreted as Loadout answers.
@@ -218,9 +226,10 @@ mise exec -- bun src/cli.tsx catalog add https://github.com/owner/repo/tree/main
             <p>
               Previously loaded remote catalogs open from a persistent local
               inventory without waiting for a network request. Catalog rows show
-              colored names, without cache/type/count suffixes. An inventory is
-              not labeled stale until a full 24 hours have elapsed since its
-              last check. It then shows
+              colored names, available kit counts, and any stale age on one
+              line, without cache/type classifications. An inventory is not
+              labeled stale until a full 24 hours have elapsed since its last
+              check. It then shows
               <strong>stale by N days</strong>, counting whole elapsed days.
               Opening it in the TUI asks
               <strong>Update this catalog?</strong> with Yes/No choices and

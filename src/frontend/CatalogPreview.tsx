@@ -2,7 +2,8 @@ import { createSignal, For, Show } from "solid-js"
 import type { BoxRenderable } from "@opentui/core"
 import type { Catalog, Kit } from "../domain/kit"
 import { theme as color } from "./theme"
-import { catalogCacheLabel } from "./cache-label"
+import { catalogCacheLabel, catalogKitCountLabel } from "./cache-label"
+import { catalogUnavailableReason } from "./catalog-warnings"
 
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
@@ -141,17 +142,18 @@ export function CatalogPreview(props: {
         )}
       </Show>
       <text fg={color.sage} flexShrink={0}>
-        {props.catalog.hydration === "deferred" ||
-        props.catalog.hydration === "partial"
-          ? "REMOTE SKILLS · Browse to load"
-          : `KITS · ${props.catalog.kits.length}`}
+        {catalogKitCountLabel(props.catalog)}
       </text>
       <For each={props.catalog.kits}>
         {({ kit }) => <CatalogKit kit={kit} />}
       </For>
       <Show when={props.catalog.unavailableKits?.length}>
-        <text fg={color.warning} flexShrink={0}>
-          UNAVAILABLE KITS
+        <text fg={color.warning} flexShrink={0} wrapMode="word">
+          UNAVAILABLE TO INSTALL/UPDATE
+        </text>
+        <text fg={color.muted} wrapMode="word" flexShrink={0}>
+          Saved installations remain usable; these entries are currently
+          unavailable.
         </text>
         <For each={props.catalog.unavailableKits}>
           {(kit) => (
@@ -160,7 +162,7 @@ export function CatalogPreview(props: {
                 {safeText(kit.name)}
               </text>
               <text fg={color.muted} wrapMode="word" flexShrink={0}>
-                {safeText(kit.reason)}
+                {safeText(catalogUnavailableReason(props.catalog, kit))}
               </text>
             </box>
           )}

@@ -92,6 +92,7 @@ export function DriftPreview(props: {
   report: DriftReport
   errors: string[]
   file?: FileDrift
+  scope?: "catalogs" | "installed" | "all"
 }) {
   const issues = () =>
     props.report.kits.filter((kit) => kit.status !== "current")
@@ -109,54 +110,61 @@ export function DriftPreview(props: {
         when={props.file}
         fallback={
           <>
-            <Section title="Catalog definitions">
-              <Show
-                when={issues().length}
-                fallback={
-                  <text fg={theme.muted} wrapMode="word">
-                    Saved kit definitions match their sources.
-                  </text>
-                }
-              >
-                <For each={issues()}>
-                  {(kit) => (
-                    <box flexDirection="column" flexShrink={0} marginBottom={1}>
-                      <text fg={theme.warning} wrapMode="word" flexShrink={0}>
-                        {safe(displayKitKey(kit.key))} ·{" "}
-                        {sourceLabels[kit.status]}
-                      </text>
-                      <text fg={theme.text} wrapMode="word" flexShrink={0}>
-                        {safe(kit.reason)}
-                      </text>
-                    </box>
-                  )}
-                </For>
-              </Show>
-              <text fg={theme.muted} wrapMode="word" flexShrink={0}>
-                Missing or changed sources never uninstall kits. Configure the
-                saved snapshot, or explicitly load an available catalog update.
-              </text>
-            </Section>
-            <Section title="Managed outputs">
-              <Show
-                when={files().length}
-                fallback={
-                  <text fg={theme.muted} wrapMode="word">
-                    Managed output content matches its saved records.
-                  </text>
-                }
-              >
-                <For each={files()}>
-                  {(file, index) => (
-                    <text fg={theme.warning} wrapMode="word" flexShrink={0}>
-                      Managed output {index() + 1}: {file.status}
+            <Show when={props.scope !== "catalogs"}>
+              <Section title="Catalog definitions">
+                <Show
+                  when={issues().length}
+                  fallback={
+                    <text fg={theme.muted} wrapMode="word">
+                      Saved kit definitions match their sources.
                     </text>
-                  )}
-                </For>
-              </Show>
-            </Section>
+                  }
+                >
+                  <For each={issues()}>
+                    {(kit) => (
+                      <box
+                        flexDirection="column"
+                        flexShrink={0}
+                        marginBottom={1}
+                      >
+                        <text fg={theme.warning} wrapMode="word" flexShrink={0}>
+                          {safe(displayKitKey(kit.key))} ·{" "}
+                          {sourceLabels[kit.status]}
+                        </text>
+                        <text fg={theme.text} wrapMode="word" flexShrink={0}>
+                          {safe(kit.reason)}
+                        </text>
+                      </box>
+                    )}
+                  </For>
+                </Show>
+                <text fg={theme.muted} wrapMode="word" flexShrink={0}>
+                  Missing or changed sources never uninstall kits. Configure the
+                  saved snapshot, or explicitly load an available catalog
+                  update.
+                </text>
+              </Section>
+              <Section title="Managed outputs">
+                <Show
+                  when={files().length}
+                  fallback={
+                    <text fg={theme.muted} wrapMode="word">
+                      Managed output content matches its saved records.
+                    </text>
+                  }
+                >
+                  <For each={files()}>
+                    {(file, index) => (
+                      <text fg={theme.warning} wrapMode="word" flexShrink={0}>
+                        Managed output {index() + 1}: {file.status}
+                      </text>
+                    )}
+                  </For>
+                </Show>
+              </Section>
+            </Show>
             <Show when={props.errors.length}>
-              <Section title="Catalog warnings">
+              <Section title="Catalog availability">
                 <For each={props.errors}>
                   {(error) => (
                     <text fg={theme.warning} wrapMode="word" flexShrink={0}>
@@ -164,6 +172,13 @@ export function DriftPreview(props: {
                     </text>
                   )}
                 </For>
+                <Show when={props.scope === "catalogs"}>
+                  <text fg={theme.muted} wrapMode="word" flexShrink={0}>
+                    Catalog availability warnings do not mean managed output
+                    files are modified. Open the affected catalog for entry
+                    details.
+                  </text>
+                </Show>
               </Section>
             </Show>
           </>
@@ -189,18 +204,22 @@ export function DriftPreview(props: {
           </Section>
         )}
       </Show>
-      <Section title="Safe next steps">
-        <text fg={theme.text} wrapMode="word" flexShrink={0}>
-          Status does not repair or overwrite files. Modified or missing managed
-          content blocks apply; restore or reconcile those files deliberately,
-          then refresh.
-        </text>
-        <text fg={theme.muted} wrapMode="word" flexShrink={0}>
-          User text outside managed instruction blocks is preserved. Catalog
-          updates reuse compatible answers and still require Review and explicit
-          Apply changes.
-        </text>
-      </Section>
+      <Show
+        when={files().length || (props.file && props.file.status !== "current")}
+      >
+        <Section title="Safe next steps">
+          <text fg={theme.text} wrapMode="word" flexShrink={0}>
+            Status does not repair or overwrite files. Modified or missing
+            managed content blocks apply; restore or reconcile those files
+            deliberately, then refresh.
+          </text>
+          <text fg={theme.muted} wrapMode="word" flexShrink={0}>
+            User text outside managed instruction blocks is preserved. Catalog
+            updates reuse compatible answers and still require Review and
+            explicit Apply changes.
+          </text>
+        </Section>
+      </Show>
     </box>
   )
 }

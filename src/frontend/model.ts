@@ -12,7 +12,12 @@ import type { LoadoutService, Plan, Selection } from "../backend/service"
 import type { DriftReport, FileDrift, KitDrift } from "../backend/service"
 import { canonical } from "../domain/content"
 import { sameSourceContent } from "../domain/content-identity"
-import { catalogCacheLabel } from "./cache-label"
+import { catalogCacheLabel, catalogKitCountLabel } from "./cache-label"
+import {
+  catalogUnavailableReason,
+  catalogWarningText,
+  unavailableCatalogWarning,
+} from "./catalog-warnings"
 import { catalogStaleDays } from "../domain/catalog-freshness"
 import type { CatalogFetchProgress } from "../domain/catalog-progress"
 import { answersForUpdate } from "./answers"
@@ -69,6 +74,7 @@ export interface Row {
   changeIndex?: number
   fromCatalog?: boolean
   sourceDrift?: KitDrift
+  healthScope?: "catalogs" | "installed" | "all"
   updateStaged?: boolean
   fileDrift?: FileDrift
   settingsGroup?: UISettingsKey
@@ -188,9 +194,11 @@ export class ScreenModel {
   }
   async initialize(): Promise<void> {
     await this.loadStatus()
-    this.message = this.issueCount()
+    this.message = this.installedIssueCount()
       ? "Catalog or output drift found. Installed shows details; saved kits are kept."
-      : "Choose a catalog."
+      : this.errors.length
+        ? "Catalog availability warnings found. Open Catalogs for entry details."
+        : "Choose a catalog."
     this.changed()
   }
   private async loadStatus(fresh = false): Promise<void> {
@@ -431,11 +439,28 @@ export class ScreenModel {
     this.changed()
   }
   issueCount(): number {
+    return this.errors.length + this.installedIssueCount()
+  }
+  installedIssueCount(): number {
     return (
-      this.errors.length +
       this.drift.kits.filter((kit) => kit.status !== "current").length +
       this.drift.files.filter((file) => file.status !== "current").length
     )
+  }
+  catalogWarnings(): string[] {
+    return this.errors.map((error) => catalogWarningText(error, this.catalogs))
+  }
+  reviewErrors(): string[] {
+    const relevant = new Set([
+      ...this.installedItems().keys(),
+      ...this.drafts.keys(),
+    ])
+    return this.errors
+      .filter((error) => {
+        const match = unavailableCatalogWarning(error, this.catalogs)
+        return !match?.entry.key || relevant.has(match.entry.key)
+      })
+      .map((error) => catalogWarningText(error, this.catalogs))
   }
   sourceDrift(key: string): KitDrift | undefined {
     return this.drift.kits.find((kit) => kit.key === key)
@@ -595,9 +620,11 @@ export class ScreenModel {
         0,
         this.rows().findIndex((row) => row.id === selected),
       )
-      this.message = this.issueCount()
+      this.message = this.installedIssueCount()
         ? "Source or output drift found. Installed shows details. No files changed."
-        : "Catalogs and managed files checked. No drift detected."
+        : this.errors.length
+          ? "Catalog availability warnings found. Open Catalogs for entry details. No files changed."
+          : "Catalogs and managed files checked. No drift detected."
     })
   }
 
@@ -862,17 +889,25 @@ export class ScreenModel {
         }
         const rows: Row[] = [
           search,
-          ...(this.catalog.issues ?? []).map((issue, index): Row => ({
-            id: `catalog-issue:${this.catalog!.id}:${index}`,
-            kind: "heading",
-            label: `! ${issue}`,
-            catalog: this.catalog,
-          })),
+          ...(this.catalog.issues ?? [])
+            .filter(
+              (issue) =>
+                !(this.catalog!.unavailableKits ?? []).some(
+                  (entry) =>
+                    entry.key && issue === `${entry.key}: ${entry.reason}`,
+                ),
+            )
+            .map((issue, index): Row => ({
+              id: `catalog-issue:${this.catalog!.id}:${index}`,
+              kind: "heading",
+              label: `! ${issue}`,
+              catalog: this.catalog,
+            })),
           ...this.kitRows(matches, true),
           ...(this.catalog.unavailableKits ?? []).map((kit, index): Row => ({
             id: `unavailable:${this.catalog!.id}:${index}`,
             kind: "heading",
-            label: `! ${kit.name}: ${kit.reason}`,
+            label: `! ${kit.name}: ${catalogUnavailableReason(this.catalog!, kit)}`,
             catalog: this.catalog,
           })),
         ]
@@ -892,7 +927,7 @@ export class ScreenModel {
         {
           id: `catalog:${catalog.id}`,
           kind: "catalog",
-          label: `${catalog.permanent ? "◆" : "◇"} ${catalog.name}${catalogCacheLabel(catalog.cache) ? ` · ${catalogCacheLabel(catalog.cache)}` : ""}`,
+          label: `${catalog.permanent ? "◆" : "◇"} ${catalog.name} · ${catalogKitCountLabel(catalog)}${catalogCacheLabel(catalog.cache) ? ` · ${catalogCacheLabel(catalog.cache)}` : ""}`,
           catalog,
         },
         ...(this.catalogRefreshForm?.catalog.id === catalog.id &&
@@ -904,7 +939,10 @@ export class ScreenModel {
         rows.push({
           id: "health",
           kind: "health",
-          label: `! Source and output status · ${this.issueCount()} issues`,
+          label: this.installedIssueCount()
+            ? `! Source and output status · ${this.issueCount()} issues`
+            : `! Catalog warnings · ${this.errors.length}`,
+          healthScope: this.installedIssueCount() ? "all" : "catalogs",
         })
       rows.push({
         id: "register",
@@ -927,12 +965,13 @@ export class ScreenModel {
       )
       for (const draft of this.drafts.values())
         items.set(draft.item.key, draft.item)
-      const issues: Row[] = this.issueCount()
+      const issues: Row[] = this.installedIssueCount()
         ? [
             {
               id: "health",
               kind: "health",
-              label: `! Source and output status · ${this.issueCount()} issues`,
+              label: `! Source and output status · ${this.installedIssueCount()} issues`,
+              healthScope: "installed",
             },
           ]
         : []
@@ -1758,8 +1797,13 @@ export class ScreenModel {
       this.cursor += 1
       this.message = "Enter an external catalog path or HTTPS URL."
     } else if (row.kind === "health") {
-      this.page = 1
-      this.cursor = 0
+      if (row.healthScope === "catalogs")
+        this.message =
+          "Open the affected catalog for entry details. Installed kits are unchanged."
+      else {
+        this.page = 1
+        this.cursor = 0
+      }
     } else if (row.kind === "drift-file") {
       this.page = 2
       this.cursor = 0

@@ -22,7 +22,7 @@ import { theme as color, scopeColor } from "./theme"
 import type { Scope } from "../domain/kit"
 import { canonical } from "../domain/content"
 import { UpdatePreview } from "./UpdatePreview"
-import { catalogCacheLabel } from "./cache-label"
+import { catalogCacheLabel, catalogKitCountLabel } from "./cache-label"
 import { catalogProgressText } from "./CatalogProgress"
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
@@ -33,7 +33,12 @@ const rowDescription = (row: Row) =>
 
 function details(model: ScreenModel, row?: Row): { title: string } {
   if (row?.kind === "health" || row?.kind === "drift-file")
-    return { title: "Source and output status" }
+    return {
+      title:
+        row.healthScope === "catalogs"
+          ? "Catalog availability"
+          : "Source and output status",
+    }
   if (row?.catalog)
     return {
       title: row.catalog.name,
@@ -166,7 +171,17 @@ export function App(props: {
     revision()
     const row = rows()[active()]
     return row?.kind === "health" || row?.kind === "drift-file"
-      ? { report: model.drift, errors: model.errors, file: row.fileDrift }
+      ? {
+          report: model.drift,
+          errors:
+            model.page === 1 || row.healthScope === "installed"
+              ? []
+              : model.catalogWarnings(),
+          file: row.fileDrift,
+          scope:
+            row.healthScope ??
+            (model.page === 1 ? ("installed" as const) : ("all" as const)),
+        }
       : undefined
   })
   const sourceSelection = createMemo(() => {
@@ -203,7 +218,7 @@ export function App(props: {
       selections: [...model.drafts.values()],
       changeIndex: rows()[active()]?.changeIndex,
       drift: model.drift,
-      errors: model.errors,
+      errors: model.reviewErrors(),
       installed: model.installedKits(),
     }
   })
@@ -706,6 +721,9 @@ export function App(props: {
                                     <span style={{ fg: color.sage }}>
                                       {safeText(catalog().name)}
                                     </span>
+                                    <span
+                                      style={{ fg: color.muted }}
+                                    >{` · ${catalogKitCountLabel(catalog())}`}</span>
                                     <Show
                                       when={catalogCacheLabel(catalog().cache)}
                                     >
@@ -990,6 +1008,7 @@ export function App(props: {
                             report={selection().report}
                             errors={selection().errors}
                             file={selection().file}
+                            scope={selection().scope}
                           />
                         )}
                       </Show>
