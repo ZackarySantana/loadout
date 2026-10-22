@@ -5,20 +5,54 @@ import { fileURLToPath } from "node:url"
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url))
 const registry = "https://registry.npmjs.org/"
 
-async function command(args: string[]): Promise<string> {
+/** Captures output; `live` also echoes it as it arrives so slow registry calls are visible in CI. */
+async function command(args: string[], live = false): Promise<string> {
   const child = Bun.spawn(args, {
     cwd: repositoryRoot,
     stdout: "pipe",
     stderr: "pipe",
   })
+  const read = async (
+    stream: ReadableStream<Uint8Array>,
+    echo: NodeJS.WriteStream,
+  ) => {
+    let text = ""
+    const decoder = new TextDecoder()
+    for await (const chunk of stream) {
+      if (live) echo.write(chunk)
+      text += decoder.decode(chunk, { stream: true })
+    }
+    return text + decoder.decode()
+  }
   const [stdout, stderr, status] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
+    read(child.stdout, process.stdout),
+    read(child.stderr, process.stderr),
     child.exited,
   ])
   if (status) throw new Error(`${args.join(" ")} failed: ${stderr}\n${stdout}`)
-  if (stderr) console.error(stderr.trim())
+  if (stderr && !live) console.error(stderr.trim())
   return stdout
+}
+
+/** Exact-version lookup that fails closed on anything except published or 404. */
+async function isPublished(name: string, version: string) {
+  const response = await fetch(
+    `${registry}${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
+    { signal: AbortSignal.timeout(20_000) },
+  )
+  if (response.ok) return true
+  if (response.status !== 404)
+    throw new Error(`Registry lookup failed: HTTP ${response.status}`)
+  return false
+}
+
+const retryDelays = [5_000, 15_000]
+
+/** Registry 5xx and network failures; auth, conflict, and validation errors are never retried. */
+function transient(error: unknown) {
+  return /\bcode E5\d\d\b|\b5\d\d (?:Service Unavailable|Bad Gateway|Gateway Time-?out|Internal Server Error)\b|\b(?:ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|EPIPE)\b|socket hang up/i.test(
+    String(error),
+  )
 }
 
 const args = process.argv.slice(2)
@@ -54,16 +88,10 @@ if (live) {
     console.log("Skipping placeholder 0.0.0; waiting for the first release PR")
     process.exit(0)
   }
-  const response = await fetch(
-    `${registry}${encodeURIComponent(manifest.name)}/${encodeURIComponent(manifest.version)}`,
-    { signal: AbortSignal.timeout(20_000) },
-  )
-  if (response.ok) {
+  if (await isPublished(manifest.name, manifest.version)) {
     console.log(`Skipping published ${manifest.name}@${manifest.version}`)
     process.exit(0)
   }
-  if (response.status !== 404)
-    throw new Error(`Registry lookup failed: HTTP ${response.status}`)
 
   if (tag === "latest") {
     const latestResponse = await fetch(
@@ -127,19 +155,43 @@ if (!live) {
     `Packed ${manifest.name}@${manifest.version}: ${tarball} (not published)`,
   )
 } else {
-  console.log(
-    await command([
-      "npm",
-      "publish",
-      tarball,
-      "--access",
-      "public",
-      "--provenance",
-      "--ignore-scripts",
-      "--registry",
-      registry,
-      "--tag",
-      tag,
-    ]),
-  )
+  // Bound npm's own per-request timeout and retries so a hung PUT fails in minutes, not tens of minutes.
+  const publish = [
+    "npm",
+    "publish",
+    tarball,
+    "--access",
+    "public",
+    "--provenance",
+    "--ignore-scripts",
+    "--registry",
+    registry,
+    "--tag",
+    tag,
+    "--fetch-timeout",
+    "120000",
+    "--fetch-retries",
+    "1",
+  ]
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await command(publish, true)
+      break
+    } catch (error) {
+      if (!transient(error)) throw error
+      // A failed PUT may still have landed; never publish the same version twice.
+      if (await isPublished(String(manifest.name), manifest.version)) {
+        console.log(
+          `${manifest.name}@${manifest.version} was published despite a registry error`,
+        )
+        break
+      }
+      const delay = retryDelays[attempt]
+      if (delay === undefined) throw error
+      console.error(
+        `Transient registry failure publishing ${manifest.name}@${manifest.version}; retrying in ${delay / 1000}s`,
+      )
+      await Bun.sleep(delay)
+    }
+  }
 }
