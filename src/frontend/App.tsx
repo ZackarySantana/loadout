@@ -25,7 +25,13 @@ import { UpdatePreview } from "./UpdatePreview"
 import { catalogCacheLabel, catalogKitCountLabel } from "./cache-label"
 import { catalogProgressText } from "./CatalogProgress"
 import type { AppUpdateNotice } from "../domain/app-update"
-import { AppUpdatePopup } from "./AppUpdateNotice"
+import { AppUpdatePopup, type AppUpdateStep } from "./AppUpdateNotice"
+import type {
+  SelfUpdateAvailability,
+  SelfUpdateSelection,
+  UpdateInstaller,
+} from "../domain/self-update"
+import { hasPendingSelfUpdateWork } from "./self-update-client"
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
 const rowDescription = (row: Row) =>
@@ -63,6 +69,14 @@ export function App(props: {
   onWalkthroughDismiss?: () => Promise<void>
   appUpdate?: AppUpdateNotice
   onAppUpdateDismiss?: (notice: AppUpdateNotice) => void
+  onAppUpdateDiscover?: (
+    signal?: AbortSignal,
+  ) => Promise<SelfUpdateAvailability>
+  onAppUpdateConfirm?: (
+    selection: SelfUpdateSelection,
+    canProceed: () => boolean,
+    signal?: AbortSignal,
+  ) => Promise<void>
 }) {
   const model = props.model
   const [revision, update] = createSignal(0)
@@ -73,6 +87,19 @@ export function App(props: {
   const [savingGuidePreference, setSavingGuidePreference] = createSignal(false)
   const [dismissedUpdate, setDismissedUpdate] = createSignal<string>()
   const [updatePopup, setUpdatePopup] = createSignal<AppUpdateNotice>()
+  const [updateStep, setUpdateStep] = createSignal<AppUpdateStep>({
+    kind: "notice",
+  })
+  const [updateChoice, setUpdateChoice] = createSignal(0)
+  let updateRequest: AbortController | undefined
+  let shuttingDown = false
+  const cancelUpdate = () => {
+    updateRequest?.abort()
+    updateRequest = undefined
+    setUpdateChoice(0)
+    setUpdateStep({ kind: "notice" })
+    setUpdatePopup(undefined)
+  }
   const announcedUpdates = new Set<string>()
   const appUpdate = createMemo(() =>
     props.appUpdate?.latestVersion === dismissedUpdate()
@@ -81,11 +108,13 @@ export function App(props: {
   )
   const dismissUpdate = (notice: AppUpdateNotice) => {
     setDismissedUpdate(notice.latestVersion)
-    setUpdatePopup(undefined)
+    cancelUpdate()
     props.onAppUpdateDismiss?.(notice)
   }
   const unsubscribe = model.subscribe(() => update((value) => value + 1))
   onCleanup(() => {
+    shuttingDown = true
+    updateRequest?.abort()
     unsubscribe()
     model.cancelCatalogRefresh()
   })
@@ -335,7 +364,102 @@ export function App(props: {
   const openUpdate = (notice: AppUpdateNotice) => {
     announcedUpdates.add(notice.latestVersion)
     previewControls?.blur()
+    setUpdateStep({ kind: "notice" })
+    setUpdateChoice(0)
     setUpdatePopup(notice)
+  }
+  const canUpdate = () =>
+    !hasPendingSelfUpdateWork(model, {
+      walkthrough: walkthrough(),
+      savingPreference: savingGuidePreference(),
+      exitPrompt: exitPrompt(),
+      shuttingDown,
+    })
+  const manualUpdate = (reason: string) => {
+    setUpdateChoice(0)
+    setUpdateStep({ kind: "manual", reason })
+  }
+  const blockedUpdate = () =>
+    manualUpdate(
+      "Finish or cancel open work and apply or explicitly discard staged changes yourself before updating. No kits or settings were changed.",
+    )
+  const discoverUpdate = async () => {
+    if (!updatePopup() || updateStep().kind !== "notice") return
+    if (!canUpdate()) return blockedUpdate()
+    if (!props.onAppUpdateDiscover || !props.onAppUpdateConfirm)
+      return manualUpdate(
+        "Automatic updates are unavailable for this installation. Exit Loadout and use the installer that owns it; the commands above are manual instructions only.",
+      )
+    const controller = new AbortController()
+    updateRequest = controller
+    setUpdateChoice(0)
+    setUpdateStep({ kind: "discovering" })
+    try {
+      const available = await props.onAppUpdateDiscover(controller.signal)
+      if (controller.signal.aborted || shuttingDown) return
+      if (!canUpdate()) return blockedUpdate()
+      if (!available.installers.length)
+        return manualUpdate(
+          available.reason ??
+            "No supported global installer owns this installation. Update manually after exiting Loadout.",
+        )
+      setUpdateStep({ kind: "choose", installers: available.installers })
+    } catch (error) {
+      if (!controller.signal.aborted && !shuttingDown)
+        manualUpdate(
+          safeText(
+            error instanceof Error
+              ? error.message
+              : "Automatic updates are unavailable. Update manually after exiting Loadout.",
+          ),
+        )
+    } finally {
+      if (updateRequest === controller) updateRequest = undefined
+    }
+  }
+  const chooseInstaller = (installer: UpdateInstaller) => {
+    const current = updateStep()
+    const notice = updatePopup()
+    if (
+      current.kind !== "choose" ||
+      !notice ||
+      !current.installers.includes(installer)
+    )
+      return
+    if (!canUpdate()) return blockedUpdate()
+    setUpdateChoice(0)
+    setUpdateStep({
+      kind: "confirm",
+      selection: { installer, version: notice.latestVersion },
+    })
+  }
+  const confirmUpdate = async () => {
+    const current = updateStep()
+    if (current.kind !== "confirm" || !props.onAppUpdateConfirm) return
+    if (!canUpdate()) return blockedUpdate()
+    const controller = new AbortController()
+    updateRequest = controller
+    setUpdateChoice(0)
+    setUpdateStep({ kind: "pending" })
+    try {
+      // The CLI repeats this guard before sending and after the accepted ACK.
+      await props.onAppUpdateConfirm(
+        current.selection,
+        () => !controller.signal.aborted && canUpdate(),
+        controller.signal,
+      )
+    } catch (error) {
+      if (!controller.signal.aborted && !shuttingDown)
+        manualUpdate(
+          safeText(
+            error instanceof Error
+              ? error.message
+              : "The update was not accepted. Update manually after exiting Loadout.",
+          ),
+        )
+    } finally {
+      if (updateRequest === controller) updateRequest = undefined
+    }
   }
   createEffect(() => {
     const notice = appUpdate()
@@ -436,6 +560,8 @@ export function App(props: {
     info?.scrollTo(0)
   })
   const exit = () => {
+    if (savingGuidePreference()) return
+    cancelUpdate()
     model.cancelCatalogRefresh()
     setExitPrompt(true)
   }
@@ -481,10 +607,48 @@ export function App(props: {
     if (currentUpdate) {
       key.preventDefault()
       if (motion === "q") exit()
-      else if (key.name === "escape" || key.name === "return")
-        setUpdatePopup(undefined)
-      else if (motion === "d") dismissUpdate(currentUpdate)
-      else if (key.name === "up" || motion === "k") updateScroll?.scrollBy(-1)
+      else if (key.name === "escape") cancelUpdate()
+      else if (motion === "d" && updateStep().kind === "notice")
+        dismissUpdate(currentUpdate)
+      else if (motion === "u" && updateStep().kind === "notice")
+        void discoverUpdate()
+      else if (motion === "y" && updateStep().kind === "confirm")
+        void confirmUpdate()
+      else if (key.name === "return" || key.name === "space") {
+        const step = updateStep()
+        // Enter at confirmation always cancels, even after keyboard navigation.
+        if (step.kind === "confirm") cancelUpdate()
+        else if (step.kind === "choose" && updateChoice() > 0)
+          chooseInstaller(step.installers[updateChoice() - 1]!)
+        else if (step.kind === "notice" && updateChoice() === 1)
+          void discoverUpdate()
+        else if (step.kind === "notice" && updateChoice() === 2)
+          dismissUpdate(currentUpdate)
+        else cancelUpdate()
+      } else if (
+        key.name === "left" ||
+        motion === "h" ||
+        key.name === "right" ||
+        motion === "l" ||
+        key.name === "tab"
+      ) {
+        const step = updateStep()
+        const count =
+          step.kind === "choose"
+            ? step.installers.length + 1
+            : step.kind === "notice"
+              ? 3
+              : step.kind === "confirm"
+                ? 2
+                : 1
+        const delta =
+          key.name === "left" ||
+          motion === "h" ||
+          (key.name === "tab" && key.shift)
+            ? -1
+            : 1
+        setUpdateChoice((choice) => (choice + delta + count) % count)
+      } else if (key.name === "up" || motion === "k") updateScroll?.scrollBy(-1)
       else if (key.name === "down" || motion === "j") updateScroll?.scrollBy(1)
       else if (key.name === "pageup" || key.name === "pagedown")
         updateScroll?.scrollBy(
@@ -1176,8 +1340,14 @@ export function App(props: {
             notice={notice()}
             width={dimensions().width}
             height={dimensions().height}
-            onLater={() => setUpdatePopup(undefined)}
+            step={updateStep()}
+            choice={updateChoice()}
+            onLater={cancelUpdate}
             onDismiss={() => dismissUpdate(notice())}
+            onUpdate={() => void discoverUpdate()}
+            onChoose={chooseInstaller}
+            onConfirm={() => void confirmUpdate()}
+            onCancel={cancelUpdate}
             scrollRef={(ref) => {
               updateScroll = ref
             }}

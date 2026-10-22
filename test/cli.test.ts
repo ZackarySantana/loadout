@@ -23,7 +23,7 @@ function bundle() {
     ])
     if (status !== 0)
       throw new Error(`CLI build failed (${status}):\n${stdout}${stderr}`)
-    const path = join(checkout, "dist/cli.js")
+    const path = join(checkout, "dist/launcher.js")
     expect(await Bun.file(path).exists()).toBe(true)
     return path
   })())

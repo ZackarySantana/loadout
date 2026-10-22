@@ -12,6 +12,13 @@ import { LoadoutService } from "./backend/service"
 import { ScreenModel } from "./frontend/model"
 import { App } from "./frontend/App"
 import { displayKitKey } from "./domain/catalog"
+import { SELF_UPDATE_EXIT_CODE } from "./domain/self-update"
+import {
+  closeSelfUpdateRenderer,
+  completeSelfUpdateHandoff,
+  createSelfUpdateClient,
+  hasPendingSelfUpdateWork,
+} from "./frontend/self-update-client"
 import { readPreferences, dismissWalkthrough } from "./backend/preferences"
 import {
   agentGuide,
@@ -274,33 +281,97 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
     screenMode: "alternate-screen",
   })
   const updateController = new AbortController()
+  const selfUpdate = createSelfUpdateClient({ bundled })
+  let shuttingDown = false
+  let exiting = false
+  const preferenceSaves = new Set<Promise<void>>()
+  const savePreference = (save: Promise<void>) => {
+    preferenceSaves.add(save)
+    void save.finally(() => preferenceSaves.delete(save)).catch(() => {})
+    return save
+  }
   const stopUpdateCheck = () => updateController.abort()
-  renderer.once(CliRenderEvents.DESTROY, stopUpdateCheck)
+  const onDestroy = () => {
+    shuttingDown = true
+    stopUpdateCheck()
+  }
+  renderer.once(CliRenderEvents.DESTROY, onDestroy)
+  const closeRenderer = () => closeSelfUpdateRenderer(renderer, selfUpdate)
+  // Also covers renderer destruction outside App (terminal/native shutdown).
+  void renderer.closed.then(() => selfUpdate?.dispose())
+  const canUpdate = () =>
+    !hasPendingSelfUpdateWork(model, {
+      shuttingDown: shuttingDown || exiting,
+      savingPreference: preferenceSaves.size > 0,
+    })
   try {
     await render(
       () => (
         <App
           model={model}
           onExit={() => {
-            stopUpdateCheck()
-            renderer.destroy()
+            if (exiting || shuttingDown) return
+            exiting = true
+            // A normal quit never becomes an update, including after a lost ACK.
+            void Promise.allSettled([...preferenceSaves]).then(async () => {
+              stopUpdateCheck()
+              await closeRenderer()
+            })
           }}
           walkthrough={values.walkthrough || !preferences.walkthroughSeen}
-          onWalkthroughDismiss={() => dismissWalkthrough(service.home)}
+          onWalkthroughDismiss={() =>
+            savePreference(dismissWalkthrough(service.home))
+          }
           appUpdate={appUpdate()}
           onAppUpdateDismiss={(notice) => {
             setAppUpdate(undefined)
-            void dismissAppUpdate(service.home, notice.latestVersion).catch(
-              () => {},
-            )
+            void savePreference(
+              dismissAppUpdate(service.home, notice.latestVersion),
+            ).catch(() => {})
           }}
+          onAppUpdateDiscover={
+            selfUpdate
+              ? async (signal) => {
+                  if (!canUpdate() || signal?.aborted)
+                    throw new Error(
+                      "Finish pending work before updating Loadout.",
+                    )
+                  const available = await selfUpdate.discover(signal)
+                  if (!canUpdate() || signal?.aborted)
+                    throw new Error(
+                      "Application update cancelled because work is pending.",
+                    )
+                  return available
+                }
+              : undefined
+          }
+          onAppUpdateConfirm={
+            selfUpdate
+              ? async (selection, appCanProceed, signal) => {
+                  await completeSelfUpdateHandoff({
+                    client: selfUpdate,
+                    renderer,
+                    selection,
+                    signal,
+                    canProceed: () => canUpdate() && appCanProceed(),
+                    beforeClose: () => {
+                      stopUpdateCheck()
+                      model.cancelCatalogRefresh()
+                    },
+                    onHandoff: () => {
+                      process.exitCode = SELF_UPDATE_EXIT_CODE
+                    },
+                  })
+                }
+              : undefined
+          }
         />
       ),
       renderer,
     )
   } catch (error) {
     stopUpdateCheck()
-    renderer.destroy()
+    await closeRenderer()
     throw error
   }
   // Never hold the first render on registry/cache work.
@@ -314,6 +385,9 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
         if (!updateController.signal.aborted) setAppUpdate(notice)
       })
       .catch(() => {})
+  await renderer.closed
+  selfUpdate?.dispose()
+  renderer.removeListener(CliRenderEvents.DESTROY, onDestroy)
 }
 
 main().catch((error) => {

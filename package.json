@@ -4,7 +4,7 @@
   "description": "Compose agent instructions and skills from declarative kits.",
   "type": "module",
   "bin": {
-    "loadout": "dist/cli.js"
+    "loadout": "dist/launcher.js"
   },
   "files": [
     "dist",

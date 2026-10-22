@@ -27,4 +27,13 @@ const result = await Bun.build({
   define: { LOADOUT_BUNDLED: "true" },
 })
 if (!result.success) throw new AggregateError(result.logs, "Build failed")
+const launcher = await Bun.build({
+  entrypoints: ["src/launcher.ts"],
+  outdir: "dist",
+  target: "node",
+  define: { LOADOUT_BUNDLED: "true" },
+})
+if (!launcher.success)
+  throw new AggregateError(launcher.logs, "Launcher build failed")
 await chmod("dist/cli.js", 0o755)
+await chmod("dist/launcher.js", 0o755)
