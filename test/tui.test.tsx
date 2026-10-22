@@ -1505,6 +1505,8 @@ describe("rendered keyboard workflows", () => {
     const kitPath = join(dirname(ui.source), "kit.yaml")
     const originalKitFile = await readFile(kitPath, "utf8")
     await ui.openKit()
+    await ui.press("f")
+    await ui.press("RETURN")
     ui.setup.resize(150, 110)
     await ui.setup.flush()
     const card = (label: string) => {

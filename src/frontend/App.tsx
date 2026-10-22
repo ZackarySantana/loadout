@@ -10,7 +10,7 @@ import {
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import type { ScrollBoxRenderable, InputRenderable } from "@opentui/core"
 import { pages, ScreenModel, type Row } from "./model"
-import { KitPreview } from "./KitPreview"
+import { KitPreview, type KitPreviewControls } from "./KitPreview"
 import { CatalogPreview } from "./CatalogPreview"
 import { GuidePreview } from "./GuidePreview"
 import { Brand } from "./Brand"
@@ -303,6 +303,16 @@ export function App(props: {
   })
   let list: ScrollBoxRenderable | undefined
   let info: ScrollBoxRenderable | undefined
+  let previewControls: KitPreviewControls | undefined
+  const selectedRowId = createMemo(() => rows()[active()]?.id)
+  const editingActive = createMemo(() => Boolean(editing()))
+  createEffect(() => {
+    // Explicit left-panel navigation/input takes focus back from the file
+    // picker. Answer updates and local file selection leave these values stable.
+    selectedRowId()
+    editingActive()
+    previewControls?.blur()
+  })
   let guideScroll: ScrollBoxRenderable | undefined
   const dismissWalkthrough = async () => {
     setWalkthrough(false)
@@ -471,6 +481,10 @@ export function App(props: {
       return
     }
     setGuideMessage("")
+    if (!editing() && previewControls?.handleKey(key)) {
+      key.preventDefault()
+      return
+    }
     if (key.name === "escape") {
       key.preventDefault()
       model.back()
@@ -1036,6 +1050,10 @@ export function App(props: {
                           item={selection().item}
                           answers={selection().answers}
                           scope={selection().scope}
+                          viewport={() => info}
+                          onControls={(controls) => {
+                            previewControls = controls
+                          }}
                         />
                       </box>
                     )}

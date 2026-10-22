@@ -1,4 +1,11 @@
-import { createEffect, createMemo, Index, onCleanup, Show } from "solid-js"
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  Index,
+  onCleanup,
+  Show,
+} from "solid-js"
 import { useRenderer } from "@opentui/solid"
 import {
   SyntaxStyle,
@@ -11,6 +18,8 @@ import {
   type MarkdownOptions,
   type StyleDefinitionInput,
   type TextChunk,
+  type KeyEvent,
+  type ScrollBoxRenderable,
 } from "@opentui/core"
 import {
   activeAnswers,
@@ -24,6 +33,11 @@ import { theme as color, harnessColors } from "./theme"
 import { displayKitKey } from "../domain/catalog"
 import type { AgentHarness } from "../domain/subagents"
 import { resourceSize, type Resource } from "../domain/resource"
+import {
+  VirtualDocument,
+  shouldVirtualizeDocument,
+  type PreviewBlock,
+} from "./VirtualDocument"
 
 const harnessLabels: Record<AgentHarness, string> = {
   codex: "Codex",
@@ -90,6 +104,12 @@ export interface KitPreviewProps {
   item: LoadedKit
   answers?: Answers
   scope: Scope
+  viewport?: () => ScrollBoxRenderable | undefined
+  onControls?: (controls: KitPreviewControls | undefined) => void
+}
+export interface KitPreviewControls {
+  handleKey: (key: KeyEvent) => boolean
+  blur: () => void
 }
 interface Contribution {
   label: string
@@ -268,33 +288,21 @@ export function KitPreview(props: KitPreviewProps) {
     return code
   }
 
-  const Content = (contentProps: {
+  const DocumentFragment = (fragmentProps: {
     content: string
-    markdown: boolean
+    kind: PreviewBlock["kind"]
     included: boolean
-    skill?: boolean
+    muted?: boolean
   }) => {
-    // Split the template, not interpolated answers, so typing cannot introduce
-    // a delimiter that unexpectedly restructures the preview.
-    const parts = createMemo(() =>
-      contentProps.skill
-        ? skillFrontmatter(contentProps.content)
-        : { body: contentProps.content, metadata: undefined },
-    )
-    const metadata = createMemo(() => {
-      const text = parts().metadata
-      return text === undefined ? undefined : interpolate(text).trimEnd()
-    })
-    // Terminal newlines otherwise add empty layout rows on top of the single
-    // section gap. Normalize only the displayed preview, never the kit payload.
-    const content = createMemo(() => interpolate(parts().body).trimEnd())
     const syntaxStyle = createMemo(() =>
-      contentProps.included ? includedStyle : excludedStyle,
+      fragmentProps.included ? includedStyle : excludedStyle,
     )
+    // Each visible fragment owns its native document and style refresh. A shared
+    // ref would recolor only the final fragment of a windowed document.
     let markdown: MarkdownRenderable | undefined
     createEffect(() => {
       const style = syntaxStyle()
-      content()
+      fragmentProps.content
       // Native style updates omit the custom code nodes and rule borders.
       // Refresh those properties without replacing their document or blocks.
       const recolor = (node: Renderable) => {
@@ -320,53 +328,131 @@ export function KitPreview(props: KitPreviewProps) {
       if (markdown && !markdown.isDestroyed) recolor(markdown)
     })
     return (
-      <>
-        <Show when={metadata()}>
+      <Show
+        when={fragmentProps.kind === "markdown"}
+        fallback={
           <text
             width="100%"
             minWidth={0}
             flexShrink={0}
             wrapMode="word"
-            fg={contentProps.included ? color.muted : color.excluded}
-            marginBottom={content() ? 1 : 0}
+            fg={
+              !fragmentProps.included
+                ? color.excluded
+                : fragmentProps.kind === "code"
+                  ? color.sage
+                  : fragmentProps.muted
+                    ? color.muted
+                    : color.text
+            }
           >
-            {metadata()}
+            {fragmentProps.content}
           </text>
-        </Show>
-        <Show
-          when={contentProps.markdown}
-          fallback={
-            <text
-              width="100%"
-              minWidth={0}
-              flexShrink={0}
-              wrapMode="word"
-              fg={contentProps.included ? color.text : color.excluded}
-            >
-              {content()}
-            </text>
-          }
-        >
-          {/* Top-level streaming keeps full-width paragraph nodes and supplies
-            styled text immediately, rather than hiding it until highlighting
-            finishes. Actual edits and exclusion changes update in place. */}
-          <markdown
-            ref={markdown}
+        }
+      >
+        {/* Top-level streaming supplies complete styled text immediately. */}
+        <markdown
+          ref={markdown}
+          width="100%"
+          minWidth={0}
+          flexShrink={0}
+          syntaxStyle={syntaxStyle()}
+          fg={syntaxStyle().getStyle("default")?.fg}
+          streaming
+          internalBlockMode="top-level"
+          conceal
+          renderNode={renderNode}
+          tableOptions={{
+            wrapMode: "word",
+            widthMode: "full",
+            cellPaddingX: 0,
+          }}
+          content={fragmentProps.content}
+        />
+      </Show>
+    )
+  }
+
+  const Content = (contentProps: {
+    content: string
+    markdown: boolean
+    included: boolean
+    skill?: boolean
+  }) => {
+    // Split the template, not interpolated answers, so typing cannot introduce
+    // a delimiter that unexpectedly restructures the preview.
+    const parts = createMemo(() =>
+      contentProps.skill
+        ? skillFrontmatter(contentProps.content)
+        : { body: contentProps.content, metadata: undefined },
+    )
+    const metadata = createMemo(() => {
+      const text = parts().metadata
+      return text === undefined ? undefined : interpolate(text).trimEnd()
+    })
+    // Normalize only the displayed preview, never the kit payload.
+    const content = createMemo(() => interpolate(parts().body).trimEnd())
+    return (
+      <>
+        <Show when={metadata()}>
+          <box
             width="100%"
             minWidth={0}
             flexShrink={0}
-            syntaxStyle={syntaxStyle()}
-            fg={syntaxStyle().getStyle("default")?.fg}
-            streaming
-            internalBlockMode="top-level"
-            conceal
-            renderNode={renderNode}
-            tableOptions={{
-              wrapMode: "word",
-              widthMode: "full",
-              cellPaddingX: 0,
-            }}
+            flexDirection="column"
+            marginBottom={content() ? 1 : 0}
+          >
+            <Show
+              when={shouldVirtualizeDocument(metadata()!)}
+              fallback={
+                <text
+                  width="100%"
+                  minWidth={0}
+                  flexShrink={0}
+                  wrapMode="word"
+                  fg={contentProps.included ? color.muted : color.excluded}
+                >
+                  {metadata()}
+                </text>
+              }
+            >
+              <VirtualDocument
+                content={metadata()!}
+                markdown={false}
+                viewport={props.viewport}
+                render={(block) => (
+                  <DocumentFragment
+                    content={block.content}
+                    kind="text"
+                    included={contentProps.included}
+                    muted
+                  />
+                )}
+              />
+            </Show>
+          </box>
+        </Show>
+        <Show
+          when={shouldVirtualizeDocument(content())}
+          fallback={
+            <DocumentFragment
+              content={content()}
+              kind={contentProps.markdown ? "markdown" : "text"}
+              included={contentProps.included}
+            />
+          }
+        >
+          <VirtualDocument
             content={content()}
+            markdown={contentProps.markdown}
+            viewport={props.viewport}
+            render={(block) => (
+              <DocumentFragment
+                content={block.content}
+                kind={block.kind}
+                included={contentProps.included}
+              />
+            )}
           />
         </Show>
       </>
@@ -402,12 +488,16 @@ export function KitPreview(props: KitPreviewProps) {
           label: `Skill · ${output.name}`,
           accent: color.skill,
           included,
-          files: Object.entries(output.files).map(([path, content]) => ({
-            path,
-            content,
-            markdown: /\.(?:md|markdown|mdown|mkd)$/i.test(path),
-            included,
-          })),
+          files: Object.entries(output.files)
+            .sort(
+              ([a], [b]) => Number(b === "SKILL.md") - Number(a === "SKILL.md"),
+            )
+            .map(([path, content]) => ({
+              path,
+              content,
+              markdown: /\.(?:md|markdown|mdown|mkd)$/i.test(path),
+              included,
+            })),
           nested: true,
           instructions: false,
         })
@@ -505,6 +595,188 @@ export function KitPreview(props: KitPreviewProps) {
     return sections
   })
 
+  const fileId = (card: number, path: string) => `${card}:${path}`
+  // Browser navigation inspects paths and resource types only. Unopened bodies
+  // never reach Content's interpolation, sanitization, or Markdown parser.
+  const supporting = createMemo(() =>
+    contributions().flatMap((card, cardIndex) =>
+      card.nested
+        ? card.files
+            .filter((file) => file.path !== "SKILL.md")
+            .map((file) => ({
+              id: fileId(cardIndex, file.path),
+              path: file.path,
+              label: card.label,
+              included: file.included,
+              raw: typeof file.content !== "string",
+            }))
+        : [],
+    ),
+  )
+  const [opened, setOpened] = createSignal<ReadonlySet<string>>(new Set())
+  const [browserOpen, setBrowserOpen] = createSignal(false)
+  const [fileCursor, setFileCursor] = createSignal(0)
+  let disposed = false
+  let revealGeneration = 0
+  let pendingReveal: (() => void) | undefined
+  const cancelReveal = () => {
+    revealGeneration++
+    if (pendingReveal) renderer.off("frame", pendingReveal)
+    pendingReveal = undefined
+  }
+  onCleanup(() => {
+    disposed = true
+    cancelReveal()
+  })
+  let previousKey = props.item.key
+  let previousDefinition = props.item.kit
+  createEffect(() => {
+    const item = props.item
+    if (item.key === previousKey && item.kit === previousDefinition) return
+    previousKey = item.key
+    previousDefinition = item.kit
+    cancelReveal()
+    setOpened(new Set<string>())
+    setBrowserOpen(false)
+    setFileCursor(0)
+  })
+  let browser: BoxRenderable | undefined
+  const fileHeaderId = (id: string) =>
+    `kit-preview:${encodeURIComponent(props.item.key)}:file:${encodeURIComponent(id)}:header`
+  const queueReveal = (
+    target: () => Renderable | undefined,
+    visible: () => boolean,
+    alignTop = false,
+  ) => {
+    cancelReveal()
+    const generation = revealGeneration
+    const item = props.item
+    const key = item.key
+    const definition = item.kit
+    const current = () =>
+      !disposed &&
+      generation === revealGeneration &&
+      props.item === item &&
+      props.item.key === key &&
+      props.item.kit === definition &&
+      visible()
+    queueMicrotask(() => {
+      if (!current()) return
+      const node = target()
+      if (!node || node.isDestroyed) return
+      // Solid mounts synchronously, but the new header's native coordinates
+      // become available only after layout. Keep this a one-shot frame hook.
+      const reveal = () => {
+        renderer.off("frame", reveal)
+        if (pendingReveal === reveal) pendingReveal = undefined
+        if (!current() || node.isDestroyed || target() !== node) return
+        const viewport = props.viewport?.()
+        if (!viewport || viewport.isDestroyed) return
+        if (alignTop)
+          viewport.scrollTo(viewport.scrollTop + node.y - viewport.viewport.y)
+        else viewport.scrollChildIntoView(node.id)
+      }
+      pendingReveal = reveal
+      renderer.once("frame", reveal)
+      renderer.requestRender()
+    })
+  }
+  const revealBrowser = () => {
+    const target = browser
+    queueReveal(() => target, browserOpen)
+  }
+  const closeBrowser = () => {
+    setBrowserOpen(false)
+    cancelReveal()
+  }
+  const toggleFile = (id: string) => {
+    const closing = opened().has(id)
+    setOpened((before) => {
+      const next = new Set(before)
+      if (closing) next.delete(id)
+      else next.add(id)
+      return next
+    })
+    if (closing) {
+      cancelReveal()
+      return
+    }
+    closeBrowser()
+    const headerId = fileHeaderId(id)
+    queueReveal(
+      () => props.viewport?.()?.findDescendantById(headerId),
+      () => opened().has(id) && !browserOpen(),
+      true,
+    )
+  }
+  const focusBrowser = () => {
+    setBrowserOpen(true)
+    revealBrowser()
+  }
+  const controls: KitPreviewControls = {
+    blur: closeBrowser,
+    handleKey(key) {
+      const modified = key.ctrl || key.meta || key.shift
+      if (!modified && key.name === "f" && supporting().length) {
+        focusBrowser()
+        return true
+      }
+      if (!browserOpen()) return false
+      const vertical = key.name === "up" || key.name === "down"
+      if (
+        key.name === "pageup" ||
+        key.name === "pagedown" ||
+        (vertical && key.shift && !key.ctrl && !key.meta)
+      )
+        return false
+      const space = key.name === "space" || key.sequence === " "
+      // App also recognizes modified arrows, Enter, Space, and Escape. Never
+      // let those activate a left-panel control while the picker owns focus.
+      if (modified)
+        return (
+          vertical ||
+          key.name === "left" ||
+          key.name === "right" ||
+          key.name === "h" ||
+          key.name === "j" ||
+          key.name === "k" ||
+          key.name === "l" ||
+          key.name === "return" ||
+          key.name === "escape" ||
+          space
+        )
+      if (key.name === "escape" || key.name === "left" || key.name === "h")
+        closeBrowser()
+      else if (key.name === "up" || key.name === "k") {
+        setFileCursor((index) => Math.max(0, index - 1))
+        revealBrowser()
+      } else if (key.name === "down" || key.name === "j") {
+        setFileCursor((index) => Math.min(supporting().length - 1, index + 1))
+        revealBrowser()
+      } else if (key.name === "return" || space) {
+        const file = supporting()[fileCursor()]
+        if (file) toggleFile(file.id)
+      } else if (key.name === "right" || key.name === "l") {
+        const file = supporting()[fileCursor()]
+        if (file && !opened().has(file.id)) toggleFile(file.id)
+      } else return false
+      return true
+    },
+  }
+  createEffect(() => {
+    const register = props.onControls
+    register?.(controls)
+    onCleanup(() => register?.(undefined))
+  })
+  const fileWindow = createMemo(() => {
+    const files = supporting()
+    const start = Math.max(0, Math.min(fileCursor() - 2, files.length - 6))
+    return files.slice(start, start + 6).map((file, index) => ({
+      ...file,
+      index: start + index,
+    }))
+  })
+
   return (
     <box
       width="100%"
@@ -528,10 +800,66 @@ export function KitPreview(props: KitPreviewProps) {
       <Show when={props.item.kit.description}>
         <Content content={props.item.kit.description} markdown included />
       </Show>
+      <Show when={supporting().length}>
+        <box
+          ref={browser}
+          width="100%"
+          minWidth={0}
+          flexDirection="column"
+          flexShrink={0}
+        >
+          <text
+            width="100%"
+            minWidth={0}
+            wrapMode="word"
+            flexShrink={0}
+            fg={browserOpen() ? color.sage : color.muted}
+            onMouseDown={(event) => {
+              if (event.button !== 0) return
+              event.stopPropagation()
+              if (browserOpen()) closeBrowser()
+              else focusBrowser()
+            }}
+          >
+            {`${browserOpen() ? "▾" : "▸"} Supporting files (${supporting().length}) · f files`}
+          </text>
+          <Show when={browserOpen()}>
+            <text fg={color.muted} wrapMode="word" flexShrink={0}>
+              ↑↓/jk select · Enter/Space open-close · ←/h/Esc back · →/l open
+            </text>
+            <Index each={fileWindow()}>
+              {(file) => (
+                <text
+                  width="100%"
+                  minWidth={0}
+                  height={1}
+                  flexShrink={0}
+                  wrapMode="none"
+                  fg={file().included ? color.text : color.excluded}
+                  bg={
+                    file().index === fileCursor() ? color.selected : undefined
+                  }
+                  onMouseDown={(event) => {
+                    if (event.button !== 0) return
+                    event.stopPropagation()
+                    setFileCursor(file().index)
+                    toggleFile(file().id)
+                  }}
+                >
+                  {`${file().index === fileCursor() ? "›" : " "} ${opened().has(file().id) ? "−" : "+"} ${safeText(file().path)}${file().raw ? " · raw asset" : ""}`}
+                </text>
+              )}
+            </Index>
+            <text fg={color.muted} wrapMode="word" flexShrink={0}>
+              {`${fileCursor() + 1}/${supporting().length} · ${safeText(supporting()[fileCursor()]?.label ?? "")} · ${safeText(supporting()[fileCursor()]?.path ?? "")}`}
+            </text>
+          </Show>
+        </box>
+      </Show>
       {/* Native Markdown descendants can measure one cell wider than their
           container. Keep a gutter inside the details panel's content bounds. */}
       <Index each={contributions()}>
-        {(card) => (
+        {(card, cardIndex) => (
           <box
             width="100%"
             minWidth={0}
@@ -621,54 +949,68 @@ export function KitPreview(props: KitPreviewProps) {
             </Show>
             <Index each={card().files}>
               {(file, index) => (
-                <box
-                  id={
-                    card().instructions
-                      ? `kit-preview:${safeText(props.item.key)}:instructions:${index}`
-                      : undefined
-                  }
-                  minWidth={0}
-                  width="100%"
-                  flexDirection="column"
-                  flexShrink={0}
-                  marginTop={
-                    (card().instructions || card().metadata) && index > 0
-                      ? 1
-                      : 0
+                <Show
+                  when={
+                    !card().nested ||
+                    file().path === "SKILL.md" ||
+                    opened().has(fileId(cardIndex, file().path))
                   }
                 >
-                  <Show when={card().nested && file().path !== "SKILL.md"}>
-                    <text
-                      width="100%"
-                      minWidth={0}
-                      fg={card().included ? color.muted : color.excluded}
-                      wrapMode="word"
-                      flexShrink={0}
-                      marginTop={1}
-                    >
-                      {safeText(file().path)}
-                    </text>
-                  </Show>
-                  <Show
-                    when={typeof file().content === "string"}
-                    fallback={
-                      <text
-                        fg={file().included ? color.muted : color.excluded}
-                        wrapMode="word"
-                        flexShrink={0}
-                      >
-                        {`Raw asset · ${resourceSize(file().content).toLocaleString("en-US")} bytes · copied unchanged`}
-                      </text>
+                  <box
+                    id={
+                      card().instructions
+                        ? `kit-preview:${safeText(props.item.key)}:instructions:${index}`
+                        : undefined
+                    }
+                    minWidth={0}
+                    width="100%"
+                    flexDirection="column"
+                    flexShrink={0}
+                    marginTop={
+                      (card().instructions || card().metadata) && index > 0
+                        ? 1
+                        : 0
                     }
                   >
-                    <Content
-                      content={file().content as string}
-                      markdown={file().markdown}
-                      included={file().included}
-                      skill={card().nested && file().path === "SKILL.md"}
-                    />
-                  </Show>
-                </box>
+                    <Show when={card().nested && file().path !== "SKILL.md"}>
+                      <text
+                        id={fileHeaderId(fileId(cardIndex, file().path))}
+                        width="100%"
+                        minWidth={0}
+                        fg={card().included ? color.muted : color.excluded}
+                        wrapMode="word"
+                        flexShrink={0}
+                        marginTop={1}
+                        onMouseDown={(event) => {
+                          if (event.button !== 0) return
+                          event.stopPropagation()
+                          toggleFile(fileId(cardIndex, file().path))
+                        }}
+                      >
+                        {safeText(file().path)}
+                      </text>
+                    </Show>
+                    <Show
+                      when={typeof file().content === "string"}
+                      fallback={
+                        <text
+                          fg={file().included ? color.muted : color.excluded}
+                          wrapMode="word"
+                          flexShrink={0}
+                        >
+                          {`Raw asset · ${resourceSize(file().content).toLocaleString("en-US")} bytes · copied unchanged`}
+                        </text>
+                      }
+                    >
+                      <Content
+                        content={file().content as string}
+                        markdown={file().markdown}
+                        included={file().included}
+                        skill={card().nested && file().path === "SKILL.md"}
+                      />
+                    </Show>
+                  </box>
+                </Show>
               )}
             </Index>
           </box>
