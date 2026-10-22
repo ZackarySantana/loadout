@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { testRender } from "@opentui/solid"
 import { LoadoutService } from "../src/backend/service"
@@ -55,7 +56,7 @@ async function fixture(
     confirm?: NonNullable<Parameters<typeof App>[0]["onAppUpdateConfirm"]>
   } = {},
 ) {
-  const root = await mkdtemp("/tmp/opencode/loadout-update-ui-")
+  const root = await mkdtemp(join(tmpdir(), "loadout-update-ui-"))
   cleanups.push(() => rm(root, { recursive: true, force: true }))
   const home = join(root, "home")
   const repository = join(root, "repo")

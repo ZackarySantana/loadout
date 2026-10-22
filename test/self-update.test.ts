@@ -10,6 +10,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   formatSelfUpdateCommand,
@@ -32,7 +33,7 @@ afterAll(async () => {
 })
 
 async function temporary() {
-  const root = await mkdtemp("/tmp/opencode/loadout-self-update-")
+  const root = await mkdtemp(join(tmpdir(), "loadout-self-update-"))
   roots.push(root)
   return root
 }
