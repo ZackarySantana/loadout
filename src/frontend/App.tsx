@@ -24,6 +24,8 @@ import { canonical } from "../domain/content"
 import { UpdatePreview } from "./UpdatePreview"
 import { catalogCacheLabel, catalogKitCountLabel } from "./cache-label"
 import { catalogProgressText } from "./CatalogProgress"
+import type { AppUpdateNotice } from "../domain/app-update"
+import { AppUpdatePopup } from "./AppUpdateNotice"
 const safeText = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
 const rowDescription = (row: Row) =>
@@ -59,6 +61,8 @@ export function App(props: {
   onExit: () => void
   walkthrough?: boolean
   onWalkthroughDismiss?: () => Promise<void>
+  appUpdate?: AppUpdateNotice
+  onAppUpdateDismiss?: (notice: AppUpdateNotice) => void
 }) {
   const model = props.model
   const [revision, update] = createSignal(0)
@@ -67,6 +71,19 @@ export function App(props: {
   const [walkthroughPage, setWalkthroughPage] = createSignal(0)
   const [guideMessage, setGuideMessage] = createSignal("")
   const [savingGuidePreference, setSavingGuidePreference] = createSignal(false)
+  const [dismissedUpdate, setDismissedUpdate] = createSignal<string>()
+  const [updatePopup, setUpdatePopup] = createSignal<AppUpdateNotice>()
+  const announcedUpdates = new Set<string>()
+  const appUpdate = createMemo(() =>
+    props.appUpdate?.latestVersion === dismissedUpdate()
+      ? undefined
+      : props.appUpdate,
+  )
+  const dismissUpdate = (notice: AppUpdateNotice) => {
+    setDismissedUpdate(notice.latestVersion)
+    setUpdatePopup(undefined)
+    props.onAppUpdateDismiss?.(notice)
+  }
   const unsubscribe = model.subscribe(() => update((value) => value + 1))
   onCleanup(() => {
     unsubscribe()
@@ -304,6 +321,32 @@ export function App(props: {
   let list: ScrollBoxRenderable | undefined
   let info: ScrollBoxRenderable | undefined
   let previewControls: KitPreviewControls | undefined
+  const canPresentUpdate = () => {
+    revision()
+    return (
+      !model.busy &&
+      !editing() &&
+      !formOpen() &&
+      !model.registering &&
+      !exitPrompt() &&
+      !walkthrough()
+    )
+  }
+  const openUpdate = (notice: AppUpdateNotice) => {
+    announcedUpdates.add(notice.latestVersion)
+    previewControls?.blur()
+    setUpdatePopup(notice)
+  }
+  createEffect(() => {
+    const notice = appUpdate()
+    if (
+      notice &&
+      !announcedUpdates.has(notice.latestVersion) &&
+      !updatePopup() &&
+      canPresentUpdate()
+    )
+      openUpdate(notice)
+  })
   const selectedRowId = createMemo(() => rows()[active()]?.id)
   const editingActive = createMemo(() => Boolean(editing()))
   createEffect(() => {
@@ -314,6 +357,7 @@ export function App(props: {
     previewControls?.blur()
   })
   let guideScroll: ScrollBoxRenderable | undefined
+  let updateScroll: ScrollBoxRenderable | undefined
   const dismissWalkthrough = async () => {
     setWalkthrough(false)
     setGuideMessage("")
@@ -432,6 +476,29 @@ export function App(props: {
       exit()
       return
     }
+    const motion = !key.ctrl && !key.meta && !key.shift ? key.name : undefined
+    const currentUpdate = updatePopup()
+    if (currentUpdate) {
+      key.preventDefault()
+      if (motion === "q") exit()
+      else if (key.name === "escape" || key.name === "return")
+        setUpdatePopup(undefined)
+      else if (motion === "d") dismissUpdate(currentUpdate)
+      else if (key.name === "up" || motion === "k") updateScroll?.scrollBy(-1)
+      else if (key.name === "down" || motion === "j") updateScroll?.scrollBy(1)
+      else if (key.name === "pageup" || key.name === "pagedown")
+        updateScroll?.scrollBy(
+          (key.name === "pageup" ? -1 : 1) *
+            Math.max(1, dimensions().height - 10),
+        )
+      return
+    }
+    const notice = appUpdate()
+    if (notice && motion === "u" && canPresentUpdate()) {
+      key.preventDefault()
+      openUpdate(notice)
+      return
+    }
     if (walkthrough()) {
       key.preventDefault()
       const motion = !key.ctrl && !key.meta && !key.shift ? key.name : undefined
@@ -512,7 +579,6 @@ export function App(props: {
       }
       return
     }
-    const motion = !key.ctrl && !key.meta && !key.shift ? key.name : undefined
     key.preventDefault()
     if (key.name === "q") exit()
     else if (
@@ -1104,6 +1170,20 @@ export function App(props: {
                         ? "↑↓/jk questions · ←→/hl options · Space select/toggle · Esc accept kit · Cancel discards"
                         : `${currentPage() === 0 && model.catalog ? "/ search · " : ""}↑↓/jk rows · ←→/hl options · Space select · Tab pages · ? walkthrough · r refresh · Esc back · Shift+↑↓/PgUp/PgDn details · q q quit`}
       </text>
+      <Show when={!exitPrompt() && updatePopup()}>
+        {(notice) => (
+          <AppUpdatePopup
+            notice={notice()}
+            width={dimensions().width}
+            height={dimensions().height}
+            onLater={() => setUpdatePopup(undefined)}
+            onDismiss={() => dismissUpdate(notice())}
+            scrollRef={(ref) => {
+              updateScroll = ref
+            }}
+          />
+        )}
+      </Show>
     </box>
   )
 }

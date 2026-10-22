@@ -143,6 +143,7 @@ test("built CLI navigates bundled kits and updates a live answer in a real PTY o
       CODEX_HOME: join(home, ".codex"),
       XDG_CONFIG_HOME: join(home, ".config"),
       XDG_CACHE_HOME: join(home, ".cache"),
+      LOADOUT_NO_UPDATE_CHECK: "1",
       TERM: "xterm-256color",
     },
     terminal,

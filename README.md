@@ -17,6 +17,8 @@ The npm CLI runs on Node.js; **Bun is not required by users**. The package inclu
 
 OpenTUI currently uses Node’s experimental FFI API. The CLI enables it automatically; Node may print an experimental-feature warning.
 
+Interactive startup checks for newer Loadout releases in the background, with results cached for 24 hours. When a newer version is available, a compact popup shows read-only Mise/npm update instructions at a safe pause, without interrupting text entry or an open configuration form. **Esc/Enter** or **Later** closes it for the session; **d** or **Don't remind me** dismisses that version across launches. **u** reopens an available update popup when no text entry or configuration form is active. Nothing updates automatically, and application-version checks do not run for non-interactive commands or JSON output. Set `LOADOUT_NO_UPDATE_CHECK=1` to disable real checks; `NO_UPDATE_NOTIFIER=1` and `CI=true` also suppress them. Offline and cache failures are silent.
+
 ## Run from this checkout
 
 Use the pinned runtimes with [mise](https://mise.jdx.dev/).
@@ -27,6 +29,8 @@ mise install
 mise exec -- npm install
 mise run dev
 ```
+
+Development/source runs (`bun run dev` or `bun src/cli.tsx`) do not check for application updates or show update popups. The built/installed CLI checks normally.
 
 Configure another project:
 

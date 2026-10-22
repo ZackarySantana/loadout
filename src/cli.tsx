@@ -1,9 +1,13 @@
 #!/usr/bin/env -S node --experimental-ffi
 import { homedir } from "node:os"
+import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { parseArgs } from "node:util"
-import { createCliRenderer } from "@opentui/core"
+import { CliRenderEvents, createCliRenderer } from "@opentui/core"
 import { render } from "@opentui/solid"
+import { createSignal } from "solid-js"
+import { checkForAppUpdate, dismissAppUpdate } from "./backend/app-updates"
+import { isAppVersion, type AppUpdateNotice } from "./domain/app-update"
 import { LoadoutService } from "./backend/service"
 import { ScreenModel } from "./frontend/model"
 import { App } from "./frontend/App"
@@ -16,6 +20,8 @@ import {
   planWorkflow,
   readWorkflowRequest,
 } from "./backend/agent-workflow"
+
+declare const LOADOUT_BUNDLED: boolean
 
 const plain = (value: string) =>
   value.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
@@ -59,6 +65,7 @@ Apply rebuilds and requires the unchanged review token plus explicit human appro
 Requests are bounded JSON; see guide and inspect.protocol. No --yes shortcut.
 Use --repo PATH with any command. External registration requires separate consent.
 --walkthrough replays the interactive welcome guide; ? replays it in the TUI.
+Set LOADOUT_NO_UPDATE_CHECK=1 to disable background application-version checks.
 
 Tab switches pages. Up/Down or j/k navigate; Left/Right or h/l navigate options.
 Text questions start editing on focus; Vim keys then type normally.
@@ -248,21 +255,65 @@ Status is read-only; a nonzero exit code means drift or catalog issues were foun
   const model = new ScreenModel(service)
   await model.initialize()
   const preferences = await readPreferences(service.home)
+  const bundled = typeof LOADOUT_BUNDLED !== "undefined" && LOADOUT_BUNDLED
+  // Source/development runs never read update metadata or check for app updates.
+  let version: string | undefined
+  if (bundled) {
+    try {
+      const manifest = JSON.parse(
+        await readFile(new URL("../package.json", import.meta.url), "utf8"),
+      )
+      if (isAppVersion(manifest.version)) version = manifest.version
+    } catch {
+      // An unreadable version must never prevent interactive startup.
+    }
+  }
+  const [appUpdate, setAppUpdate] = createSignal<AppUpdateNotice>()
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
     screenMode: "alternate-screen",
   })
-  await render(
-    () => (
-      <App
-        model={model}
-        onExit={() => renderer.destroy()}
-        walkthrough={values.walkthrough || !preferences.walkthroughSeen}
-        onWalkthroughDismiss={() => dismissWalkthrough(service.home)}
-      />
-    ),
-    renderer,
-  )
+  const updateController = new AbortController()
+  const stopUpdateCheck = () => updateController.abort()
+  renderer.once(CliRenderEvents.DESTROY, stopUpdateCheck)
+  try {
+    await render(
+      () => (
+        <App
+          model={model}
+          onExit={() => {
+            stopUpdateCheck()
+            renderer.destroy()
+          }}
+          walkthrough={values.walkthrough || !preferences.walkthroughSeen}
+          onWalkthroughDismiss={() => dismissWalkthrough(service.home)}
+          appUpdate={appUpdate()}
+          onAppUpdateDismiss={(notice) => {
+            setAppUpdate(undefined)
+            void dismissAppUpdate(service.home, notice.latestVersion).catch(
+              () => {},
+            )
+          }}
+        />
+      ),
+      renderer,
+    )
+  } catch (error) {
+    stopUpdateCheck()
+    renderer.destroy()
+    throw error
+  }
+  // Never hold the first render on registry/cache work.
+  if (bundled && version && !updateController.signal.aborted)
+    void checkForAppUpdate({
+      home: service.home,
+      version,
+      signal: updateController.signal,
+    })
+      .then((notice) => {
+        if (!updateController.signal.aborted) setAppUpdate(notice)
+      })
+      .catch(() => {})
 }
 
 main().catch((error) => {
