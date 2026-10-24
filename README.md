@@ -40,7 +40,7 @@ Configure another project:
 mise exec -- npm run dev -- --repo /path/to/project
 ```
 
-Browse with arrows and Space; configure a kit, accept its draft, then review. Only explicitly choosing **Apply changes** writes the plan. **Esc accepts** an open kit; use its **Cancel** action to discard edits. Press **q twice** to exit.
+Browse with arrows and Space; configure a kit, accept its draft, then review. Only explicitly choosing **Apply changes** writes the plan. **Esc accepts** an open kit; use its **Cancel** action to discard edits. **Ctrl+C** clears a text field or exits; with unapplied changes, press it twice to discard them.
 
 While browsing a catalog, **Search kits** filters names, IDs, and descriptions. The bar and query stay in place during kit configuration; search editing is locked until Accept/Cancel. Press **/** outside forms/text editing to type; Enter/Esc keeps the filter and returns to browsing. Up/Down navigates matches. Search is case-insensitive; every space-separated term must match. This helps browse larger remote catalogs without searching resource contents.
 

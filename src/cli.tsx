@@ -76,7 +76,7 @@ Set LOADOUT_NO_UPDATE_CHECK=1 to disable background application-version checks.
 
 Tab switches pages. Up/Down or j/k navigate; Left/Right or h/l navigate options.
 Text questions start editing on focus; Vim keys then type normally.
-Space selects. Esc accepts an open kit; otherwise it goes back. Press q twice to exit.
+Space selects. Esc accepts an open kit; otherwise it goes back. Ctrl+C clears a text field or exits; with unapplied changes, press it twice.
 Kit and settings changes are written only after review and explicit confirmation.
 Repo kits are discovered automatically from .loadout/kits/*.yaml; no repo catalog index or registration is needed.
 Registration is only for external catalogs and installs no kits.

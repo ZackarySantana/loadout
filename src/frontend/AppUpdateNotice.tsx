@@ -195,8 +195,8 @@ export function AppUpdatePopup(props: {
           </box>
           <text fg={theme.muted} wrapMode="word" flexShrink={0}>
             {step().kind === "confirm"
-              ? "Enter/Esc cancel · y confirm · ↑↓/jk/PgUp/PgDn scroll · q q quit"
-              : "←→/hl/Tab choose · Enter activate · Esc cancel · ↑↓/jk/PgUp/PgDn scroll · q q quit"}
+              ? "Enter/Esc cancel · y confirm · ↑↓/jk/PgUp/PgDn scroll · Ctrl+C quit"
+              : "←→/hl/Tab choose · Enter activate · Esc cancel · ↑↓/jk/PgUp/PgDn scroll · Ctrl+C quit"}
           </text>
         </scrollbox>
       </box>

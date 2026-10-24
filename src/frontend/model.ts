@@ -1569,6 +1569,24 @@ export class ScreenModel {
     if (reviewUpdate) void this.review(`update-offer:${key}`)
     this.changed()
   }
+  /** Text in the focused input, or undefined when no input is focused. */
+  editingValue(): string | undefined {
+    const editing = this.editing
+    if (editing?.kind === "search" && this.catalog && this.page === 0)
+      return (
+        this.catalogFilters.get(
+          canonical([this.catalog.source, this.catalog.id]),
+        ) ?? ""
+      )
+    if (editing?.kind === "catalog") return this.source
+    if (editing?.kind === "question" && this.form)
+      return String(this.form.answers[editing.id] ?? "")
+    if (editing?.kind === "location" && this.settingsForm)
+      return (
+        this.settingsForm.locations.find((entry) => entry.id === editing.id)
+          ?.value ?? ""
+      )
+  }
   edit(value: string): void {
     if (this.editing?.kind === "search" && this.catalog && this.page === 0)
       this.catalogFilters.set(

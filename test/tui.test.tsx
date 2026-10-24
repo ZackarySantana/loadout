@@ -215,7 +215,7 @@ async function fixture(
         }}
       />
     ),
-    { width: 110, height: 40, kittyKeyboard: true },
+    { width: 110, height: 40, kittyKeyboard: true, exitOnCtrlC: false },
   )
   cleanups.push(() => setup.dispose())
   await setup.flush()
@@ -236,6 +236,10 @@ async function fixture(
   }
   const press = async (key: string) => {
     setup.mockInput.pressKey(key)
+    await settle()
+  }
+  const ctrlC = async () => {
+    setup.mockInput.pressCtrlC()
     await settle()
   }
   // Navigate only through the rendered keyboard handler; row IDs locate the destination,
@@ -309,6 +313,7 @@ async function fixture(
     frame,
     input,
     press,
+    ctrlC,
     go,
     select,
     choose,
@@ -731,13 +736,9 @@ describe("rendered keyboard workflows", () => {
       false,
     )
     await ui.press("q")
-    expect(ui.frame()).toContain("Exit Loadout?")
-    await ui.press(" ")
-    expect(ui.exits()).toBe(0)
-    await ui.press("ESCAPE")
     expect(ui.frame()).not.toContain("Exit Loadout?")
-    await ui.press("q")
-    await ui.press("q")
+    expect(ui.exits()).toBe(0)
+    await ui.ctrlC()
     expect(ui.exits()).toBe(1)
   })
 
@@ -745,6 +746,11 @@ describe("rendered keyboard workflows", () => {
     const ui = await fixture()
     await ui.openKit()
     await ui.select("question:source")
+    await ui.setup.mockInput.typeText("Clear this")
+    await ui.ctrlC()
+    expect(ui.input("question:source").value).toBe("")
+    expect(ui.frame()).not.toContain("Exit Loadout?")
+    expect(ui.exits()).toBe(0)
     await ui.setup.mockInput.typeText("Discard this text q")
     await ui.press("RETURN")
     expect(ui.model.editing).toBeUndefined()
@@ -770,17 +776,19 @@ describe("rendered keyboard workflows", () => {
     await ui.choose("scope", "global")
     await ui.choose("actions", "cancel")
     expect(ui.frame()).toContain("Team context  [repository] *")
-    await ui.press("q")
+    await ui.ctrlC()
     expect(ui.frame()).toContain("Exit Loadout?")
-    expect(ui.frame()).toContain("q exit · Esc stay")
+    expect(ui.frame()).toContain("Ctrl+C exit · Esc stay")
     await ui.press(" ")
+    expect(ui.exits()).toBe(0)
+    await ui.press("q")
     expect(ui.exits()).toBe(0)
     await ui.press("RETURN")
     expect(ui.exits()).toBe(0)
     await ui.press("ESCAPE")
     expect(ui.frame()).not.toContain("Exit Loadout?")
-    await ui.press("q")
-    await ui.press("q")
+    await ui.ctrlC()
+    await ui.ctrlC()
     expect(ui.exits()).toBe(1)
     expect(await Bun.file(join(ui.repository, "AGENTS.md")).exists()).toBe(
       false,

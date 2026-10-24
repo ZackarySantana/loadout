@@ -326,7 +326,7 @@ export function App(props: {
   const status = createMemo(() => {
     revision()
     return exitPrompt()
-      ? "Exit Loadout? Unapplied changes will be discarded.  q exit · Esc stay"
+      ? "Exit Loadout? Unapplied changes will be discarded.  Ctrl+C exit · Esc stay"
       : guideMessage()
         ? guideMessage()
         : walkthrough()
@@ -560,7 +560,15 @@ export function App(props: {
     if (savingGuidePreference()) return
     cancelUpdate()
     model.cancelCatalogRefresh()
-    setExitPrompt(true)
+    const unapplied =
+      model.stagedCount() ||
+      model.settingsChanged() ||
+      model.form ||
+      model.settingsForm ||
+      model.catalogRefreshForm ||
+      (model.registering && model.source.trim())
+    if (unapplied) setExitPrompt(true)
+    else props.onExit()
   }
   const rowColor = (row: Row, focused: boolean): string => {
     if (row.kind === "catalog") return color.sage
@@ -588,23 +596,24 @@ export function App(props: {
       key.preventDefault()
       return
     }
-    if (exitPrompt()) {
-      key.preventDefault()
-      if (key.name === "q" && !key.ctrl && !key.meta) props.onExit()
-      else if (key.name === "escape") setExitPrompt(false)
-      return
-    }
+    // OpenCode semantics: Ctrl+C clears a non-empty input, otherwise quits.
     if (key.ctrl && key.name === "c") {
       key.preventDefault()
-      exit()
+      if (exitPrompt()) props.onExit()
+      else if (model.editingValue()) model.edit("")
+      else exit()
+      return
+    }
+    if (exitPrompt()) {
+      key.preventDefault()
+      if (key.name === "escape") setExitPrompt(false)
       return
     }
     const motion = !key.ctrl && !key.meta && !key.shift ? key.name : undefined
     const currentUpdate = updatePopup()
     if (currentUpdate) {
       key.preventDefault()
-      if (motion === "q") exit()
-      else if (key.name === "escape") cancelUpdate()
+      if (key.name === "escape") cancelUpdate()
       else if (motion === "d" && updateStep().kind === "notice")
         dismissUpdate(currentUpdate)
       else if (motion === "u" && updateStep().kind === "notice")
@@ -663,8 +672,7 @@ export function App(props: {
     if (walkthrough()) {
       key.preventDefault()
       const motion = !key.ctrl && !key.meta && !key.shift ? key.name : undefined
-      if (key.name === "q" && !key.ctrl && !key.meta) exit()
-      else if (key.name === "escape") void dismissWalkthrough()
+      if (key.name === "escape") void dismissWalkthrough()
       else if (key.name === "left" || motion === "h")
         setWalkthroughPage((page) => Math.max(0, page - 1))
       else if (
@@ -741,8 +749,7 @@ export function App(props: {
       return
     }
     key.preventDefault()
-    if (key.name === "q") exit()
-    else if (
+    if (
       (key.sequence === "/" || key.name === "/") &&
       currentPage() === 0 &&
       model.catalog
@@ -1313,22 +1320,22 @@ export function App(props: {
       </text>
       <text wrapMode="word" flexShrink={0} fg={color.sage}>
         {walkthrough()
-          ? "Left/Right or h/l: Back/Next · Space/Enter: Next · Esc: Skip · ↑↓/PgUp/PgDn: scroll · q q quit"
+          ? "Left/Right or h/l: Back/Next · Space/Enter: Next · Esc: Skip · ↑↓/PgUp/PgDn: scroll · Ctrl+C quit"
           : editing()?.kind === "location"
-            ? "Type a location · ↑↓ rows · Enter finish input · Esc accept group"
+            ? "Type a location · ↑↓ rows · Enter finish input · Ctrl+C clear · Esc accept group"
             : editing()?.kind === "search"
-              ? "Type to filter kits · ↑↓ kits · Enter/Esc keep filter · Tab pages · Shift+↑↓ details"
+              ? "Type to filter kits · ↑↓ kits · Enter/Esc keep filter · Ctrl+C clear · Tab pages · Shift+↑↓ details"
               : editing()?.kind === "question"
-                ? "Type an answer · ↑↓ questions · Enter finish input · Esc accept kit"
+                ? "Type an answer · ↑↓ questions · Enter finish input · Ctrl+C clear · Esc accept kit"
                 : editing()?.kind === "catalog"
-                  ? "Type an external catalog path or URL · Enter register · Esc stop editing"
+                  ? "Type an external catalog path or URL · Enter register · Ctrl+C clear · Esc stop editing"
                   : model.settingsForm
                     ? "↑↓/jk rows · ←→/hl actions · Space select · Esc accept group · Cancel discards"
                     : model.catalogRefreshForm
                       ? "↑↓/jk questions · ←→/hl options · Space select · Esc accept · Cancel discards"
                       : formOpen()
                         ? "↑↓/jk questions · ←→/hl options · Space select/toggle · Esc accept kit · Cancel discards"
-                        : `${currentPage() === 0 && model.catalog ? "/ search · " : ""}↑↓/jk rows · ←→/hl options · Space select · Tab pages · ? walkthrough · r refresh · Esc back · Shift+↑↓/PgUp/PgDn details · q q quit`}
+                        : `${currentPage() === 0 && model.catalog ? "/ search · " : ""}↑↓/jk rows · ←→/hl options · Space select · Tab pages · ? walkthrough · r refresh · Esc back · Shift+↑↓/PgUp/PgDn details · Ctrl+C quit`}
       </text>
       <Show when={!exitPrompt() && updatePopup()}>
         {(notice) => (

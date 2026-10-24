@@ -372,10 +372,10 @@ mise exec -- bun src/cli.tsx status</code></pre>
               saved to disk.
             </p>
             <p>
-              Landing on a text input starts typing; Vim keys and
-              <kbd>q</kbd> are then literal text. Up/Down can leave the input.
-              Text stays visible below its label; question help is muted and
-              italic. Accept/Cancel share one horizontal action row.
+              Landing on a text input starts typing; Vim keys are then literal
+              text. Up/Down can leave the input. Text stays visible below its
+              label; question help is muted and italic. Accept/Cancel share one
+              horizontal action row.
             </p>
             <p>
               <kbd>Tab</kbd>/<kbd>Shift</kbd>+<kbd>Tab</kbd> cycle Catalogs,
@@ -386,9 +386,10 @@ mise exec -- bun src/cli.tsx status</code></pre>
               sources and drift when no form is open.
             </p>
             <p>
-              Press <kbd>q</kbd> twice to exit: once to open confirmation, again
-              to exit. Esc stays; Space does not confirm exit.
-              <kbd>Ctrl</kbd>+<kbd>C</kbd> opens the same prompt.
+              <kbd>Ctrl</kbd>+<kbd>C</kbd> clears a non-empty text input;
+              otherwise it exits. With unapplied changes it asks first: press
+              <kbd>Ctrl</kbd>+<kbd>C</kbd> again to discard them and exit, or
+              Esc to stay.
             </p>
             <p>
               Kit previews merge instruction fragments into one section; skills
