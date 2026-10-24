@@ -36,6 +36,7 @@ import {
   loadCatalog,
   loadCatalogListing,
   normalizeSource,
+  remediateBundledOrigins,
   type CatalogListing,
 } from "./catalogs"
 import { canonical, inspectDrift, sourceKit, type DriftReport } from "./drift"
@@ -282,6 +283,7 @@ export class LoadoutService {
     const raw = await readOptional(this.statePath)
     const state =
       raw === null ? emptyState() : stateSchema.parse(JSON.parse(raw))
+    remediateBundledOrigins(state)
     this.raw = raw
     this.state = state
   }
@@ -479,14 +481,14 @@ export class LoadoutService {
       throw new Error(
         "Repo is automatic: remove or rename kit YAML files in .loadout/kits/. External catalogs can only be unregistered globally.",
       )
+    if (source === builtin)
+      throw new Error("The built-in Loadout catalog is permanent")
     // Lexical resolution deliberately works even after the catalog was deleted.
     const lexical = source.startsWith("https://")
       ? new URL(source).href
       : resolve(this.repository, source)
     await this.locked(async () => {
       await this.reload()
-      if (lexical === builtin)
-        throw new Error("The built-in Loadout catalog is permanent")
       let normalized = lexical
       try {
         normalized = await normalizeSource(source, this.repository)

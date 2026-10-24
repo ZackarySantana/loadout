@@ -7,19 +7,42 @@ import type {
 } from "../backend/service"
 import { theme } from "./theme"
 import { displayKitKey } from "../domain/catalog"
-import { SourceMetadata } from "./UpdatePreview"
-import type { LoadedKit } from "../domain/kit"
 
 const safe = (text: string) =>
   text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")
 export const sourceLabels: Record<KitDriftStatus, string> = {
-  current: "Source current",
-  changed: "Source changed",
-  "kit-missing": "Kit removed from catalog",
-  "kit-unavailable": "Kit source unavailable",
-  "catalog-unavailable": "Catalog unavailable",
-  "subscription-missing": "Subscription missing",
-  untracked: "Saved snapshot only",
+  current: "Up to date",
+  changed: "Update available",
+  "kit-missing": "Removed from catalog",
+  "kit-unavailable": "Update check failed",
+  "catalog-unavailable": "Catalog unreachable",
+  "subscription-missing": "Catalog removed",
+  untracked: "Unknown catalog",
+}
+
+const keeps = "Your installed version keeps working."
+const remove = "To remove it, press Enter and choose Not installed."
+
+/** Plain next steps; raw reasons stay in `loadout status` for diagnosis. */
+export function sourceGuidance(issue: KitDrift): string {
+  switch (issue.status) {
+    case "current":
+      return "This kit matches its catalog."
+    case "changed":
+      return `${keeps} Press Enter to update it.`
+    case "kit-missing":
+      return `Its catalog no longer offers this kit. ${keeps} ${remove}`
+    case "kit-unavailable":
+      return `The catalog's copy of this kit could not be read, so updates are paused. ${keeps}`
+    case "catalog-unavailable":
+      return `Loadout could not reach this kit's catalog. ${keeps} Check your connection, then press r to retry.`
+    case "subscription-missing":
+      return issue.origin?.scope === "repository"
+        ? `This kit came from an older Repo setup. ${keeps} Install it again from Repo to get updates.`
+        : `This kit's catalog is no longer registered. ${keeps} Register ${safe(issue.origin?.source ?? "it")} again to get updates. ${remove}`
+    case "untracked":
+      return `Loadout does not know which catalog this kit came from, so it cannot check for updates. ${keeps}`
+  }
 }
 
 function Section(props: { title: string; children: JSX.Element }) {
@@ -45,7 +68,6 @@ export function SourceNotice(props: {
   issue: KitDrift
   staged: boolean
   previewingLatest?: boolean
-  installed?: LoadedKit
 }) {
   return (
     <box
@@ -66,24 +88,11 @@ export function SourceNotice(props: {
       </text>
       <text fg={theme.muted} wrapMode="word" flexShrink={0}>
         {props.staged
-          ? "The saved installation stays in effect until Review and Apply changes."
+          ? "Nothing changes until you Review and Apply."
           : props.previewingLatest && props.issue.status === "changed"
-            ? "This preview uses the current catalog definition. Accept the configuration, then Review and Apply to update installed files."
-            : props.issue.status === "changed"
-              ? "Installed files use the saved definition. Review offers available kit updates; the saved snapshot remains usable."
-              : `${safe(props.issue.reason)}. The saved kit is kept and can still be configured or removed.`}
+            ? "Showing the new version. Accept, then Review and Apply to install it."
+            : sourceGuidance(props.issue)}
       </text>
-      <Show when={props.issue.origin}>
-        <text fg={theme.muted} wrapMode="word" flexShrink={0}>
-          {safe(props.issue.origin!.source)}
-        </text>
-      </Show>
-      <Show when={props.installed}>
-        {(installed) => <SourceMetadata item={installed()} label="Installed" />}
-      </Show>
-      <Show when={props.issue.latest}>
-        {(latest) => <SourceMetadata item={latest()} label="Available" />}
-      </Show>
     </box>
   )
 }
@@ -111,12 +120,12 @@ export function DriftPreview(props: {
         fallback={
           <>
             <Show when={props.scope !== "catalogs"}>
-              <Section title="Catalog definitions">
+              <Section title="Installed kits">
                 <Show
                   when={issues().length}
                   fallback={
                     <text fg={theme.muted} wrapMode="word">
-                      Saved kit definitions match their sources.
+                      All installed kits are up to date.
                     </text>
                   }
                 >
@@ -132,17 +141,12 @@ export function DriftPreview(props: {
                           {sourceLabels[kit.status]}
                         </text>
                         <text fg={theme.text} wrapMode="word" flexShrink={0}>
-                          {safe(kit.reason)}
+                          {sourceGuidance(kit)}
                         </text>
                       </box>
                     )}
                   </For>
                 </Show>
-                <text fg={theme.muted} wrapMode="word" flexShrink={0}>
-                  Missing or changed sources never uninstall kits. Configure the
-                  saved snapshot, or explicitly load an available catalog
-                  update.
-                </text>
               </Section>
               <Section title="Managed outputs">
                 <Show

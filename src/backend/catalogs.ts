@@ -1,6 +1,5 @@
 import { readFile, readdir, realpath, stat } from "node:fs/promises"
 import { dirname, resolve, relative, isAbsolute, join } from "node:path"
-import { fileURLToPath } from "node:url"
 import { parseDocument } from "yaml"
 import {
   catalogSchema,
@@ -15,6 +14,8 @@ import { catalogFreshnessMs } from "../domain/catalog-freshness"
 import { assertSafeDirectory } from "./files"
 import { remoteSkillsSourceSchema } from "../domain/catalog-source"
 import { readRemoteCacheForSource } from "./remote-cache"
+import { builtin, bundledPath, bundledRemoteSource } from "./bundled"
+import type { State } from "./state"
 import {
   contentHash,
   defaultRemoteDescriptor,
@@ -29,15 +30,7 @@ export { defaultRemoteSources } from "./remote-catalogs"
 export type { CatalogLoadOptions } from "./remote-catalogs"
 export type { CatalogFetchProgress } from "../domain/catalog-progress"
 
-declare const LOADOUT_BUNDLED: boolean
-export const builtin = fileURLToPath(
-  new URL(
-    typeof LOADOUT_BUNDLED !== "undefined" && LOADOUT_BUNDLED
-      ? "../catalog/catalog.json"
-      : "../../catalog/catalog.json",
-    import.meta.url,
-  ),
-)
+export { builtin } from "./bundled"
 const maxSize = 2_000_000
 
 async function readSource(
@@ -45,6 +38,7 @@ async function readSource(
   signal?: AbortSignal,
 ): Promise<string> {
   signal?.throwIfAborted()
+  source = bundledPath(source) ?? source
   if (source.startsWith("https://")) {
     const url = new URL(source)
     if (url.username || url.password || url.hash)
@@ -134,7 +128,9 @@ async function kitSource(
       )
     return url.href
   }
-  const base = await realpath(dirname(catalogSource))
+  const base = await realpath(
+    dirname(bundledPath(catalogSource) ?? catalogSource),
+  )
   const path = await realpath(resolve(base, reference))
   if (!within(base, path))
     throw new Error("Kit references must stay within the catalog directory")
@@ -503,6 +499,30 @@ export async function loadRepositoryListing(
     failures: failure ? new Map([[catalog.source, failure]]) : new Map(),
     repoInventory: inventory,
   }
+}
+
+/**
+ * Earlier releases saved bundled origins by install path, which disappears on
+ * upgrade. Catalog IDs of bundled catalogs are reserved, so the match is exact.
+ */
+export function remediateBundledOrigins(state: State): void {
+  for (const selection of [state.global, ...Object.values(state.repositories)])
+    for (const { origin } of Object.values(selection)) {
+      if (origin?.scope !== "global" || bundledPath(origin.source)) continue
+      const path = origin.source.replaceAll("\\", "/")
+      const remote = /\/catalog\/remote\/([a-z0-9-]+)\.json$/.exec(path)?.[1]
+      if (
+        origin.catalogId === "loadout" &&
+        path.endsWith("/catalog/catalog.json")
+      )
+        origin.source = builtin
+      else if (
+        remote &&
+        (origin.catalogId ?? remote) === remote &&
+        defaultRemoteSources.includes(bundledRemoteSource(remote))
+      )
+        origin.source = bundledRemoteSource(remote)
+    }
 }
 
 export async function loadCatalogs(

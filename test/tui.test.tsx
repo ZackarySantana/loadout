@@ -1332,8 +1332,8 @@ describe("rendered keyboard workflows", () => {
     expect(ui.model.page).toBe(1)
     await ui.press("r")
     await ui.go(`kit:${key}`)
-    expect(ui.frame()).toContain("Source changed")
-    expect(ui.frame()).toContain("saved definition")
+    expect(ui.frame()).toContain("Update available")
+    expect(ui.frame()).toContain("keeps working")
     expect(await readFile(output, "utf8")).toBe(originalOutput)
     expect(await readFile(agents, "utf8")).toBe(originalAgents)
     await ui.press(" ")
@@ -1394,12 +1394,12 @@ describe("rendered keyboard workflows", () => {
     await rm(kitPath)
     await ui.press("r")
     await ui.go(`kit:${key}`)
-    expect(ui.frame()).toContain("Kit removed from catalog")
+    expect(ui.frame()).toContain("Removed from catalog")
     expect(
       descendants(ui.setup.renderer.root).some(
         (node) =>
           node instanceof TextRenderable &&
-          node.plainText.includes("saved kit is kept"),
+          node.plainText.includes("choose Not installed"),
       ),
     ).toBe(true)
     expect(await readFile(output, "utf8")).toBe(updatedOutput)
@@ -1448,7 +1448,7 @@ describe("rendered keyboard workflows", () => {
     await ui.press("TAB")
     await ui.press("TAB")
     await ui.go("kit:fixture/team")
-    expect(ui.frame()).toContain("Source changed")
+    expect(ui.frame()).toContain("Update available")
     await ui.press(" ")
     await ui.select("question:source")
     await ui.setup.mockInput.typeText(" local edit")

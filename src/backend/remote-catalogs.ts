@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto"
-import { fileURLToPath } from "node:url"
 import { parseDocument } from "yaml"
 import { z } from "zod"
 import { canonical } from "../domain/content"
@@ -34,6 +33,7 @@ import {
   writeRemoteCache,
   type RemoteCacheRecord,
 } from "./remote-cache"
+import { bundledRemoteSource } from "./bundled"
 
 export interface CatalogLoadOptions {
   onProgress?: (event: CatalogFetchProgress) => void
@@ -84,14 +84,8 @@ const defaults: RemoteSkillsSource[] = [
     license: "LICENSE",
   },
 ]
-declare const LOADOUT_BUNDLED: boolean
 export const defaultRemoteSources = defaults.map((source) =>
-  fileURLToPath(
-    new URL(
-      `${typeof LOADOUT_BUNDLED !== "undefined" && LOADOUT_BUNDLED ? "../" : "../../"}catalog/remote/${source.id}.json`,
-      import.meta.url,
-    ),
-  ),
+  bundledRemoteSource(source.id),
 )
 const defaultDescriptors = new Map(
   defaultRemoteSources.map((source, i) => [source, defaults[i]!]),

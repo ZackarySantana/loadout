@@ -718,6 +718,42 @@ describe("backend integration flows", () => {
     expect(await snapshot(root)).toEqual(before)
   })
 
+  test("bundled catalog origins survive upgrades that move the install directory", async () => {
+    const { home, service, open } = await fixture()
+    const greenfield = (await service.catalogs()).catalogs
+      .find((catalog) => catalog.id === "loadout")!
+      .kits.find((item) => item.key === "loadout/greenfield")!
+    expect(greenfield.origin?.source).toBe("bundled:loadout")
+    await configure(service, greenfield, "global")
+    const statePath = join(home, ".loadout/state.json")
+    const state = JSON.parse((await text(statePath))!)
+    const old = "/opt/loadout/0.5.0/node_modules/@lidtop/loadout/catalog"
+    state.global["loadout/greenfield"].origin.source = `${old}/catalog.json`
+    await writeFile(statePath, JSON.stringify(state))
+    const { drift } = await (await open()).status()
+    expect(drift.kits.map((kit) => [kit.key, kit.status])).toEqual([
+      ["loadout/greenfield", "current"],
+    ])
+    // Remote origins are remediated too; status would fetch them, so only load.
+    state.global["anthropic/pdf"] = {
+      ...state.global["loadout/greenfield"],
+      key: "anthropic/pdf",
+      origin: {
+        source: `${old}/remote/anthropic.json`,
+        scope: "global",
+        catalogId: "anthropic",
+      },
+    }
+    await writeFile(statePath, JSON.stringify(state))
+    const reopened = await open()
+    expect(
+      reopened.installed().map((item) => [item.key, item.origin?.source]),
+    ).toEqual([
+      ["loadout/greenfield", "bundled:loadout"],
+      ["anthropic/pdf", "bundled:remote/anthropic"],
+    ])
+  })
+
   test("catalog formats stay strict while invalid or escaping kit sources are quarantined without hiding healthy siblings or discarding installed snapshots", async () => {
     const { service, root, repository, open } = await fixture()
     const directory = join(repository, "catalog")

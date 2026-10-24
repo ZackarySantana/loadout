@@ -241,9 +241,6 @@ export function App(props: {
       ? {
           issue,
           staged,
-          installed: model
-            .installedKits()
-            .find((item) => item.key === row.item!.key),
           previewingLatest: form?.fromCatalog ?? row.fromCatalog,
         }
       : undefined
@@ -1272,7 +1269,6 @@ export function App(props: {
                               issue={source().issue}
                               staged={source().staged}
                               previewingLatest={source().previewingLatest}
-                              installed={source().installed}
                             />
                           )}
                         </Show>
