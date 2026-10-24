@@ -18,6 +18,11 @@
       "source": "kits/dont-commit.yaml"
     },
     {
+      "id": "no-secondary-text",
+      "name": "Cut secondary text",
+      "source": "kits/no-secondary-text.yaml"
+    },
+    {
       "id": "codex-cli",
       "name": "Codex CLI",
       "source": "kits/codex-cli.yaml"
