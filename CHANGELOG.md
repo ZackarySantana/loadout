@@ -1,5 +1,17 @@
 # @lidtop/loadout
 
+## 0.6.0
+
+### Minor Changes
+
+- 253824c: Quit with Ctrl+C instead of q, following OpenCode: Ctrl+C clears a non-empty text field, otherwise exits immediately. With unapplied changes it asks first; press Ctrl+C again to discard them and exit, or Esc to stay.
+
+### Patch Changes
+
+- b25cc67: Keep kits from the built-in and bundled remote catalogs connected after upgrading Loadout. Bundled catalogs now use install-independent identities, and kits saved by earlier releases are repaired automatically instead of reporting a missing subscription. Kit status labels and details now use plain language with a clear next step.
+
+  Add the "Cut secondary text" kit to the Loadout catalog.
+
 ## 0.5.2
 
 ### Patch Changes
